@@ -1,0 +1,339 @@
+.gitignore
+  s_89f7a4bd1c7b7f::t_8d3a20b9294cb8 1-23
+AGENTS.md
+  s_89f7a4bd1c7b7f::t_ef16395cd8408b 1-43
+LICENSE
+  s_89f7a4bd1c7b7f::t_9642d8c0aec78e 1-674
+LICENSES/Apache-2.0.txt
+  s_89f7a4bd1c7b7f::t_03010e80e2aef9 1-177
+LICENSES/LGPL-2.1.txt
+  s_89f7a4bd1c7b7f::t_3701fc93d1f079 1-501
+PUBLIC_MANIFEST.sha256
+  s_89f7a4bd1c7b7f::t_39139221e9ddd4 1-166
+README.md
+  s_89f7a4bd1c7b7f::t_fe6a623d631e3f 1-181
+THIRD_PARTY_NOTICES.md
+  s_89f7a4bd1c7b7f::t_16207e5d0af293 1-33
+app/build.gradle.kts
+  s_89f7a4bd1c7b7f::t_9157a2cc85b473 1-127
+app/compose-stability.conf
+  s_89f7a4bd1c7b7f::t_37c4584f5be067 1-14
+app/proguard-rules.pro
+  s_89f7a4bd1c7b7f::t_47398573f32202 1-20
+app/schemas/app.zmby.store.ZmbyDatabase/1.json
+  s_89f7a4bd1c7b7f::t_07f629c2ee9d13 1-1007
+app/src/main/AndroidManifest.xml
+  s_89f7a4bd1c7b7f::t_d1b1d7428ff483 1-47
+app/src/main/baseline-prof.txt
+  s_89f7a4bd1c7b7f::t_99d2972ef0359d 1-17
+app/src/main/java/app/zmby/Diagnostics.kt
+  s_89f7a4bd1c7b7f::t_0b0b271df6179a 1-94
+app/src/main/java/app/zmby/MainActivity.kt
+  s_89f7a4bd1c7b7f::t_ef427fcdc01acd 1-127
+app/src/main/java/app/zmby/PlaybackActivity.kt
+  s_89f7a4bd1c7b7f::t_7cb48a4ec94839 1-259
+app/src/main/java/app/zmby/ZmbyApp.kt
+  s_89f7a4bd1c7b7f::t_c859a848a767ba 1-321
+app/src/main/java/app/zmby/aggregate/AggregateSearch.kt
+  s_89f7a4bd1c7b7f::t_9b719600e9ba83 1-135
+app/src/main/java/app/zmby/aggregate/FanOut.kt
+  s_89f7a4bd1c7b7f::t_8d6a655fc391cb 1-99
+app/src/main/java/app/zmby/aggregate/Health.kt
+  s_89f7a4bd1c7b7f::t_998157c1302105 1-49
+app/src/main/java/app/zmby/aggregate/HomeFeed.kt
+  s_89f7a4bd1c7b7f::t_ffcf341ac90072 1-228
+app/src/main/java/app/zmby/aggregate/Match.kt
+  s_89f7a4bd1c7b7f::t_3088a67774d64f 1-177
+app/src/main/java/app/zmby/aggregate/Merger.kt
+  s_89f7a4bd1c7b7f::t_f48020e772deb1 1-116
+app/src/main/java/app/zmby/aggregate/VersionFinder.kt
+  s_89f7a4bd1c7b7f::t_9df30f294312bf 1-127
+app/src/main/java/app/zmby/aggregate/VersionRanker.kt
+  s_89f7a4bd1c7b7f::t_ada85e911b598a 1-72
+app/src/main/java/app/zmby/data/BrowseQuery.kt
+  s_89f7a4bd1c7b7f::t_90c427657bd687 1-101
+app/src/main/java/app/zmby/data/ConnectionText.kt
+  s_89f7a4bd1c7b7f::t_f86ab16bc50bed 1-116
+app/src/main/java/app/zmby/data/DataSources.kt
+  s_89f7a4bd1c7b7f::t_c30f94195c6219 1-148
+app/src/main/java/app/zmby/data/Disk.kt
+  s_89f7a4bd1c7b7f::t_04a812324bdc7a 1-16
+app/src/main/java/app/zmby/data/Library.kt
+  s_89f7a4bd1c7b7f::t_f8d886b96de414 1-467
+app/src/main/java/app/zmby/data/ServerCaps.kt
+  s_89f7a4bd1c7b7f::t_209dd7c566d36e 1-73
+app/src/main/java/app/zmby/data/ServerImport.kt
+  s_89f7a4bd1c7b7f::t_58ef4c788a98f3 1-183
+app/src/main/java/app/zmby/data/ServerImportPage.kt
+  s_89f7a4bd1c7b7f::t_24b26edc91d76e 1-106
+app/src/main/java/app/zmby/data/ServerRegistry.kt
+  s_89f7a4bd1c7b7f::t_d233b5c3ce7362 1-266
+app/src/main/java/app/zmby/data/Settings.kt
+  s_89f7a4bd1c7b7f::t_d4bb9786920264 1-78
+app/src/main/java/app/zmby/emby/ClientIdentity.kt
+  s_89f7a4bd1c7b7f::t_f482a9124dd37f 1-105
+app/src/main/java/app/zmby/emby/EmbyClient.kt
+  s_89f7a4bd1c7b7f::t_4f032dabc318d8 1-536
+app/src/main/java/app/zmby/emby/EmbyModels.kt
+  s_89f7a4bd1c7b7f::t_776618a6836afa 1-222
+app/src/main/java/app/zmby/favorites/Favorites.kt
+  s_89f7a4bd1c7b7f::t_1d35a76a2bc34b 1-287
+app/src/main/java/app/zmby/favorites/Watchlist.kt
+  s_89f7a4bd1c7b7f::t_938fde26de2789 1-93
+app/src/main/java/app/zmby/log/LanServer.kt
+  s_89f7a4bd1c7b7f::t_79d5b5feee76ff 1-180
+app/src/main/java/app/zmby/log/Redactor.kt
+  s_89f7a4bd1c7b7f::t_326e974992c73f 1-66
+app/src/main/java/app/zmby/log/ZLog.kt
+  s_89f7a4bd1c7b7f::t_ae87a6ed6f2343 1-127
+app/src/main/java/app/zmby/media/MediaFormat.kt
+  s_89f7a4bd1c7b7f::t_656f675294fbbd 1-310
+app/src/main/java/app/zmby/net/Addresses.kt
+  s_89f7a4bd1c7b7f::t_e9c424eab7be2c 1-13
+app/src/main/java/app/zmby/net/MiniHttpServer.kt
+  s_89f7a4bd1c7b7f::t_fdf66723079708 1-258
+app/src/main/java/app/zmby/playback/EmbyPlayback.kt
+  s_89f7a4bd1c7b7f::t_ecdedceaf3345a 1-257
+app/src/main/java/app/zmby/playback/LocalStrm.kt
+  s_89f7a4bd1c7b7f::t_ccb61cc0654b64 1-200
+app/src/main/java/app/zmby/playback/MediaStorePlaybackStore.kt
+  s_89f7a4bd1c7b7f::t_b54ca799dd3f36 1-80
+app/src/main/java/app/zmby/playback/PlaybackMonitor.kt
+  s_89f7a4bd1c7b7f::t_c526b922f77ab4 1-143
+app/src/main/java/app/zmby/playback/StreamProbe.kt
+  s_89f7a4bd1c7b7f::t_8ea7de9e7ea055 1-68
+app/src/main/java/app/zmby/playback/StreamRelay.kt
+  s_89f7a4bd1c7b7f::t_a9687c59d7a2fd 1-240
+app/src/main/java/app/zmby/playback/StreamUrls.kt
+  s_89f7a4bd1c7b7f::t_95dba7eb8b3452 1-63
+app/src/main/java/app/zmby/playback/SubtitleSelectionVerifier.kt
+  s_89f7a4bd1c7b7f::t_4d2942c0d9144f 1-79
+app/src/main/java/app/zmby/playback/TrackPreference.kt
+  s_89f7a4bd1c7b7f::t_bfc5e3ccc5f03d 1-48
+app/src/main/java/app/zmby/playback/WatchThreshold.kt
+  s_89f7a4bd1c7b7f::t_b4b22dfb23c368 1-25
+app/src/main/java/app/zmby/search/LiveSearch.kt
+  s_89f7a4bd1c7b7f::t_16a2ba630a4e78 1-47
+app/src/main/java/app/zmby/search/Pinyin.kt
+  s_89f7a4bd1c7b7f::t_9b15922ef37c0e 1-142
+app/src/main/java/app/zmby/search/PinyinCandidates.kt
+  s_89f7a4bd1c7b7f::t_73ffac656dbcb2 1-175
+app/src/main/java/app/zmby/store/Cast.kt
+  s_89f7a4bd1c7b7f::t_b1a7a93a34edd9 1-51
+app/src/main/java/app/zmby/store/Daos.kt
+  s_89f7a4bd1c7b7f::t_c3fea17783518a 1-218
+app/src/main/java/app/zmby/store/Entities.kt
+  s_89f7a4bd1c7b7f::t_38b65792040188 1-221
+app/src/main/java/app/zmby/store/LocalStore.kt
+  s_89f7a4bd1c7b7f::t_402a29ae45cd23 1-366
+app/src/main/java/app/zmby/store/MetaMerge.kt
+  s_89f7a4bd1c7b7f::t_5fc83008c981ef 1-155
+app/src/main/java/app/zmby/store/ZmbyDatabase.kt
+  s_89f7a4bd1c7b7f::t_43be8860c72486 1-55
+app/src/main/java/app/zmby/ui/Errors.kt
+  s_89f7a4bd1c7b7f::t_c65e4b4ba276e8 1-37
+app/src/main/java/app/zmby/ui/Nav.kt
+  s_89f7a4bd1c7b7f::t_07a0511dd197d4 1-145
+app/src/main/java/app/zmby/ui/NavEntry.kt
+  s_89f7a4bd1c7b7f::t_de2624c4fda912 1-73
+app/src/main/java/app/zmby/ui/components/Artwork.kt
+  s_89f7a4bd1c7b7f::t_c639eee3bbcada 1-173
+app/src/main/java/app/zmby/ui/components/BoxBlur.kt
+  s_89f7a4bd1c7b7f::t_ec9257c699fed3 1-54
+app/src/main/java/app/zmby/ui/components/Controls.kt
+  s_89f7a4bd1c7b7f::t_d85fca1c92143a 1-352
+app/src/main/java/app/zmby/ui/components/Focus.kt
+  s_89f7a4bd1c7b7f::t_91ac154c4af1e4 1-162
+app/src/main/java/app/zmby/ui/components/Glass.kt
+  s_89f7a4bd1c7b7f::t_d293e42d2c2c18 1-276
+app/src/main/java/app/zmby/ui/components/Icons.kt
+  s_89f7a4bd1c7b7f::t_ad0cc1fb931ca7 1-64
+app/src/main/java/app/zmby/ui/components/Logo.kt
+  s_89f7a4bd1c7b7f::t_1a1a3196b91c7b 1-102
+app/src/main/java/app/zmby/ui/components/SettingRows.kt
+  s_89f7a4bd1c7b7f::t_e40ccc492d1c2a 1-113
+app/src/main/java/app/zmby/ui/screens/BrowseModel.kt
+  s_89f7a4bd1c7b7f::t_18e9b7212b3bf7 1-194
+app/src/main/java/app/zmby/ui/screens/BrowseScreen.kt
+  s_89f7a4bd1c7b7f::t_13891d4ed1d54a 1-427
+app/src/main/java/app/zmby/ui/screens/CastRow.kt
+  s_89f7a4bd1c7b7f::t_531308d1be2682 1-146
+app/src/main/java/app/zmby/ui/screens/DataSourceScreen.kt
+  s_89f7a4bd1c7b7f::t_09a39249370bed 1-175
+app/src/main/java/app/zmby/ui/screens/DetailModel.kt
+  s_89f7a4bd1c7b7f::t_efbefc47c76446 1-151
+app/src/main/java/app/zmby/ui/screens/DetailScreen.kt
+  s_89f7a4bd1c7b7f::t_22fc5f69f0a818 1-251
+app/src/main/java/app/zmby/ui/screens/FavoritesGrid.kt
+  s_89f7a4bd1c7b7f::t_73ecef4ca91100 1-75
+app/src/main/java/app/zmby/ui/screens/HomeModel.kt
+  s_89f7a4bd1c7b7f::t_ae3a8590df3af8 1-109
+app/src/main/java/app/zmby/ui/screens/HomeScreen.kt
+  s_89f7a4bd1c7b7f::t_bf2eab7605bb24 1-555
+app/src/main/java/app/zmby/ui/screens/ImportScreen.kt
+  s_89f7a4bd1c7b7f::t_2af4c0f3c6ef88 1-128
+app/src/main/java/app/zmby/ui/screens/LoginScreen.kt
+  s_89f7a4bd1c7b7f::t_4680760f871fa1 1-184
+app/src/main/java/app/zmby/ui/screens/PersonModel.kt
+  s_89f7a4bd1c7b7f::t_c3cc3e9851adaf 1-134
+app/src/main/java/app/zmby/ui/screens/PersonScreen.kt
+  s_89f7a4bd1c7b7f::t_e6b0e92760587e 1-134
+app/src/main/java/app/zmby/ui/screens/SearchScreen.kt
+  s_89f7a4bd1c7b7f::t_a1e210306651c9 1-383
+app/src/main/java/app/zmby/ui/screens/SeriesScreen.kt
+  s_89f7a4bd1c7b7f::t_57b8151e6422a1 1-391
+app/src/main/java/app/zmby/ui/screens/ServersScreen.kt
+  s_89f7a4bd1c7b7f::t_84df93de140113 1-326
+app/src/main/java/app/zmby/ui/screens/SettingsScreen.kt
+  s_89f7a4bd1c7b7f::t_92aba5b0cb1310 1-262
+app/src/main/java/app/zmby/ui/screens/Versions.kt
+  s_89f7a4bd1c7b7f::t_e10ee7bba667af 1-522
+app/src/main/java/app/zmby/ui/screens/WatchlistGrid.kt
+  s_89f7a4bd1c7b7f::t_40d7875db7e878 1-108
+app/src/main/java/app/zmby/ui/theme/Theme.kt
+  s_89f7a4bd1c7b7f::t_5ee7877ad1b93a 1-103
+app/src/main/java/app/zmby/zidoo/ZidooIntents.kt
+  s_89f7a4bd1c7b7f::t_bb3e87b699c037 1-55
+app/src/main/java/app/zmby/zidoo/ZidooPlayer.kt
+  s_89f7a4bd1c7b7f::t_df49055a084180 1-166
+app/src/main/java/app/zmby/zidoo/ZidooStatusApi.kt
+  s_89f7a4bd1c7b7f::t_92b1a6abb0afda 1-135
+app/src/main/java/app/zmby/zidoo/ZidooTracks.kt
+  s_89f7a4bd1c7b7f::t_395710bb671488 1-53
+app/src/main/res/drawable/banner.xml
+  s_89f7a4bd1c7b7f::t_a540017053e571 1-20
+app/src/main/res/drawable/ic_launcher_background.xml
+  s_89f7a4bd1c7b7f::t_4b3339f718de9e 1-13
+app/src/main/res/drawable/ic_launcher_foreground.xml
+  s_89f7a4bd1c7b7f::t_1c040225a967a1 1-14
+app/src/main/res/drawable/ic_launcher_monochrome.xml
+  s_89f7a4bd1c7b7f::t_af496319e87b9d 1-11
+app/src/main/res/drawable/ic_stat_zmby.xml
+  s_89f7a4bd1c7b7f::t_6217e2272f4a5a 1-9
+app/src/main/res/drawable/ic_zmby_mark.xml
+  s_89f7a4bd1c7b7f::t_dd7c2e061d6e0d 1-14
+app/src/main/res/drawable/ic_zmby_mark_light.xml
+  s_89f7a4bd1c7b7f::t_bab5123ab45b2b 1-14
+app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+  s_89f7a4bd1c7b7f::t_73df40eb9126ef 1-6
+app/src/main/res/values/strings.xml
+  s_89f7a4bd1c7b7f::t_b2816c22e6a854 1-3
+app/src/main/res/values/themes.xml
+  s_89f7a4bd1c7b7f::t_46c46c7f616c70 1-9
+app/src/test/java/app/zmby/aggregate/FanOutTest.kt
+  s_89f7a4bd1c7b7f::t_c9b7c88add2576 1-203
+app/src/test/java/app/zmby/aggregate/MatchTest.kt
+  s_89f7a4bd1c7b7f::t_f28c179ca2bb85 1-163
+app/src/test/java/app/zmby/aggregate/MergeScaleTest.kt
+  s_89f7a4bd1c7b7f::t_3fd66f0742d906 1-56
+app/src/test/java/app/zmby/aggregate/RankAndHomeTest.kt
+  s_89f7a4bd1c7b7f::t_44f081777dcdb1 1-81
+app/src/test/java/app/zmby/aggregate/SchedulingTest.kt
+  s_89f7a4bd1c7b7f::t_f466fc9814dff6 1-114
+app/src/test/java/app/zmby/data/BrowseQueryTest.kt
+  s_89f7a4bd1c7b7f::t_e0ff687e399803 1-62
+app/src/test/java/app/zmby/data/DataSourcesTest.kt
+  s_89f7a4bd1c7b7f::t_dc2e0c70af23fc 1-69
+app/src/test/java/app/zmby/data/RegistryTest.kt
+  s_89f7a4bd1c7b7f::t_4b9601a79b8953 1-68
+app/src/test/java/app/zmby/data/ServerImportTest.kt
+  s_89f7a4bd1c7b7f::t_c6494913fa0679 1-178
+app/src/test/java/app/zmby/emby/ClientIdentityTest.kt
+  s_89f7a4bd1c7b7f::t_9da6bc73466c44 1-228
+app/src/test/java/app/zmby/emby/EmbyClientTest.kt
+  s_89f7a4bd1c7b7f::t_186bbcf5883488 1-120
+app/src/test/java/app/zmby/favorites/FavoriteLogicTest.kt
+  s_89f7a4bd1c7b7f::t_0104abe928095c 1-59
+app/src/test/java/app/zmby/favorites/WatchlistLogicTest.kt
+  s_89f7a4bd1c7b7f::t_66ce1fd983a17f 1-53
+app/src/test/java/app/zmby/log/LogTest.kt
+  s_89f7a4bd1c7b7f::t_edc33e8a45a8f8 1-175
+app/src/test/java/app/zmby/media/MediaFormatTest.kt
+  s_89f7a4bd1c7b7f::t_0d1b50ceb3bdc6 1-77
+app/src/test/java/app/zmby/playback/ChooseSourceTest.kt
+  s_89f7a4bd1c7b7f::t_aba65cc5559ed0 1-31
+app/src/test/java/app/zmby/playback/LocalStrmTest.kt
+  s_89f7a4bd1c7b7f::t_2ab5e125495908 1-113
+app/src/test/java/app/zmby/playback/PlaybackMonitorTest.kt
+  s_89f7a4bd1c7b7f::t_659144d5960863 1-169
+app/src/test/java/app/zmby/playback/StreamRelayTest.kt
+  s_89f7a4bd1c7b7f::t_0dffbd44bc3744 1-208
+app/src/test/java/app/zmby/playback/StreamUrlsTest.kt
+  s_89f7a4bd1c7b7f::t_df58e13d67d25e 1-125
+app/src/test/java/app/zmby/playback/SubtitleSelectionVerifierTest.kt
+  s_89f7a4bd1c7b7f::t_d464adea5a3697 1-81
+app/src/test/java/app/zmby/playback/TrackPreferenceTest.kt
+  s_89f7a4bd1c7b7f::t_c767883a86c4c5 1-50
+app/src/test/java/app/zmby/playback/WatchThresholdTest.kt
+  s_89f7a4bd1c7b7f::t_dd864af8914071 1-40
+app/src/test/java/app/zmby/search/LiveSearchTest.kt
+  s_89f7a4bd1c7b7f::t_d7b85e7f17b58e 1-75
+app/src/test/java/app/zmby/search/PinyinTest.kt
+  s_89f7a4bd1c7b7f::t_613053cb24a98b 1-158
+app/src/test/java/app/zmby/store/CastRulesTest.kt
+  s_89f7a4bd1c7b7f::t_353173ccfbd446 1-41
+app/src/test/java/app/zmby/store/HomeLocalFirstTest.kt
+  s_89f7a4bd1c7b7f::t_f4dd2ece0154d7 1-151
+app/src/test/java/app/zmby/store/LocalStoreTest.kt
+  s_89f7a4bd1c7b7f::t_c56d537b1b32b9 1-167
+app/src/test/java/app/zmby/store/MetaMergeTest.kt
+  s_89f7a4bd1c7b7f::t_b6e97502e172f3 1-119
+app/src/test/java/app/zmby/store/SchemaTest.kt
+  s_89f7a4bd1c7b7f::t_8a7a91b2d25b6e 1-43
+app/src/test/java/app/zmby/ui/SeriesHeaderTest.kt
+  s_89f7a4bd1c7b7f::t_69b6dca17309cf 1-45
+app/src/test/java/app/zmby/ui/UiTextTest.kt
+  s_89f7a4bd1c7b7f::t_eaef59820f8ed6 1-67
+app/src/test/java/app/zmby/ui/VersionCardsTest.kt
+  s_89f7a4bd1c7b7f::t_8d2b4c838d0b34 1-52
+app/src/test/java/app/zmby/zidoo/ZidooPlayerTest.kt
+  s_89f7a4bd1c7b7f::t_527dd6d6ddf834 1-67
+app/src/test/java/app/zmby/zidoo/ZidooStatusTest.kt
+  s_89f7a4bd1c7b7f::t_b3d7754c04d36d 1-46
+app/src/test/java/app/zmby/zidoo/ZidooTracksTest.kt
+  s_89f7a4bd1c7b7f::t_a1af5d43f077cd 1-127
+build.gradle.kts
+  s_89f7a4bd1c7b7f::t_a9863d26768a50 1-8
+devtools/fake-zidoo-player/build.gradle.kts
+  s_89f7a4bd1c7b7f::t_27a25ca48d3069 1-28
+devtools/fake-zidoo-player/src/main/AndroidManifest.xml
+  s_89f7a4bd1c7b7f::t_4bfb20c33c75f2 1-13
+devtools/fake-zidoo-player/src/main/java/com/android/gallery3d/app/MovieActivity.kt
+  s_89f7a4bd1c7b7f::t_9b8d70e143d824 1-73
+docs/images/mark.svg
+  s_89f7a4bd1c7b7f::t_d567e9d84a48d8 1-7
+gradle.properties
+  s_89f7a4bd1c7b7f::t_2d4908563659a8 1-4
+gradle/libs.versions.toml
+  s_89f7a4bd1c7b7f::t_12f74e0a59a915 1-55
+gradle/wrapper/gradle-wrapper.properties
+  s_89f7a4bd1c7b7f::t_2516ed3b1dd34c 1-7
+gradlew
+  s_89f7a4bd1c7b7f::t_bb6cf7a87da347 1-251
+gradlew.bat
+  s_89f7a4bd1c7b7f::t_b57c439fa615fb 1-94
+mise.toml
+  s_89f7a4bd1c7b7f::t_0290dbe9cf983f 1-6
+settings.gradle.kts
+  s_89f7a4bd1c7b7f::t_849e30621b8ad6 1-18
+tools/export_public.py
+  s_89f7a4bd1c7b7f::t_ea1fb79b1b0785 1-126
+tools/mock_emby.py
+  s_89f7a4bd1c7b7f::t_3b8d400c253ca3 1-997
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14223cdddd324901f206d2f6b42944fc0bbf34c0",
+  "prompts": {},
+  "sessions": {
+    "s_89f7a4bd1c7b7f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a172b2-434d-79e1-8800-623fe61e9fa0",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    }
+  }
+}
