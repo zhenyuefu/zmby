@@ -1,0 +1,6 @@
+[tools]
+gradle = "8"
+java = "temurin-21"
+
+[env]
+ANDROID_HOME = "{{env.HOME}}/Library/Android/sdk"

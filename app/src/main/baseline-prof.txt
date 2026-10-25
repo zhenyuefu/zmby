@@ -1,0 +1,17 @@
+# Baseline profile (architecture: 线程与性能约定 › 监测): the paths of start-up, home, browse,
+# detail, series, person and search, compiled ahead of time on install (profileinstaller).
+# Compose, Coil and OkHttp bring their own profiles; these rules cover the app itself.
+HSPLapp/zmby/ZmbyApp;->**(**)**
+HSPLapp/zmby/MainActivity;->**(**)**
+HSPLapp/zmby/MainActivityKt**;->**(**)**
+HSPLapp/zmby/ui/**;->**(**)**
+HSPLapp/zmby/ui/screens/**;->**(**)**
+HSPLapp/zmby/ui/components/**;->**(**)**
+HSPLapp/zmby/aggregate/**;->**(**)**
+HSPLapp/zmby/data/**;->**(**)**
+HSPLapp/zmby/store/**;->**(**)**
+HSPLapp/zmby/emby/**;->**(**)**
+HSPLapp/zmby/search/**;->**(**)**
+HSPLapp/zmby/favorites/**;->**(**)**
+HSPLapp/zmby/media/**;->**(**)**
+Lapp/zmby/**;

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android TV banner 320×180 (Logo.dc.html): gradient card, mark and wordmark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:pathData="M0,0h320v180h-320z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="130" android:startY="0" android:endX="190" android:endY="170" android:startColor="#1D2027" android:endColor="#0C0D10" />
+            </aapt:attr>
+    </path>
+    <group android:translateX="52" android:translateY="52.5" android:scaleX="1.1719" android:scaleY="1.1719">
+        <path android:fillColor="#FFFFFF" android:fillAlpha="0.28" android:pathData="M16,4h14a12,12 0,0 1,12,12v14a12,12 0,0 1,-12,12h-14a12,12 0,0 1,-12,-12v-14a12,12 0,0 1,12,-12z" />
+        <path android:fillColor="#FFFFFF" android:fillAlpha="0.55" android:pathData="M25,13h14a12,12 0,0 1,12,12v14a12,12 0,0 1,-12,12h-14a12,12 0,0 1,-12,-12v-14a12,12 0,0 1,12,-12z" />
+        <path android:fillColor="#FFFFFF" android:fillAlpha="1" android:pathData="M34,22h14a12,12 0,0 1,12,12v14a12,12 0,0 1,-12,12h-14a12,12 0,0 1,-12,-12v-14a12,12 0,0 1,12,-12z" />
+        <path android:fillColor="#0A0B0D" android:pathData="M36,33v16l13,-8z" />
+    </group>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="9" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M149.5,80.5H166L149.5,99.5H166 M177.5,104V88Q177.5,80.5 183,80.5Q188.5,80.5 188.5,88V104M188.5,88Q188.5,80.5 194,80.5Q199.5,80.5 199.5,88V104 M210.5,66V104M210.5,90a9.5,9.5 0,1 1,19 0a9.5,9.5 0,1 1,-19 0 M239,80.5L248.5,100M258,80.5L246.5,107.5Q244.5,112 240,112" />
+</vector>

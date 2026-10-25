@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- zmby mark, light variant: dark tiles at 18/42/100 %, white triangle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <group>
+        <path android:fillColor="#0A0B0D" android:fillAlpha="0.18" android:pathData="M16,4h14a12,12 0,0 1,12,12v14a12,12 0,0 1,-12,12h-14a12,12 0,0 1,-12,-12v-14a12,12 0,0 1,12,-12z" />
+        <path android:fillColor="#0A0B0D" android:fillAlpha="0.42" android:pathData="M25,13h14a12,12 0,0 1,12,12v14a12,12 0,0 1,-12,12h-14a12,12 0,0 1,-12,-12v-14a12,12 0,0 1,12,-12z" />
+        <path android:fillColor="#0A0B0D" android:fillAlpha="1" android:pathData="M34,22h14a12,12 0,0 1,12,12v14a12,12 0,0 1,-12,12h-14a12,12 0,0 1,-12,-12v-14a12,12 0,0 1,12,-12z" />
+        <path android:fillColor="#FFFFFF" android:pathData="M36,33v16l13,-8z" />
+    </group>
+</vector>
