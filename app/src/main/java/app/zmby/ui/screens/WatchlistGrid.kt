@@ -1,5 +1,7 @@
 package app.zmby.ui.screens
 
+import app.zmby.media.visibleText
+import app.zmby.media.UNTITLED
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -81,7 +83,7 @@ internal fun WatchlistGrid(nav: Nav) {
             val ref = watchlistRef(e, servers)
             PosterCard2x3(
                 imageUrl = ref?.let { app.library.primaryImage(it) },
-                title = e.title,
+                title = visibleText(e.title) ?: UNTITLED,
                 onClick = { if (ref != null) nav.open(ref) },
                 topEnd = if (e.instances.size > 1) "${e.instances.size} 个版本" else null,
                 subtitle = listOfNotNull(if (e.type == "Series") "剧集" else "电影", e.year?.toString()).joinToString(" · "),

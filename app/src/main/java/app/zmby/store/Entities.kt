@@ -219,3 +219,24 @@ data class SyncState(
     @ColumnInfo(name = "last_pull_at") val lastPullAt: Long = 0,
     @ColumnInfo(name = "last_error") val lastError: String? = null,
 )
+
+/**
+ * 观影统计 (P4): one played film or episode on one server, as that server's play history reports it
+ * (`Filters=IsPlayed`). [workKey] lets the same work played on two servers count once.
+ */
+@Entity(tableName = "play_history", primaryKeys = ["server_id", "item_id"], indices = [Index("work_key")])
+data class PlayHistoryRow(
+    @ColumnInfo(name = "server_id") val serverId: String,
+    @ColumnInfo(name = "item_id") val itemId: String,
+    val type: String,
+    @ColumnInfo(name = "work_key") val workKey: String,
+    /** An episode's series: its store key and name (for 「看得最多的剧」). */
+    @ColumnInfo(name = "series_key") val seriesKey: String? = null,
+    @ColumnInfo(name = "series_name") val seriesName: String? = null,
+    val title: String? = null,
+    @ColumnInfo(name = "runtime_ms") val runtimeMs: Long? = null,
+    /** UserData.LastPlayedDate in epoch ms; null when the server does not say. */
+    @ColumnInfo(name = "played_at") val playedAt: Long? = null,
+    @ColumnInfo(name = "play_count") val playCount: Int = 1,
+    @ColumnInfo(name = "fetched_at") val fetchedAt: Long = 0,
+)

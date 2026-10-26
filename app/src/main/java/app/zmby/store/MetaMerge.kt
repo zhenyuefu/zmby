@@ -1,5 +1,6 @@
 package app.zmby.store
 
+import app.zmby.media.visibleText
 import app.zmby.aggregate.imdb
 import app.zmby.aggregate.tmdb
 import app.zmby.aggregate.tvdb
@@ -83,7 +84,7 @@ object MetaMerge {
 
     /** (server, value): the first Chinese value in priority order, else the first non-empty one. */
     fun pickText(sorted: List<MetaCandidate>, field: (MetaCandidate) -> String?): Pair<String, String>? {
-        val values = sorted.mapNotNull { c -> field(c)?.trim()?.takeIf { it.isNotEmpty() }?.let { c.server to it } }
+        val values = sorted.mapNotNull { c -> visibleText(field(c))?.let { c.server to it } }
         return values.firstOrNull { isChinese(it.second) } ?: values.firstOrNull()
     }
 

@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
 
 data class LiveSearchState(val term: String = "", val snapshot: SearchSnapshot? = null)
 
-/** One debounced, cancellable search shared by typing, candidate preview and explicit submission. */
+/** One debounced, cancellable search shared by typing and explicit submission. */
 class LiveSearch(
     private val scope: CoroutineScope,
     private val search: (String, Hit?) -> Flow<SearchSnapshot>,

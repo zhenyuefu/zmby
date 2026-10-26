@@ -45,7 +45,7 @@ class Library(
     legacy: SessionStore,
     private val caps: ServerCapsStore,
     private val store: app.zmby.store.LocalStore? = null,
-) : VersionSource, SearchSource {
+) : VersionSource, SearchSource, app.zmby.aggregate.MetadataSource {
     private val prefs = context.getSharedPreferences("libraries", Context.MODE_PRIVATE)
     private val historyPrefs = context.getSharedPreferences("search_history", Context.MODE_PRIVATE)
     private val versionPrefs = context.getSharedPreferences("picked_versions", Context.MODE_PRIVATE)
@@ -179,6 +179,18 @@ class Library(
     fun setOnHome(server: String, libraryId: String, on: Boolean) = toggle("${KEY_HOME_OFF}_v2", "$server|$libraryId", !on)
     fun setInSearch(server: String, libraryId: String, on: Boolean) = toggle("${KEY_SEARCH_OFF}_v2", "$server|$libraryId", !on)
 
+    fun backupSwitches(server: String): Pair<List<String>, List<String>> {
+        fun read(key: String) = offSet("${key}_v2").filter { it.startsWith("$server|") }.map { it.substringAfter('|') }
+        return read(KEY_HOME_OFF) to read(KEY_SEARCH_OFF)
+    }
+
+    fun restoreSwitches(server: String, homeOff: List<String>, searchOff: List<String>) {
+        for ((key, ids) in listOf(KEY_HOME_OFF to homeOff, KEY_SEARCH_OFF to searchOff)) {
+            val all = offSet("${key}_v2").filter { it.startsWith("$server|") }.map { it.substringAfter('|') }
+            (all + ids).distinct().forEach { id -> toggle("${key}_v2", "$server|$id", id in ids) }
+        }
+    }
+
     /** Library switches in memory; the file is written behind on [Disk]. */
     private val switchSets = HashMap<String, Set<String>>()
 
@@ -243,12 +255,15 @@ class Library(
     }
 
     /** A person on [server] by name (人物页: person ids never cross servers). */
-    suspend fun person(server: String, name: String): BaseItemDto = emby.person(session(server), name)
+    override suspend fun person(server: String, name: String): BaseItemDto = emby.person(session(server), name)
+
+    override suspend fun persons(server: String, ids: List<String>): List<BaseItemDto> = emby.persons(session(server), ids).items
+
+    override suspend fun peopleByIds(server: String, ids: List<String>): List<BaseItemDto> = emby.peopleByIds(session(server), ids).items
 
     /** Films and series with [server]'s person [personId], with People for the person's part. */
-    suspend fun worksOf(server: String, personId: String): List<BaseItemDto> =
+    override suspend fun worksOf(server: String, personId: String): List<BaseItemDto> =
         emby.itemsWithPerson(session(server), personId).items.filter { it.type == "Movie" || it.type == "Series" }
-            .also { note(it.map { i -> ServerItem(server, i) }) }
 
     suspend fun genres(server: String, parentId: String?, types: String): List<String> =
         emby.genres(session(server), parentId, types).items.mapNotNull { it.name?.takeIf(String::isNotBlank) }
@@ -267,7 +282,14 @@ class Library(
         items.also { note(it.map { i -> ServerItem(server, i) }) }
     }
 
+    suspend fun resourceItem(server: String, id: String): BaseItemDto = emby.resourceItem(session(server),id)
+
     override suspend fun item(server: String, id: String): BaseItemDto = emby.item(session(server), id)
+
+    suspend fun playedItems(server: String, start: Int, limit: Int) = emby.playedItems(session(server), start, limit)
+
+    /** [id]'s base fields and ProviderIds only (a series' IDs for the segment databases). */
+    suspend fun providerIdsOf(server: String, id: String): BaseItemDto? = emby.providerIdsOf(session(server), listOf(id)).items.firstOrNull()
     override suspend fun seasons(server: String, seriesId: String) = emby.seasons(session(server), seriesId).items
 
     // ---- aggregation (VersionSource, SearchSource)
@@ -323,6 +345,7 @@ class Library(
     // ---- images
 
     fun primaryImage(ref: ServerItem, maxHeight: Int = 440): String? {
+        if (ref.server == "catalog") return ref.item.imageTags["Primary"]
         val s = registry.session(ref.server) ?: return null
         val item = ref.item
         item.imageTags["Primary"]?.let { return emby.imageUrl(s, item.id, "Primary", it, maxHeight) }
@@ -345,6 +368,7 @@ class Library(
     }
 
     fun backdrop(ref: ServerItem, maxHeight: Int = 1080): String? {
+        if (ref.server == "catalog") return ref.item.backdropImageTags.firstOrNull()
         val s = registry.session(ref.server) ?: return null
         val item = ref.item
         item.backdropImageTags.firstOrNull()?.let { return emby.imageUrl(s, item.id, "Backdrop", it, maxHeight) }
@@ -359,6 +383,7 @@ class Library(
      * logo); null when the server has none and the title is drawn as text.
      */
     fun logo(ref: ServerItem, maxHeight: Int = 340): String? {
+        if (ref.server == "catalog") return ref.item.imageTags["Logo"]
         val s = registry.session(ref.server) ?: return null
         val item = ref.item
         item.imageTags["Logo"]?.let { return emby.imageUrl(s, item.id, "Logo", it, maxHeight) }
@@ -374,7 +399,7 @@ class Library(
         return emby.imageUrl(s, ref.item, type, ref.tag, maxHeight)
     }
 
-    suspend fun images(server: String, itemId: String) = emby.images(session(server), itemId)
+    override suspend fun images(server: String, itemId: String) = emby.images(session(server), itemId)
 
     fun itemJson(item: BaseItemDto): String = emby.json.encodeToString(BaseItemDto.serializer(), item)
 
@@ -445,7 +470,8 @@ class Library(
         if (known.pinyinOverride != Override.Auto) return
         val fresh = known.pinyinCheckedAt > 0 && now - known.pinyinCheckedAt < ServerCaps.RECHECK_MS
         if (fresh && (version == null || version == known.version)) return
-        val result = runCatching { PinyinProbe.probe(latest) { term -> emby.searchTitles(s, term, 5).items } }
+        // Picking the sample converts titles to pinyin (pinyin4j reads its tables): never on the main thread.
+        val result = runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { PinyinProbe.probe(latest) { term -> emby.searchTitles(s, term, 5).items } } }
             .onFailure { ZLog.w("Pinyin", "probe of ${status.name} failed: $it") }
             .getOrElse { return }
         caps.update(s.capsKey) { it.copy(pinyin = result, pinyinCheckedAt = now, version = version ?: it.version) }

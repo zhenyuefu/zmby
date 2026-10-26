@@ -71,6 +71,26 @@ class PlaybackMonitorTest {
     }
 
     @Test
+    fun skipsTheIntroThroughThePlayerAndReportsTheJump() = runTest {
+        val player = FakePlayer().apply { status = playing(58_000) }
+        val reporter = Recorder()
+        val skipper = kotlinx.coroutines.CompletableDeferred(
+            app.zmby.segments.SegmentSkipper(listOf(app.zmby.segments.Segment(app.zmby.segments.SegmentKind.Intro, 60_000, 150_000)), skipIntro = true, skipRecap = true, skipEnd = true),
+        )
+        val m = PlaybackMonitor(player, reporter, 0, 9_000_000, 90, now = { testScheduler.currentTime }, skipper = skipper)
+        val job = launch { m.watch() }
+        advanceTimeBy(1_100)
+        player.status = playing(59_000)
+        advanceTimeBy(1_000)
+        player.status = playing(60_500)
+        advanceTimeBy(1_000)
+        assertEquals(listOf(150_000L), player.seeks)
+        assertEquals("progress@150000", reporter.events.last())
+        assertEquals(1, m.skips)
+        job.cancel()
+    }
+
+    @Test
     fun pauseIsReportedImmediately() = runTest {
         val player = FakePlayer().apply { status = playing(5_000) }
         val reporter = Recorder()

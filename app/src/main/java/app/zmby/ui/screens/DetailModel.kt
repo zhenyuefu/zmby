@@ -1,5 +1,7 @@
 package app.zmby.ui.screens
 
+import app.zmby.media.visibleText
+import app.zmby.media.titleOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.zmby.ZmbyApp
@@ -7,13 +9,13 @@ import app.zmby.aggregate.Confidence
 import app.zmby.aggregate.ServerVersions
 import app.zmby.aggregate.Verdict
 import app.zmby.data.ServerItem
-import app.zmby.store.StoreKeys
 import app.zmby.log.ZLog
 import app.zmby.store.CachedDetail
 import app.zmby.store.CastEntry
 import app.zmby.store.WorkMeta
 import app.zmby.ui.userMessage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,7 +37,7 @@ import kotlinx.coroutines.launch
  * needs and merges the work anew, and the screen follows the store.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class DetailViewModel(private val app: ZmbyApp, val server: String, val itemId: String) : ViewModel() {
+class DetailViewModel(private val app: ZmbyApp, val server: String, val itemId: String, private val provider: app.zmby.catalog.CatalogId? = null, private val resourceOnly: Boolean = false) : ViewModel() {
     val detail: StateFlow<CachedDetail?> = app.store.detailFlow(server, itemId)
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -54,52 +56,53 @@ class DetailViewModel(private val app: ZmbyApp, val server: String, val itemId: 
     private val _cachedVersions = MutableStateFlow<Map<String, ServerVersions.Found>>(emptyMap())
     val cachedVersions: StateFlow<Map<String, ServerVersions.Found>> = _cachedVersions.asStateFlow()
 
+    private val _lookup = MutableStateFlow<app.zmby.catalog.CatalogWork?>(null)
+    val lookup: StateFlow<app.zmby.catalog.CatalogWork?> = _lookup.asStateFlow()
+    private val _catalog = MutableStateFlow<app.zmby.catalog.CatalogWork?>(null)
+    val catalog: StateFlow<app.zmby.catalog.CatalogWork?> = _catalog.asStateFlow()
+    private val _fallbackReady = MutableStateFlow(false)
+    val fallbackReady: StateFlow<Boolean> = _fallbackReady.asStateFlow()
+    var catalogLanguageKey: List<String> = emptyList()
+        private set
+    private val generation = java.util.concurrent.atomic.AtomicInteger()
     private var refreshing: Job? = null
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val key = detail.filterNotNull().map { it.workKey }.first()
             _cachedVersions.value = cachedVersions(app, key)
         }
     }
 
     /** Opening the page and back from the player. */
-    fun refresh() {
-        if (refreshing?.isActive == true) return
-        refreshing = viewModelScope.launch {
+    fun refresh(replace: Boolean = false) {
+        if (refreshing?.isActive == true) { if (!replace) return else refreshing?.cancel() }
+        val ticket = generation.incrementAndGet()
+        val languageKey = listOf(app.settings.metadataLanguage.value,app.settings.posterLanguage.value,app.settings.logoLanguage.value,app.settings.tmdbToken.value)
+        if(catalogLanguageKey != languageKey) { _catalog.value = null; _fallbackReady.value = false }
+        refreshing = viewModelScope.launch(Dispatchers.IO) {
+            val loader = DetailMetadataLoader(
+                seed = { if (server == "catalog") null else app.store.detail(server, itemId)?.item },
+                identity = { app.library.providerIdsOf(server, itemId)?.also { app.store.putItems(server,listOf(it)) } },
+                serverDetail = { app.library.item(server, itemId).also { app.store.putDetail(server, it) } },
+                resolve = { if (resourceOnly || it.type !in setOf("Movie", "Series")) null else app.catalog.resolve(it) },
+                cached = app.catalog::cached,
+                fetch = app.catalog::work,
+            )
             try {
-                val item = app.library.item(server, itemId)
-                _error.value = null
-                val key = app.store.putDetail(server, item)
-                app.store.touch(server, itemId, key)
-                refreshMeta(app, key, server, itemId)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Offline or failing: the cached page stays; only an empty page says why.
-                ZLog.w("Detail", "refresh of $server:$itemId failed: ${e.message}")
-                if (detail.value == null) _error.value = e.userMessage()
-            }
+                loader.load(provider, server != "catalog", resourceOnly) { result ->
+                    if(generation.get() != ticket) return@load
+                    result.identity?.let { _lookup.value = it }
+                    result.work?.let { catalogLanguageKey = languageKey; _catalog.value = it }
+                    _fallbackReady.value = result.fallbackReady
+                    _error.value = result.error
+                }
+            } catch (e: CancellationException) { throw e }
+
         }
     }
 
     companion object {
-        /**
-         * Asks the metadata servers that have this work for the image sizes still unknown (once per
-         * instance), then merges the work again.
-         */
-        suspend fun refreshMeta(app: ZmbyApp, key: String, server: String, itemId: String) {
-            val sources = app.metadataServers()
-            for ((s, id) in app.store.missingImages(key, sources.toSet())) {
-                // A work keyed by one item only takes that item's images.
-                if (!StoreKeys.isExternal(key) && (s != server || id != itemId)) continue
-                runCatching { app.library.images(s, id) }
-                    .onSuccess { app.store.putImages(s, id, it) }
-                    .onFailure { if (it is CancellationException) throw it; ZLog.d("Detail", "image sizes of $s:$id: ${it.message}") }
-            }
-            app.store.remerge(key, sources)
-        }
-
         suspend fun cachedVersions(app: ZmbyApp, forKey: String): Map<String, ServerVersions.Found> =
             app.store.versions(forKey).mapNotNull { v ->
                 val item = app.store.decodeItem(v.itemJson) ?: return@mapNotNull null
@@ -138,7 +141,7 @@ data class DetailDisplay(
 fun ZmbyApp.display(ref: ServerItem, meta: WorkMeta?): DetailDisplay {
     val item = ref.item
     return DetailDisplay(
-        title = meta?.title ?: item.name.orEmpty(),
+        title = visibleText(meta?.title) ?: titleOf(item),
         overview = meta?.overview ?: item.overview,
         genres = meta?.genres?.takeIf { it.isNotEmpty() } ?: item.genres,
         year = meta?.year ?: item.productionYear,
@@ -149,3 +152,7 @@ fun ZmbyApp.display(ref: ServerItem, meta: WorkMeta?): DetailDisplay {
         logo = meta?.logo?.let { library.imageUrl(it, "Logo", 340) } ?: library.logo(ref),
     )
 }
+
+/** Canonical metadata replaces fields inside the existing detail layout. */
+fun app.zmby.catalog.CatalogWork.display() = DetailDisplay(title, overview, genres, year, null, rating,
+    ref.source == "tmdb", backdrop, logo)

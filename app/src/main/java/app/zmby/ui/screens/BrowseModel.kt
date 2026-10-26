@@ -1,5 +1,7 @@
 package app.zmby.ui.screens
 
+import app.zmby.ui.userMessage
+
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -38,6 +40,8 @@ data class BrowseState(
     val genres: List<String> = emptyList(),
     /** Bumps on every server, library or query change: the grid starts again from the top. */
     val generation: Int = 0,
+    /** The first page failed and nothing is cached (shown with 重试). */
+    val error: String? = null,
 )
 
 /**
@@ -118,6 +122,15 @@ class BrowseViewModel(private val app: ZmbyApp, private val types: String) : Vie
         _pages.value.keys.forEach { p -> viewModelScope.launch { load(p, cacheFirst = false) } }
     }
 
+    /** 重试 after the first page failed: the server's cool-down is lifted and the page asked again. */
+    fun retry() {
+        val server = _state.value.server ?: return
+        app.registry.retry(server)
+        _state.update { it.copy(error = null) }
+        loading[0]?.cancel()
+        loading[0] = viewModelScope.launch { load(0, cacheFirst = false) }
+    }
+
     private suspend fun load(page: Int, cacheFirst: Boolean = true) {
         val s = _state.value
         val server = s.server ?: return
@@ -141,13 +154,15 @@ class BrowseViewModel(private val app: ZmbyApp, private val types: String) : Vie
                 !withContext(Dispatchers.Default) { SortCheck.consistent(result.items, s.query.sort, s.query.descending) }
             if (unsupported) ZLog.w("Browse", "${app.registry.get(server)?.name} did not keep the ${s.query.sort} order")
             val first = !_state.value.loaded
-            _state.update { it.copy(total = result.totalRecordCount, loaded = true, sortUnsupported = it.sortUnsupported || unsupported) }
+            _state.update { it.copy(total = result.totalRecordCount, loaded = true, sortUnsupported = it.sortUnsupported || unsupported, error = null) }
             if (first) ensure(lastRange.first, lastRange.second)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             ZLog.w("Browse", "page $page of ${app.registry.get(server)?.name}: ${e.message}")
-            if (gen == _state.value.generation && !_state.value.loaded) _state.update { it.copy(loaded = cached != null) }
+            if (gen == _state.value.generation && !_state.value.loaded) {
+                _state.update { it.copy(loaded = cached != null, error = if (cached == null && page == 0) "${app.registry.get(server)?.name ?: "这台服务器"}没有返回内容：${e.userMessage()}" else null) }
+            }
         }
     }
 

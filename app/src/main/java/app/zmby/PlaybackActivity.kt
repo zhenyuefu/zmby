@@ -29,6 +29,15 @@ import app.zmby.playback.PlaybackMonitor
 import app.zmby.playback.SubtitlePrepareException
 import app.zmby.playback.SubtitleSelectionVerifier
 import app.zmby.playback.TrackChoice
+import app.zmby.playback.TrackLanguages
+import app.zmby.playback.Alternate
+import app.zmby.playback.Failover
+import app.zmby.segments.SegmentSkipper
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import app.zmby.ui.components.Glyph
 import app.zmby.ui.components.GlassButton
 import app.zmby.ui.rememberInitialFocus
@@ -59,6 +68,17 @@ class PlaybackActivity : ComponentActivity() {
     private var current: BaseItemDto? = null
     /** The server the item belongs to; progress and the next episode come from it. */
     private var server: String = ""
+    /** Up Next: seconds left before the next episode plays by itself; null when not counting. */
+    private val countdown = mutableStateOf<Int?>(null)
+    /** 播放失败自动换源: the other versions in default order, and which were tried. */
+    private var alternates: List<Alternate> = emptyList()
+    private val tried = mutableSetOf<String>()
+    private var requestedStartMs = 0L
+    /** Languages of the last playback, for the next episode or another version. */
+    private var carried: TrackLanguages? = null
+    private var launchedAt = 0L
+    /** A switch to another version is in progress (shown instead of the error). */
+    private var switching = false
 
     private val playerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         onPlayerResult(result.data)
@@ -103,27 +123,61 @@ class PlaybackActivity : ComponentActivity() {
         lifecycleScope.launch {
             // Normally ready long ago; after the process was killed this screen can come first.
             zmby.awaitReady()
+            alternates = zmby.takeAlternates(intent.getStringExtra(EXTRA_ALTERNATES))
             val json = intent.getStringExtra(EXTRA_ITEM) ?: return@launch fail("缺少播放条目")
             val item = withContext(Dispatchers.Default) { zmby.emby.json.decodeFromString(BaseItemDto.serializer(), json) }
-            start(item, intent.getLongExtra(EXTRA_START_MS, 0), intent.getStringExtra(EXTRA_SOURCE_ID), tracks)
+            requestedStartMs = intent.getLongExtra(EXTRA_START_MS, 0)
+            val sourceId = intent.getStringExtra(EXTRA_SOURCE_ID)
+            tried += Failover.key(server, sourceId)
+            start(item, requestedStartMs, sourceId, tracks)
         }
     }
 
+    /**
+     * 连播 Up Next: the next episode on the same server (and so the same line), with the languages
+     * of the episode just watched. Counts down when 倒计时自动播放 is on; any key stops the count.
+     */
     @androidx.compose.runtime.Composable
     private fun NextEpisodePrompt(ep: BaseItemDto) {
-        Text("下一集", fontSize = 26.sp, color = Z.textSecondary)
-        Text(
-            listOfNotNull(ep.seriesName, episodeCode(ep), ep.name).joinToString("  ·  "),
-            fontSize = 44.sp,
-            fontWeight = FontWeight.Black,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            GlassButton("播放下一集", {
-                next.value = null
-                start(ep, ep.resumeMs, null)
-            }, Modifier.focusRequester(rememberInitialFocus(ep.id)), glyph = Glyph.Play)
-            GlassButton("返回", { finish() })
+        val left = countdown.value
+        androidx.compose.runtime.LaunchedEffect(ep.id, left != null) {
+            while (true) {
+                val n = countdown.value ?: break
+                if (n <= 0) { playNext(ep); break }
+                kotlinx.coroutines.delay(1_000)
+                countdown.value = countdown.value?.minus(1)
+            }
         }
+        Column(
+            Modifier.onPreviewKeyEvent { e ->
+                // Moving around or pressing a key means the user is choosing: stop counting.
+                if (e.type == KeyEventType.KeyDown && e.key != Key.DirectionCenter && e.key != Key.Enter) countdown.value = null
+                false
+            },
+            verticalArrangement = Arrangement.spacedBy(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(if (left != null) "$left 秒后播放下一集" else "下一集", fontSize = 26.sp, color = Z.textSecondary)
+            Text(
+                listOfNotNull(ep.seriesName, episodeCode(ep), ep.name).joinToString("  ·  "),
+                fontSize = 44.sp,
+                fontWeight = FontWeight.Black,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                GlassButton("播放下一集", { playNext(ep) }, Modifier.focusRequester(rememberInitialFocus(ep.id)), glyph = Glyph.Play)
+                GlassButton("返回", { countdown.value = null; finish() })
+            }
+        }
+    }
+
+    private fun playNext(ep: BaseItemDto) {
+        countdown.value = null
+        next.value = null
+        // A new episode: its own versions are not known here, so nothing to fall back on.
+        alternates = emptyList()
+        tried.clear()
+        requestedStartMs = ep.resumeMs
+        start(ep, ep.resumeMs, null, TrackChoice(), carried)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -131,14 +185,27 @@ class PlaybackActivity : ComponentActivity() {
         outState.putBoolean(KEY_LAUNCHED, zmby.activePlayback != null)
     }
 
-    private fun start(item: BaseItemDto, startMs: Long, sourceId: String?, tracks: TrackChoice = TrackChoice()) {
+    private fun start(item: BaseItemDto, startMs: Long, sourceId: String?, tracks: TrackChoice = TrackChoice(), languages: TrackLanguages? = null) {
         val app = zmby
         val session = app.registry.session(server) ?: return fail("这台服务器已删除")
         current = item
         failed.value = false
         playWithoutSubtitle.value = null
-        message.value = "正在准备播放…"
+        if (!switching) message.value = "正在准备播放…"
+        switching = false
         val percent = app.settings.watchedPercent.value
+        val playServer = server
+        // 片头片尾: looked up beside the preparation and never waited for (local-data spec).
+        val plan = app.appScope.async(Dispatchers.IO) {
+            runCatching { app.segmentPlan(playServer, item, item.runtimeMs) }
+                .onFailure { ZLog.w(TAG, "segments for ${item.id} unavailable", it) }
+                .getOrNull()
+        }
+        val skipper = app.appScope.async {
+            plan.await()?.takeIf { it.isNotEmpty() }?.let {
+                SegmentSkipper.of(it, episode = item.type == "Episode", intro = app.settings.skipIntro.value, recap = app.settings.skipRecap.value, credits = app.settings.skipCredits.value)
+            }
+        }
 
         lifecycleScope.launch {
             val prepared = try {
@@ -146,17 +213,21 @@ class PlaybackActivity : ComponentActivity() {
                 app.preparer.prepare(
                     session, item, startMs, sourceId, percent, tracks,
                     subtitles = target?.subtitles ?: ZidooPlayer.SubtitleDelivery.IntentExtras,
-                    audioLanguage = app.settings.audioLanguage.value,
-                    subtitleLanguage = app.settings.subtitleLanguage.value,
+                    audioLanguage = languages?.audio ?: app.settings.audioLanguage.value,
+                    subtitleLanguage = languages?.subtitle ?: app.settings.subtitleLanguage.value,
                 )
             } catch (e: SubtitlePrepareException) {
                 ZLog.w(TAG, "subtitle prepare failed for ${item.id}", e)
-                playWithoutSubtitle.value = { start(item, startMs, sourceId, tracks.copy(subtitle = ZidooTracks.SUBTITLE_OFF)) }
+                skipper.cancel()
+                playWithoutSubtitle.value = { start(item, startMs, sourceId, tracks.copy(subtitle = ZidooTracks.SUBTITLE_OFF), languages) }
                 return@launch fail("所选字幕无法加载：${e.userMessage()}")
             } catch (e: Exception) {
                 ZLog.w(TAG, "prepare failed for ${item.id}", e)
+                skipper.cancel()
+                if (switchToNext(item, "无法获取播放地址")) return@launch
                 return@launch fail("无法获取播放地址：${e.userMessage()}")
             }
+            carried = prepared.languages
             val zidoo = ZidooIntents.installedPlayer(this@PlaybackActivity)
             val useZidoo = zidoo != null
             val playerIntent = if (zidoo != null) {
@@ -164,7 +235,7 @@ class PlaybackActivity : ComponentActivity() {
             } else {
                 ZidooIntents.genericIntent(prepared.launch)
             }
-            val monitor = PlaybackMonitor(app.zidooStatus, prepared.reporter, prepared.startPositionMs, prepared.runtimeMs, percent)
+            val monitor = PlaybackMonitor(app.zidooStatus, prepared.reporter, prepared.startPositionMs, prepared.runtimeMs, percent, skipper = skipper)
             app.activePlayback?.let { old ->
                 old.watchJob.cancel()
                 app.releaseLocal(old.local)
@@ -186,6 +257,7 @@ class PlaybackActivity : ComponentActivity() {
                     "type=${prepared.launch.mimeType} url=${prepared.launch.uri} extras=${prepared.launch.extras.keys}",
             )
             try {
+                launchedAt = android.os.SystemClock.elapsedRealtime()
                 playerLauncher.launch(playerIntent)
             } catch (e: ActivityNotFoundException) {
                 ZLog.e(TAG, "no player for ${prepared.launch.mimeType}", e)
@@ -205,7 +277,16 @@ class PlaybackActivity : ComponentActivity() {
         active.watchJob.cancel()
         app.releaseLocal(active.local)
         val result = ZidooIntents.parseResult(data)
-        ZLog.i(TAG, "player returned $result")
+        val elapsed = android.os.SystemClock.elapsedRealtime() - launchedAt
+        ZLog.i(TAG, "player returned $result after ${elapsed}ms (video seen: ${active.monitor.started}, skips: ${active.monitor.skips})")
+        val playedItem = current
+        // 播放失败自动换源: the player gave up before the status API ever saw the video.
+        if (playedItem != null && ZidooIntents.installedPlayer(this) != null && Failover.failedToStart(elapsed, active.monitor.started, result) &&
+            switchToNext(playedItem, "播放器没能打开这个版本")
+        ) {
+            app.appScope.launch { active.monitor.finish(result) }
+            return
+        }
         // Reporting runs in the app scope so it completes even if this screen goes away.
         val outcome = app.appScope.async { active.monitor.finish(result) }
         val item = current
@@ -214,6 +295,8 @@ class PlaybackActivity : ComponentActivity() {
             val done = outcome.await() ?: return@launch
             runCatching { app.store.recordProgress(server, item.id, msToTicks(done.positionMs ?: 0), done.watched) }
                 .onFailure { ZLog.w(TAG, "local progress not recorded", it) }
+            // 本地手动标记 › 取上次停止位置.
+            done.positionMs?.let { pos -> runCatching { app.segments.recordStop(app.workKeyOf(server, item), pos) } }
             app.onPlayed(ServerItem(server, item), done)
         }
         lifecycleScope.launch {
@@ -225,8 +308,32 @@ class PlaybackActivity : ComponentActivity() {
                 .getOrNull()
             if (upNext == null) return@launch finish()
             ZLog.i(TAG, "offer next episode ${upNext.id} ${episodeCode(upNext)}")
+            countdown.value = if (app.settings.upNextCountdown.value) UP_NEXT_SECONDS else null
             next.value = upNext
         }
+    }
+
+    /**
+     * 播放失败自动换源: plays the next untried version (default order) with the same start and the
+     * languages chosen for this one, and says which server and version it switched to. False when
+     * switched off or nothing is left.
+     */
+    private fun switchToNext(failedItem: BaseItemDto, why: String): Boolean {
+        val app = zmby
+        if (!app.settings.autoFailover.value) return false
+        val alt = Failover.next(alternates, tried) ?: return false
+        tried += Failover.key(alt)
+        val from = app.registry.get(server)?.name ?: "这台服务器"
+        ZLog.i(TAG, "failover: ${failedItem.id} on $from failed ($why); trying ${alt.label}")
+        server = alt.server
+        switching = true
+        message.value = "$why，已换到 ${alt.label}"
+        failed.value = false
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(SWITCH_NOTICE_MS)
+            start(alt.item, requestedStartMs, alt.mediaSourceId, TrackChoice(), carried)
+        }
+        return true
     }
 
     private fun fail(text: String) {
@@ -245,10 +352,15 @@ class PlaybackActivity : ComponentActivity() {
         private const val EXTRA_AUDIO = "audio_index"
         private const val EXTRA_SUBTITLE = "subtitle_index"
         private const val NO_TRACK = Int.MIN_VALUE
+        private const val EXTRA_ALTERNATES = "alternates"
         private const val REPORT_WAIT_MS = 3_000L
+        private const val UP_NEXT_SECONDS = 10
+        /** Long enough to read which version it switched to. */
+        private const val SWITCH_NOTICE_MS = 1_800L
 
-        fun intent(context: Context, server: String, itemJson: String, startPositionMs: Long, mediaSourceId: String? = null, tracks: TrackChoice = TrackChoice()): Intent =
+        fun intent(context: Context, server: String, itemJson: String, startPositionMs: Long, mediaSourceId: String? = null, tracks: TrackChoice = TrackChoice(), alternatesToken: String? = null): Intent =
             Intent(context, PlaybackActivity::class.java)
+                .putExtra(EXTRA_ALTERNATES, alternatesToken)
                 .putExtra(EXTRA_SERVER, server)
                 .putExtra(EXTRA_ITEM, itemJson)
                 .putExtra(EXTRA_START_MS, startPositionMs)

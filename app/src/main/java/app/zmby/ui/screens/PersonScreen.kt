@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import app.zmby.media.titleOf
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,6 +58,10 @@ fun PersonScreen(nav: Nav, personKey: String, server: String, personId: String) 
     val works by vm.works.collectAsStateWithLifecycle()
     var fullBio by remember { mutableStateOf(false) }
     val p = person
+    if (p?.tmdb?.toLongOrNull()?.let { it > 0 } == true && app.catalog.configured) {
+        CatalogPersonScreen(nav, "tmdb", p.tmdb!!)
+        return
+    }
     Row(Modifier.fillMaxSize()) {
         Column(Modifier.width(600.dp).fillMaxHeight().padding(start = 80.dp, top = 80.dp, end = 0.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             Box(Modifier.width(520.dp)) {
@@ -71,6 +76,8 @@ fun PersonScreen(nav: Nav, personKey: String, server: String, personId: String) 
                 Text(bio, fontSize = 21.sp, lineHeight = 34.sp, color = Z.textPrimary.copy(alpha = 0.78f), maxLines = 6, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.width(520.dp), onTextLayout = { cut = it.hasVisualOverflow })
                 if (cut) GlassButton("完整简介", { fullBio = true }, height = 56.dp, horizontalPadding = 28.dp, fontSize = 20)
+            } else {
+                Text("暂无人物简介", fontSize = 21.sp, color = Z.textSecondary)
             }
         }
         var kindIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -109,7 +116,7 @@ fun PersonScreen(nav: Nav, personKey: String, server: String, personId: String) 
                 val first = w === shown.firstOrNull()
                 PosterCard2x3(
                     imageUrl = app.library.primaryImage(w.lead),
-                    title = w.lead.item.name.orEmpty(),
+                    title = titleOf(w.lead.item),
                     onClick = { nav.open(w.lead) },
                     width = 196.dp,
                     topEnd = if (w.versions > 1) "${w.versions} 个版本" else null,

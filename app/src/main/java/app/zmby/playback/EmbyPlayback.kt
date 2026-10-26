@@ -80,6 +80,8 @@ data class PreparedPlayback(
     val runtimeMs: Long?,
     /** Set when the video goes out as a local .strm with the chosen subtitle beside it; release it after playback. */
     val local: LocalStrmSession? = null,
+    /** The languages played, carried over to the next episode or another version. */
+    val languages: TrackLanguages? = null,
 )
 
 /** The user's track picks in Emby stream indexes; null = the server's default for this user. */
@@ -158,7 +160,8 @@ class PlaybackPreparer(
             ),
         )
         val reporter = EmbyPlaybackReporter(client, session, item.id, source.id, info.playSessionId, runTimeTicks)
-        return PreparedPlayback(launch, reporter, startPositionMs, runTimeTicks?.let(::ticksToMs), local)
+        val languages = TrackPreference.carried(source, tracks, audioLanguage, subtitleLanguage)
+        return PreparedPlayback(launch, reporter, startPositionMs, runTimeTicks?.let(::ticksToMs), local, languages)
     }
 
     /**

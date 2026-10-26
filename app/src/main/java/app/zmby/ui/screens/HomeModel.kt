@@ -91,19 +91,43 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
         }
     }
 
-    private val _hero = MutableStateFlow<BaseItemDto?>(null)
-    /** The hero's full item (media sources for badges and the version count), cached first. */
-    val heroFull: StateFlow<BaseItemDto?> = _hero.asStateFlow()
+    private val _heroDetails = MutableStateFlow<Map<String, BaseItemDto>>(emptyMap())
+    /** Full items of the hero's titles (media sources for the badges), by [ServerItem.key]; cached first. */
+    val heroDetails: StateFlow<Map<String, BaseItemDto>> = _heroDetails.asStateFlow()
+    /** Hero titles asked from their servers since the last [forgetHeroFetches]. */
+    private val heroFetched = HashSet<String>()
     private var heroJob: Job? = null
 
-    fun showHero(ref: ServerItem?) {
+    /**
+     * The hero's current title and its neighbours, nearest first (home hero prefetch): the local copy
+     * at once, then each server once; a newer window cancels what is left of the older one.
+     */
+    fun prefetchHero(refs: List<ServerItem>) {
         heroJob?.cancel()
-        if (ref == null) return
-        if (_hero.value?.id != ref.item.id) _hero.value = null
         heroJob = viewModelScope.launch {
-            app.store.detail(ref.server, ref.item.id)?.item?.takeIf { it.mediaSources.isNotEmpty() }?.let { _hero.value = it }
-            runCatching { app.library.item(ref.server, ref.item.id) }
-                .onSuccess { full -> _hero.value = full; app.store.putDetail(ref.server, full) }
+            for (ref in refs.filter { it.server != "catalog" }) {
+                if (ref.key in _heroDetails.value) continue
+                app.store.detail(ref.server, ref.item.id)?.item?.takeIf { it.mediaSources.isNotEmpty() }
+                    ?.let { full -> _heroDetails.value = _heroDetails.value + (ref.key to full) }
+            }
+            for (ref in refs.filter { it.server != "catalog" }) {
+                if (!heroFetched.add(ref.key)) continue
+                try {
+                    val full = app.library.item(ref.server, ref.item.id)
+                    _heroDetails.value = _heroDetails.value + (ref.key to full)
+                    app.store.putDetail(ref.server, full)
+                } catch (e: CancellationException) {
+                    heroFetched.remove(ref.key)
+                    throw e
+                } catch (e: Exception) {
+                    ZLog.d("Home", "hero item ${ref.key} not fetched: ${e.message}")
+                }
+            }
         }
+    }
+
+    /** Back from the player: ask the servers again (versions and progress may have changed). */
+    fun forgetHeroFetches() {
+        heroFetched.clear()
     }
 }

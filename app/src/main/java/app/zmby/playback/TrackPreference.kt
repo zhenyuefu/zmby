@@ -9,6 +9,9 @@ import app.zmby.zidoo.ZidooTracks
  * the user has not picked a track for this version. A pick always wins; "follow the server" keeps
  * the server's default for this user; a language nobody provides falls back to the server too.
  */
+/** Audio and subtitle languages as [TrackPreference] codes ([TrackPreference.OFF] = subtitles off). */
+data class TrackLanguages(val audio: String, val subtitle: String)
+
 object TrackPreference {
     /** Follow the server's default. */
     const val SERVER = ""
@@ -27,6 +30,27 @@ object TrackPreference {
             else -> pick(source.subtitleStreams.filter { !it.isForced && (!it.isExternal || LocalStrm.supports(it)) }, subtitleLanguage)?.index
         }
         return TrackChoice(audio, subtitle)
+    }
+
+    /**
+     * The languages a playback ended up with, to carry over to the next episode or another version
+     * (Up Next, 播放失败自动换源): stream indexes mean nothing in another file, languages do. Tracks
+     * left to the server count as the server's default ones; unknown languages keep [audioDefault] /
+     * [subtitleDefault].
+     */
+    fun carried(source: MediaSourceInfo, chosen: TrackChoice, audioDefault: String, subtitleDefault: String): TrackLanguages {
+        fun code(stream: MediaStream?): String? {
+            stream ?: return null
+            return LANGUAGES.firstOrNull { matches(stream, it.first) }?.first ?: stream.language?.lowercase()?.trim()?.takeIf { it.isNotEmpty() && it != "und" }
+        }
+        val audioIndex = chosen.audio ?: source.defaultAudioStreamIndex
+        val audio = code(source.audioStreams.firstOrNull { it.index == audioIndex }) ?: audioDefault
+        val subtitle = when (val i = chosen.subtitle ?: source.defaultSubtitleStreamIndex) {
+            null -> subtitleDefault
+            ZidooTracks.SUBTITLE_OFF -> OFF
+            else -> code(source.subtitleStreams.firstOrNull { it.index == i }) ?: subtitleDefault
+        }
+        return TrackLanguages(audio, subtitle)
     }
 
     private fun pick(streams: List<MediaStream>, language: String): MediaStream? {

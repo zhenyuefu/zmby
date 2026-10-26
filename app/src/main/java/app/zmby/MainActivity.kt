@@ -68,13 +68,7 @@ class MainActivity : ComponentActivity() {
 private fun App() {
     val library = androidx.compose.ui.platform.LocalContext.current.zmby.library
     val servers by library.servers.collectAsState()
-    if (servers.isEmpty()) {
-        // First start: add a server by hand or import a batch from the phone.
-        var importing by rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
-        if (importing) ImportScreen(onDone = { importing = false }) else LoginScreen(onDone = {}, onImport = { importing = true })
-        return
-    }
-    val stack = remember { mutableStateListOf(NavEntry(0, Route.Home)) }
+    val stack = remember { mutableStateListOf(NavEntry(0, if (servers.isEmpty()) Route.AddServer else Route.Home)) }
     var nextId by remember { androidx.compose.runtime.mutableLongStateOf(1L) }
     var homeTab by rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
     val states = rememberSaveableStateHolder()
@@ -89,6 +83,9 @@ private fun App() {
                     val from = stack.removeAt(stack.lastIndex)
                     states.removeState(from.id)
                     from.viewModelStore.clear()
+                    if (stack.size == 1 && stack.first().route == Route.AddServer && library.servers.value.isNotEmpty()) {
+                        stack.clear(); stack.add(NavEntry(nextId++,Route.Home))
+                    }
                     stack.last().focus.beginRestore()
                     ZLog.i("Nav", "${from.route} -> back to ${stack.last().route} (focus ${stack.last().focus.lastKey})")
                 }
@@ -111,15 +108,21 @@ private fun App() {
             states.SaveableStateProvider(entry.id) {
                 when (val route = entry.route) {
                     Route.Home -> HomeScreen(nav, homeTab) { homeTab = it }
-                    is Route.Detail -> DetailScreen(nav, route.server, route.itemId)
+                    is Route.Detail -> DetailScreen(nav, route.server, route.itemId, route.resourceOnly)
                     is Route.Series -> SeriesScreen(nav, route.server, route.seriesId, route.episodeId)
+                    is Route.Catalog -> app.zmby.ui.screens.CatalogRouteScreen(nav, route)
+                    is Route.CatalogPerson -> app.zmby.ui.screens.CatalogPersonScreen(nav, route.source, route.id)
                     Route.Search -> SearchScreen(nav)
                     Route.Servers -> ServersScreen(nav)
-                    Route.AddServer -> LoginScreen(onDone = { nav.back() }, onImport = { nav.go(Route.Import) })
-                    Route.Import -> ImportScreen(onDone = nav::back)
+                    Route.AddServer -> LoginScreen(onDone = { if(stack.size == 1) nav.replaceAll(Route.Home) else nav.back() }, onImport = { nav.go(Route.Import) })
+                    Route.Import -> ImportScreen(onDone = nav::back, onBackup = { nav.go(Route.Backup) })
+                    Route.BackupImport -> ImportScreen(onDone = nav::back, onBackup = { nav.go(Route.Backup) }, backupTab = true)
+                    Route.Backup -> app.zmby.ui.screens.BackupScreen(nav)
+                    is Route.Restore -> app.zmby.ui.screens.RestoreScreen(nav,route.uri,route.source)
                     Route.Settings -> SettingsScreen(nav)
                     is Route.Person -> app.zmby.ui.screens.PersonScreen(nav, route.personKey, route.server, route.personId)
                     is Route.DataSource -> app.zmby.ui.screens.DataSourceScreen(nav, route.feature)
+                    Route.Stats -> app.zmby.ui.screens.StatsScreen(nav)
                 }
             }
         }

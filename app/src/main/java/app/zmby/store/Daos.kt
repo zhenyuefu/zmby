@@ -126,12 +126,17 @@ interface PersonDao {
     @Upsert suspend fun upsertPerson(p: Person)
     @Upsert suspend fun upsertAliases(rows: List<PersonAlias>)
     @Query("SELECT * FROM person WHERE person_key = :key") suspend fun person(key: String): Person?
+    @Query("SELECT * FROM person WHERE (:tmdb IS NOT NULL AND tmdb = :tmdb) OR (:imdb IS NOT NULL AND imdb = :imdb)")
+    suspend fun byExternalIds(tmdb: String?, imdb: String?): List<Person>
     @Query("SELECT * FROM person WHERE person_key = :key") fun personFlow(key: String): Flow<Person?>
     @Query("SELECT * FROM person_alias WHERE person_key = :key") suspend fun aliases(key: String): List<PersonAlias>
     @Query("SELECT * FROM person_alias WHERE server_id = :server AND person_id = :id") suspend fun alias(server: String, id: String): PersonAlias?
     @Query("UPDATE person_alias SET person_key = :to WHERE person_key = :from") suspend fun moveAliases(from: String, to: String)
     @Query("UPDATE OR REPLACE work_person SET person_key = :to WHERE person_key = :from") suspend fun moveWorkPeople(from: String, to: String)
     @Query("DELETE FROM person WHERE person_key = :key") suspend fun deletePerson(key: String)
+    @Query("DELETE FROM person_alias WHERE person_id LIKE 'compat_%'") suspend fun deleteCompatAliases()
+    @Query("DELETE FROM work_person WHERE person_key IN (SELECT person_key FROM person WHERE person_key LIKE '%:compat_%')") suspend fun deleteCompatCast()
+    @Query("DELETE FROM person WHERE person_key LIKE '%:compat_%'") suspend fun deleteCompatPeople()
     @Query("UPDATE person SET accessed_at = :now WHERE person_key = :key") suspend fun touch(key: String, now: Long)
 
     @Query("DELETE FROM work_person WHERE work_key = :work") suspend fun clearWork(work: String)
@@ -215,4 +220,19 @@ interface SourceDao {
 
     @Upsert suspend fun upsertMarkers(rows: List<SegmentMarker>)
     @Query("SELECT * FROM segment_marker WHERE work_key = :key") suspend fun markers(key: String): List<SegmentMarker>
+    @Query("SELECT * FROM segment_marker WHERE work_key IN (:keys) AND source = :source") suspend fun markers(keys: List<String>, source: String): List<SegmentMarker>
+    @Query("DELETE FROM segment_marker WHERE work_key = :key AND source = :source") suspend fun deleteMarkers(key: String, source: String)
+    @Transaction suspend fun replaceMarkers(key: String, source: String, rows: List<SegmentMarker>) {
+        deleteMarkers(key, source)
+        if (rows.isNotEmpty()) upsertMarkers(rows)
+    }
+}
+
+@Dao
+interface PlayHistoryDao {
+    @Query("SELECT * FROM play_history") fun allFlow(): Flow<List<PlayHistoryRow>>
+    @Query("SELECT MAX(played_at) FROM play_history WHERE server_id = :server") suspend fun newest(server: String): Long?
+    @Upsert suspend fun upsert(rows: List<PlayHistoryRow>)
+    @Query("DELETE FROM play_history WHERE server_id = :server AND fetched_at < :before") suspend fun deleteStale(server: String, before: Long)
+    @Query("DELETE FROM play_history WHERE server_id = :server") suspend fun deleteServer(server: String)
 }

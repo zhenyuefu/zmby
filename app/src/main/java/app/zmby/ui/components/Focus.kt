@@ -156,6 +156,27 @@ suspend fun ScrollState.scrollToTopFirmly() {
     }
 }
 
+/**
+ * The same for a lazy list (home): from inside its first item the remaining offset is animated at
+ * a priority bring-into-view cannot interrupt; from further down it jumps to the top.
+ */
+suspend fun androidx.compose.foundation.lazy.LazyListState.scrollToTopFirmly() {
+    awaitFrame()
+    if (!canScrollBackward) return
+    if (firstVisibleItemIndex > 0) {
+        scrollToItem(0)
+        return
+    }
+    val start = firstVisibleItemScrollOffset.toFloat()
+    scroll(MutatePriority.PreventUserInput) {
+        var done = 0f
+        animate(0f, start, animationSpec = tween(220)) { v, _ ->
+            scrollBy(-(v - done))
+            done = v
+        }
+    }
+}
+
 /** The remote's menu key on this element (a poster card adds or removes the work from 待看). */
 fun Modifier.onMenuKey(action: () -> Unit): Modifier = this.onPreviewKeyEvent { e ->
     if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && e.key == androidx.compose.ui.input.key.Key.Menu) { action(); true } else false

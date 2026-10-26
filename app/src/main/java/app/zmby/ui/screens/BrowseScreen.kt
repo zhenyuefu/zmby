@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import app.zmby.media.titleOf
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -171,6 +173,13 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTarg
                 if (st.loaded && st.total == 0) {
                     Text(if (st.query.filtered) "没有符合筛选的内容" else "没有内容", fontSize = 26.sp, color = Z.textSecondary, modifier = Modifier.padding(start = 80.dp, top = 40.dp))
                 }
+                st.error?.let { message ->
+                    // Offline and never browsed here: the reason and a retry, not an empty grid.
+                    Row(Modifier.padding(start = 80.dp, top = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                        Text(message, fontSize = 24.sp, color = Z.textSecondary, maxLines = 2, modifier = Modifier.widthIn(max = 1100.dp))
+                        GlassButton("重试", vm::retry, glyph = Glyph.Refresh, height = 64.dp)
+                    }
+                }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(COLUMNS),
                     state = grid,
@@ -207,7 +216,7 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTarg
                         Box(Modifier.focusRequester(requester)) {
                             PosterCard2x3(
                                 imageUrl = ref?.let { app.library.primaryImage(it) },
-                                title = ref?.item?.name.orEmpty(),
+                                title = ref?.item?.let(::titleOf).orEmpty(),
                                 onClick = { if (ref != null) nav.open(ref) },
                                 width = POSTER,
                                 subtitle = ref?.item?.productionYear?.toString() ?: " ",

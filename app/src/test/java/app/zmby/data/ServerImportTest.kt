@@ -12,6 +12,14 @@ import org.junit.Test
 import java.net.InetAddress
 
 class ServerImportTest {
+    @Test fun `AFuseKt exports map account password and named lines without logging credentials`() {
+        val text = """[{"name":"Mock NAS","sourceType":"emby","account":"alice","password":"fake-import-password","nowAddress":"https://backup.example.com","originalAddress":"https://main.example.com","lines":[{"address":"https://main.example.com","name":"直连","isNow":false},{"address":"https://backup.example.com","name":"备用","isNow":true}]},{"name":"Other","sourceType":"webdav","account":"bob","password":"not-used","lines":[{"address":"https://dav.example.com"}]}]"""
+        val entries = ServerImport.parse(text)
+        assertEquals(2,entries.size);assertEquals("alice",entries.first().user);assertEquals("fake-import-password",entries.first().password)
+        assertEquals("https://backup.example.com",entries.first().url);assertEquals("备用",entries.first().lineName)
+        assertEquals("直连",entries.last().lineName)
+    }
+
     @Test fun `shared Chinese account message fills every line without losing punctuation in password`() {
         val entries = ServerImport.parse("""
             家里 NAS
@@ -175,4 +183,26 @@ class ImportSessionTest {
         assertTrue(body.contains("\"ok\":true") && body.contains("\"ok\":false"))
         assertEquals(listOf(true, false), session.results.value.map { it.ok })
     }
+    @Test fun `heartbeat renews session and closed codes cannot access any endpoint`() {
+        session.open()
+        val response = request("/ping")
+        assertEquals(200,response.first)
+        assertEquals(listOf("浏览器"),session.devices.value)
+        assertTrue(session.expiresAt.value > System.currentTimeMillis()+9*60_000)
+        session.close()
+        assertEquals(404,request("/ping").first)
+        assertEquals(404,request("/backup","{}").first)
+        assertEquals(404,request("/restore","{}").first)
+    }
+
+    @Test fun `expired session rejects both mutation and heartbeat`() {
+        var now=0L
+        val expiring=ImportSession(lan,add={error("must not authenticate")},export={"[]"},clock={now})
+        expiring.open();now=ImportSession.SESSION_MS+1
+        val url="http://127.0.0.1:${lan.port}/import/${expiring.code}"
+        http.newCall(Request.Builder().url("$url/ping").build()).execute().use { assertEquals(410,it.code) }
+        http.newCall(Request.Builder().url(url).post("{}".toRequestBody("application/json".toMediaType())).build()).execute().use { assertEquals(410,it.code) }
+        expiring.close()
+    }
+
 }

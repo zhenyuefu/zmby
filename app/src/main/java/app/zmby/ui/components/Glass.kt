@@ -16,7 +16,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithCache
@@ -37,6 +36,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +47,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import app.zmby.ui.theme.Z
 import coil.imageLoader
+import coil.memory.MemoryCache
+import android.content.Context
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import coil.size.Size as CoilSize
@@ -69,10 +72,11 @@ data class Scrims(
     /** Fraction of the bottom scrim (from its bottom) that is solid page colour. */
     val bottomSolid: Float = 0.5f,
 ) {
-    fun DrawScope.draw(area: Size) {
+    fun DrawScope.draw(area: Size, alpha: Float = 1f) {
         drawRect(
             Brush.horizontalGradient(*horizontal.map { (stop, a) -> stop to Z.bg.copy(alpha = a) }.toTypedArray(), endX = area.width),
             size = area,
+            alpha = alpha,
         )
         val top = area.height * bottomFrom
         val h = area.height - top
@@ -80,30 +84,67 @@ data class Scrims(
             Brush.verticalGradient(0f to Color.Transparent, (1f - bottomSolid) to Z.bg, 1f to Z.bg, startY = top, endY = area.height),
             topLeft = Offset(0f, top),
             size = Size(area.width, h),
+            alpha = alpha,
         )
     }
 }
 
-/** The blurred backdrop copy of the current screen, and where the sharp one sits. */
-class Backdrop(val url: String?, val blurred: ImageBitmap?, val scrims: Scrims) {
+/**
+ * The blurred backdrop copy of the current screen, and where the sharp one sits. [visible] and
+ * [shift] follow a backdrop that fades and moves up as the page scrolls (home hero): read while
+ * drawing, so the glass slices follow without recomposing.
+ */
+class Backdrop(
+    val url: String?,
+    val blurred: ImageBitmap?,
+    val scrims: Scrims,
+    val visible: () -> Float = { 1f },
+    val shift: () -> Float = { 0f },
+) {
     internal var coordinates: LayoutCoordinates? = null
 }
 
-val LocalBackdrop = staticCompositionLocalOf<Backdrop?> { null }
+/**
+ * Dynamic, not static: the backdrop changes whenever the home hero turns to another title, and a
+ * static local recomposes the whole page under it (a likely part of the HomeFeed recompositions the
+ * box profile showed while scrolling rows); only the glass shapes read it.
+ */
+val LocalBackdrop = androidx.compose.runtime.compositionLocalOf<Backdrop?> { null }
 
 /** Makes [url]'s blurred copy available to the glass shapes in [content]; place the sharp one with [BackdropLayer]. */
 @Composable
-fun BackdropProvider(url: String?, scrims: Scrims, content: @Composable () -> Unit) {
+fun BackdropProvider(
+    url: String?,
+    scrims: Scrims,
+    visible: () -> Float = { 1f },
+    shift: () -> Float = { 0f },
+    content: @Composable () -> Unit,
+) {
     val blurred = rememberBlurredBackdrop(url)
-    val backdrop = remember(url, blurred, scrims) { Backdrop(url, blurred, scrims) }
+    val backdrop = remember(url, blurred, scrims, visible, shift) { Backdrop(url, blurred, scrims, visible, shift) }
     CompositionLocalProvider(LocalBackdrop provides backdrop, content = content)
 }
 
-/** The sharp backdrop with its scrims; glass shapes read their slice relative to where this is laid out. */
+/**
+ * The sharp backdrop with its scrims; glass shapes read their slice relative to where this is laid out.
+ * [layer] replaces the single image (the home hero's sliding pages); it draws its own scrims.
+ */
 @Composable
-fun BackdropLayer(modifier: Modifier = Modifier) {
+fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.() -> Unit)? = null) {
     val backdrop = LocalBackdrop.current ?: return
-    Box(modifier.onGloballyPositioned { backdrop.coordinates = it }) {
+    if (layer != null) {
+        Box(modifier.onGloballyPositioned { backdrop.coordinates = it }, content = layer)
+        return
+    }
+    Box(
+        modifier
+            .onGloballyPositioned { backdrop.coordinates = it }
+            // The backdrop and its two full-screen scrims change only with the image: rendered once
+            // into an offscreen layer, each frame then draws one textured quad. The Z9X 8K redraws the
+            // whole screen every frame (it reports full-screen damage), and these three passes cost
+            // about 5 ms of its GPU time per frame while rows scrolled.
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
+    ) {
         if (backdrop.url != null) {
             Artwork(backdrop.url, Modifier.fillMaxSize())
             Box(Modifier.fillMaxSize().drawWithCache { onDrawBehind { with(backdrop.scrims) { draw(size) } } })
@@ -113,32 +154,60 @@ fun BackdropLayer(modifier: Modifier = Modifier) {
 
 /** A screen over a fixed full-screen backdrop; [content]'s glass shapes see the blurred copy. */
 @Composable
-fun BackdropScreen(url: String?, scrims: Scrims, modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
-    BackdropProvider(url, scrims) {
+fun BackdropScreen(
+    url: String?,
+    scrims: Scrims,
+    modifier: Modifier = Modifier,
+    visible: () -> Float = { 1f },
+    shift: () -> Float = { 0f },
+    layer: (@Composable BoxScope.() -> Unit)? = null,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    BackdropProvider(url, scrims, visible, shift) {
         Box(modifier.fillMaxSize()) {
-            BackdropLayer(Modifier.fillMaxSize())
+            BackdropLayer(Modifier.fillMaxSize(), layer)
             content()
         }
     }
 }
 
+/**
+ * The small blurred copy of a backdrop. The request is shared with prefetching (home hero), and the
+ * explicit memory cache key lets a copy decoded before show at once. Changing [url] keeps the old
+ * copy until the new one is ready, so the glass never flashes without its slice.
+ */
 @Composable
 private fun rememberBlurredBackdrop(url: String?): ImageBitmap? {
     val context = LocalContext.current
-    val image by produceState<ImageBitmap?>(null, url) {
-        value = null
-        if (url == null) return@produceState
-        val request = ImageRequest.Builder(context)
-            .data(url)
-            .size(BLUR_WIDTH, BLUR_WIDTH * 9 / 16)
-            .allowHardware(false)
-            .transformations(BackdropBlur)
-            .build()
-        val result = context.imageLoader.execute(request)
+    val cached = remember(url) { url?.let { blurredFromMemory(context, it) } }
+    val image by produceState(cached, url) {
+        if (url == null) {
+            value = null
+            return@produceState
+        }
+        if (cached != null) {
+            value = cached
+            return@produceState
+        }
+        val result = context.imageLoader.execute(blurredBackdropRequest(context, url))
         value = ((result as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap?.asImageBitmap()
     }
     return image
 }
+
+private fun blurredFromMemory(context: Context, url: String): ImageBitmap? =
+    context.imageLoader.memoryCache?.get(blurredBackdropKey(url))?.bitmap?.asImageBitmap()
+
+/** The blurred backdrop copy (glass slices); also fetched ahead by the home hero. */
+fun blurredBackdropRequest(context: Context, url: String): ImageRequest = ImageRequest.Builder(context)
+    .data(url)
+    .size(BLUR_WIDTH, BLUR_WIDTH * 9 / 16)
+    .allowHardware(false)
+    .transformations(BackdropBlur)
+    .memoryCacheKey(blurredBackdropKey(url))
+    .build()
+
+fun blurredBackdropKey(url: String) = MemoryCache.Key("blur:$url")
 
 private const val BLUR_WIDTH = 192
 
@@ -194,13 +263,14 @@ fun Modifier.glass(shape: Shape, tone: GlassTone = GlassTone.Glass, shadow: Bool
             val innerShade = Brush.verticalGradient(0.7f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.10f))
             onDrawBehind {
                 clipPath(path) {
-                    if (image != null && !on) {
+                    val seen = if (image != null && !on) backdrop.visible() else 0f
+                    if (image != null && seen > 0f) {
                         val area = backdrop.coordinates?.size?.let { Size(it.width.toFloat(), it.height.toFloat()) } ?: size
                         // A lens: the slice behind the glass, magnified a little around the glass centre.
                         scale(LENS, pivot = Offset(size.width / 2, size.height / 2)) {
-                            translate(-offset.x, -offset.y) {
-                                drawCover(image, area)
-                                with(backdrop.scrims) { draw(area) }
+                            translate(-offset.x, -offset.y + backdrop.shift()) {
+                                drawCover(image, area, seen)
+                                with(backdrop.scrims) { draw(area, seen) }
                             }
                         }
                     }
@@ -217,7 +287,7 @@ fun Modifier.glass(shape: Shape, tone: GlassTone = GlassTone.Glass, shadow: Bool
 private const val LENS = 1.06f
 
 /** Draws [image] scaled to cover [area] (ContentScale.Crop, centred), like the sharp backdrop. */
-private fun DrawScope.drawCover(image: ImageBitmap, area: Size) {
+private fun DrawScope.drawCover(image: ImageBitmap, area: Size, alpha: Float = 1f) {
     val s = maxOf(area.width / image.width, area.height / image.height)
     val w = image.width * s
     val h = image.height * s
@@ -227,6 +297,7 @@ private fun DrawScope.drawCover(image: ImageBitmap, area: Size) {
         srcSize = IntSize(image.width, image.height),
         dstOffset = IntOffset(((area.width - w) / 2).toInt(), ((area.height - h) / 2).toInt()),
         dstSize = IntSize(w.toInt(), h.toInt()),
+        alpha = alpha,
         filterQuality = FilterQuality.Low,
     )
 }

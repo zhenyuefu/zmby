@@ -106,7 +106,7 @@ ITEMS = {}
 VIDEO = None
 OPTS = {"direct_stream_url": True, "range_only_under_emby": False, "pinyin": False,
         "redirect": False, "signed_port": 8097, "sign_ttl": 60, "require_ua": None, "throttle_kbps": 0,
-        "logo_delay": 0.0, "broken_logos": False}
+        "logo_delay": 0.0, "broken_logos": False, "dark_logo": False}
 SIGN_KEY = os.urandom(16)
 
 
@@ -251,7 +251,7 @@ def request_kind(path, q):
         return "PlaybackInfo"
     if "/Images/" in path or path.endswith("/Images"):
         return "Images"
-    if path.startswith("/Persons/"):
+    if path == "/Persons" or path.startswith("/Persons/"):
         return "Persons"
     if path == "/Genres":
         return "Genres"
@@ -541,8 +541,8 @@ def png(w, h, rgb, seed):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b"")
 
 
-def logo_png(w, h, seed):
-    """A transparent title logo: white letter-like blocks on alpha, like a real clearlogo."""
+def logo_png(w, h, seed, ink=255):
+    """A transparent title logo: white (or [ink] grey) letter-like blocks on alpha, like a real clearlogo."""
     rows = []
     blocks = []
     x = 10
@@ -556,7 +556,7 @@ def logo_png(w, h, seed):
         row = bytearray([0])
         for xx in range(w):
             on = any(a <= xx < b and top <= y < h - 24 for a, b, top in blocks)
-            row += bytes((255, 255, 255, 255 if on else 0))
+            row += bytes((ink, ink, ink, 255 if on else 0))
         rows.append(bytes(row))
     raw = b"".join(rows)
 
@@ -664,6 +664,8 @@ class Emby(BaseHTTPRequestHandler):
         token = self.headers.get("X-Emby-Token") or q.get("api_key")
         if "/Images/" not in path and token != TOKEN:
             return self.send_json({"error": "unauthorized"}, 401)
+        if path == f"/Users/{USER}" and method == "GET":
+            return self.send_json({"Id": USER, "Name": "Mock User"})
         if path.startswith(f"/Users/{USER}/") or path.startswith("/Shows/"):
             if cat.hang:
                 print(f"  [{cat.name}] hanging {cat.hang}s", flush=True)
@@ -679,7 +681,8 @@ class Emby(BaseHTTPRequestHandler):
             if kind == "Logo" and OPTS["broken_logos"]:
                 return self.send_json({"error": "no logo"}, 404)
             if key not in IMAGE_CACHE and kind == "Logo":
-                IMAGE_CACHE[key] = logo_png(520, 150, hash(iid) % 5)
+                # --dark-logo: one film's Logo in black ink, like some real clearlogos (title must still show).
+                IMAGE_CACHE[key] = logo_png(520, 150, hash(iid) % 5, 0 if OPTS["dark_logo"] and iid == "m0" else 255)
             if key not in IMAGE_CACHE:
                 w, h = {"Primary": (200, 300), "Backdrop": (480, 270), "Thumb": (400, 225)}.get(kind, (200, 300))
                 if cat.items.get(iid, {}).get("Type") == "Episode" and kind == "Primary":
@@ -710,6 +713,10 @@ class Emby(BaseHTTPRequestHandler):
             person = next((p for p in cat.persons.values() if p["Name"] == name), None)
             print(f"  PERSON {name!r} -> {person and person['Id']}", flush=True)
             return self.send_json(person) if person else self.send_json({"error": "no such person"}, 404)
+        if path == "/Persons":
+            wanted = {tuple(x.lower().split(".", 1)) for x in q.get("AnyProviderIdEquals", "").split(",") if "." in x}
+            res = [p for p in cat.persons.values() if any((k.lower(), str(v).lower()) in wanted for k, v in p.get("ProviderIds", {}).items())]
+            return self.send_json(page_of(res, q))
         if path == "/Genres":
             res = [d for d in cat.items.values() if d["Type"] in (q.get("IncludeItemTypes") or "Movie,Series").split(",")]
             if q.get("ParentId"):
@@ -730,7 +737,10 @@ class Emby(BaseHTTPRequestHandler):
             return self.send_json([brief(d) for d in lib][:limit])
         if path == f"/Users/{USER}/Items":
             types = (q.get("IncludeItemTypes") or "Movie,Series").split(",")
-            res = [d for d in cat.items.values() if d["Type"] in types]
+            pool = list(cat.items.values()) + (list(cat.persons.values()) if "Person" in types else [])
+            res = [d for d in pool if d["Type"] in types]
+            if q.get("Ids"):
+                res = [d for d in res if d["Id"] in q["Ids"].split(",")]
             if q.get("ParentId"):
                 res = [d for d in res if d.get("_lib") == q["ParentId"]]
             any_ids = q.get("AnyProviderIdEquals")
@@ -952,6 +962,7 @@ def main():
     ap.add_argument("--throttle-kbps", type=int, default=0,
                     help="cap each signed-link response at this many KiB/s, so the player cannot buffer the whole clip before the link expires")
     ap.add_argument("--logo-delay", type=float, default=0, help="answer Logo images only after this many seconds (title text shows meanwhile)")
+    ap.add_argument("--dark-logo", action="store_true", help="the first film's Logo is drawn in black on transparent (zmby lightens it)")
     ap.add_argument("--broken-logos", action="store_true", help="Logo images answer 404 although ImageTags.Logo is set")
     ap.add_argument("--official-only", action="store_true",
                     help="answer only official Emby clients (User-Agent and client name), 403 HTML page for anything else")
@@ -966,7 +977,7 @@ def main():
     OPTS.update(redirect=a.redirect, signed_port=a.signed_port, sign_ttl=a.sign_ttl, require_ua=a.require_ua, throttle_kbps=a.throttle_kbps)
     MAIN.pinyin = a.pinyin
     MAIN.official_only = a.official_only
-    OPTS.update(logo_delay=a.logo_delay, broken_logos=a.broken_logos)
+    OPTS.update(logo_delay=a.logo_delay, broken_logos=a.broken_logos, dark_logo=a.dark_logo)
 
     def serve(host, port, handler, cat):
         srv = ThreadingHTTPServer((host, port), handler)

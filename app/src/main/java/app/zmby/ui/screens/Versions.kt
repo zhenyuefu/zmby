@@ -128,8 +128,20 @@ class VersionsState(
     val default: Version?,
     val unresponsive: List<String> = emptyList(),
     val retry: () -> Unit = {},
+    /** Every version in default-version order (VersionRanker): what 播放失败自动换源 tries in turn. */
+    val ordered: List<Version> = emptyList(),
 ) {
     val all: List<Version> get() = groups.flatMap { it.versions }
+
+    /** The versions to fall back on when [chosen] (null: the default) fails to start. */
+    fun alternatesTo(chosen: Version?): List<app.zmby.playback.Alternate> {
+        val first = chosen ?: default
+        return ordered.filter { first == null || it.server.id != first.server.id || it.source.id != first.source.id }
+            .take(MAX_ALTERNATES)
+            .map { app.zmby.playback.Alternate(it.server.id, it.item, it.source.id, "${it.server.name} · ${versionTitle(it.source)}") }
+    }
+
+    private companion object { const val MAX_ALTERNATES = 6 }
     /** Items of this work on other servers (for favourites). */
     val instances: List<ServerItem> get() = groups.mapNotNull { g -> g.versions.firstOrNull()?.ref }
 }
@@ -197,14 +209,16 @@ internal fun rememberVersions(
             preferNonDisc = nonDisc,
         )
         val all = groups.flatMap { it.versions }
-        val best = VersionRanker.best(all.map { VersionFacts(it.server.id, it.server.order, it.server.health != Health.Off, it.server.latencyMs, it.source) }, prefs)
-        val default = best?.let { b -> all.firstOrNull { it.server.id == b.server && it.source.id == b.source.id } }
-        VersionsState(groups, if (lookUp) others.count { it !in found } else 0, default, unresponsive) {
+        val facts = all.map { it to VersionFacts(it.server.id, it.server.order, it.server.health != Health.Off, it.server.latencyMs, it.source) }
+        val comparator = VersionRanker.comparator(prefs)
+        val ordered = facts.sortedWith { a, b -> comparator.compare(a.second, b.second) }.map { it.first }
+        val default = ordered.firstOrNull()
+        VersionsState(groups, if (lookUp) others.count { it !in found } else 0, default, unresponsive, ordered = ordered, retry = {
             // 「n 台未响应」 pressed: lift their cool-downs and ask those servers again.
             unresponsive.forEach { app.registry.retry(it) }
             found = found.filterKeys { it !in unresponsive }
             retry++
-        }
+        })
     }
 }
 

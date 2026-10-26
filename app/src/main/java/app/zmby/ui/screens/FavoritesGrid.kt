@@ -1,5 +1,7 @@
 package app.zmby.ui.screens
 
+import app.zmby.media.visibleText
+import app.zmby.media.UNTITLED
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -56,7 +58,7 @@ internal fun FavoritesGrid(nav: Nav) {
             val ref = usable?.let { ServerItem(it.server, display(f, it.itemId)) }
             PosterCard2x3(
                 imageUrl = ref?.let { app.library.primaryImage(it) },
-                title = f.title,
+                title = visibleText(f.title) ?: UNTITLED,
                 onClick = { if (ref != null) nav.open(ref) },
                 topEnd = if (f.instances.size > 1) "${f.instances.size} 个版本" else null,
                 subtitle = listOfNotNull(if (f.type == "Series") "剧集" else "电影", f.year?.toString()).joinToString(" · "),

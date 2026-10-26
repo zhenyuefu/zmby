@@ -86,6 +86,21 @@ object Diagnostics {
         }.onFailure { ZLog.w(TAG, "JankStats unavailable", it) }.getOrNull()
     }
 
+    @Volatile private var homeShown = false
+
+    /**
+     * The first time home has something to show (rows are read from the local store): logs the time
+     * since the process started and reports the activity fully drawn, so `am start -W` and the
+     * system's "Fully drawn" line measure cold start to home (architecture: 冷启动 2 秒内). Both builds.
+     */
+    fun homeShown(activity: Activity) {
+        if (homeShown) return
+        homeShown = true
+        val ms = android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()
+        ZLog.i(TAG, "home shown $ms ms after process start")
+        runCatching { activity.reportFullyDrawn() }
+    }
+
     /** Tags frames with the screen shown, so a long frame says where it happened. */
     fun screen(activity: Activity, name: String) {
         if (!enabled) return

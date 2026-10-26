@@ -1,0 +1,1147 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 4,
+    "identityHash": "9fbaf910bdc8a4af5f6ef9a80fdad41b",
+    "entities": [
+      {
+        "tableName": "work_meta",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`work_key` TEXT NOT NULL, `type` TEXT NOT NULL, `title` TEXT, `title_server` TEXT, `original_title` TEXT, `overview` TEXT, `overview_server` TEXT, `year` INTEGER, `genres` TEXT NOT NULL, `genres_server` TEXT, `rating` REAL, `rating_tmdb` INTEGER NOT NULL, `runtime_ticks` INTEGER, `premiere_date` TEXT, `fetched_at` INTEGER NOT NULL, `accessed_at` INTEGER NOT NULL, `primary_server` TEXT, `primary_item` TEXT, `primary_tag` TEXT, `primary_width` INTEGER, `primary_height` INTEGER, `backdrop_server` TEXT, `backdrop_item` TEXT, `backdrop_tag` TEXT, `backdrop_width` INTEGER, `backdrop_height` INTEGER, `logo_server` TEXT, `logo_item` TEXT, `logo_tag` TEXT, `logo_width` INTEGER, `logo_height` INTEGER, PRIMARY KEY(`work_key`))",
+        "fields": [
+          {
+            "fieldPath": "workKey",
+            "columnName": "work_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "titleServer",
+            "columnName": "title_server",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "originalTitle",
+            "columnName": "original_title",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "overview",
+            "columnName": "overview",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "overviewServer",
+            "columnName": "overview_server",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "year",
+            "columnName": "year",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "genres",
+            "columnName": "genres",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "genresServer",
+            "columnName": "genres_server",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "rating",
+            "columnName": "rating",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "ratingTmdb",
+            "columnName": "rating_tmdb",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runtimeTicks",
+            "columnName": "runtime_ticks",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "premiereDate",
+            "columnName": "premiere_date",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetched_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accessedAt",
+            "columnName": "accessed_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "primary.server",
+            "columnName": "primary_server",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "primary.item",
+            "columnName": "primary_item",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "primary.tag",
+            "columnName": "primary_tag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "primary.width",
+            "columnName": "primary_width",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "primary.height",
+            "columnName": "primary_height",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "backdrop.server",
+            "columnName": "backdrop_server",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "backdrop.item",
+            "columnName": "backdrop_item",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "backdrop.tag",
+            "columnName": "backdrop_tag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "backdrop.width",
+            "columnName": "backdrop_width",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "backdrop.height",
+            "columnName": "backdrop_height",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "logo.server",
+            "columnName": "logo_server",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "logo.item",
+            "columnName": "logo_item",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "logo.tag",
+            "columnName": "logo_tag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "logo.width",
+            "columnName": "logo_width",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "logo.height",
+            "columnName": "logo_height",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "work_key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_work_meta_accessed_at",
+            "unique": false,
+            "columnNames": [
+              "accessed_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_work_meta_accessed_at` ON `${TABLE_NAME}` (`accessed_at`)"
+          }
+        ]
+      },
+      {
+        "tableName": "work_instance",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`server_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, `work_key` TEXT NOT NULL, `type` TEXT NOT NULL, `item_json` TEXT NOT NULL, `detail_json` TEXT, `images_json` TEXT, `played` INTEGER NOT NULL, `position_ticks` INTEGER NOT NULL, `server_favorite` INTEGER NOT NULL, `date_created` TEXT, `fetched_at` INTEGER NOT NULL, `detail_at` INTEGER NOT NULL, `accessed_at` INTEGER NOT NULL, PRIMARY KEY(`server_id`, `item_id`))",
+        "fields": [
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "workKey",
+            "columnName": "work_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemJson",
+            "columnName": "item_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detailJson",
+            "columnName": "detail_json",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "imagesJson",
+            "columnName": "images_json",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "played",
+            "columnName": "played",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "positionTicks",
+            "columnName": "position_ticks",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverFavorite",
+            "columnName": "server_favorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateCreated",
+            "columnName": "date_created",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetched_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detailAt",
+            "columnName": "detail_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accessedAt",
+            "columnName": "accessed_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "server_id",
+            "item_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_work_instance_work_key",
+            "unique": false,
+            "columnNames": [
+              "work_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_work_instance_work_key` ON `${TABLE_NAME}` (`work_key`)"
+          },
+          {
+            "name": "index_work_instance_accessed_at",
+            "unique": false,
+            "columnNames": [
+              "accessed_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_work_instance_accessed_at` ON `${TABLE_NAME}` (`accessed_at`)"
+          }
+        ]
+      },
+      {
+        "tableName": "person",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`person_key` TEXT NOT NULL, `name` TEXT NOT NULL, `name_server` TEXT, `overview` TEXT, `birth_date` TEXT, `birth_place` TEXT, `tmdb` TEXT, `imdb` TEXT, `fetched_at` INTEGER NOT NULL, `detail_at` INTEGER NOT NULL, `accessed_at` INTEGER NOT NULL, `image_server` TEXT, `image_item` TEXT, `image_tag` TEXT, `image_width` INTEGER, `image_height` INTEGER, PRIMARY KEY(`person_key`))",
+        "fields": [
+          {
+            "fieldPath": "personKey",
+            "columnName": "person_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nameServer",
+            "columnName": "name_server",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "overview",
+            "columnName": "overview",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "birthDate",
+            "columnName": "birth_date",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "birthPlace",
+            "columnName": "birth_place",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "tmdb",
+            "columnName": "tmdb",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "imdb",
+            "columnName": "imdb",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetched_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detailAt",
+            "columnName": "detail_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accessedAt",
+            "columnName": "accessed_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "image.server",
+            "columnName": "image_server",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "image.item",
+            "columnName": "image_item",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "image.tag",
+            "columnName": "image_tag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "image.width",
+            "columnName": "image_width",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "image.height",
+            "columnName": "image_height",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "person_key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_person_accessed_at",
+            "unique": false,
+            "columnNames": [
+              "accessed_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_person_accessed_at` ON `${TABLE_NAME}` (`accessed_at`)"
+          }
+        ]
+      },
+      {
+        "tableName": "person_alias",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`server_id` TEXT NOT NULL, `person_id` TEXT NOT NULL, `person_key` TEXT NOT NULL, `name` TEXT NOT NULL, `image_tag` TEXT, PRIMARY KEY(`server_id`, `person_id`))",
+        "fields": [
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "personId",
+            "columnName": "person_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "personKey",
+            "columnName": "person_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageTag",
+            "columnName": "image_tag",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "server_id",
+            "person_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_person_alias_person_key",
+            "unique": false,
+            "columnNames": [
+              "person_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_person_alias_person_key` ON `${TABLE_NAME}` (`person_key`)"
+          }
+        ]
+      },
+      {
+        "tableName": "work_person",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`work_key` TEXT NOT NULL, `person_key` TEXT NOT NULL, `kind` TEXT NOT NULL, `role` TEXT, `ord` INTEGER NOT NULL, PRIMARY KEY(`work_key`, `person_key`, `kind`))",
+        "fields": [
+          {
+            "fieldPath": "workKey",
+            "columnName": "work_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "personKey",
+            "columnName": "person_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "ord",
+            "columnName": "ord",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "work_key",
+            "person_key",
+            "kind"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_work_person_person_key",
+            "unique": false,
+            "columnNames": [
+              "person_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_work_person_person_key` ON `${TABLE_NAME}` (`person_key`)"
+          }
+        ]
+      },
+      {
+        "tableName": "version_summary",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`for_key` TEXT NOT NULL, `server_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, `item_json` TEXT NOT NULL, `sources_json` TEXT NOT NULL, `reason` TEXT NOT NULL, `possible` INTEGER NOT NULL, `fetched_at` INTEGER NOT NULL, PRIMARY KEY(`for_key`, `server_id`))",
+        "fields": [
+          {
+            "fieldPath": "forKey",
+            "columnName": "for_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemJson",
+            "columnName": "item_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourcesJson",
+            "columnName": "sources_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reason",
+            "columnName": "reason",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "possible",
+            "columnName": "possible",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetched_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "for_key",
+            "server_id"
+          ]
+        }
+      },
+      {
+        "tableName": "list_cache",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`list_key` TEXT NOT NULL, `total` INTEGER NOT NULL, `fetched_at` INTEGER NOT NULL, PRIMARY KEY(`list_key`))",
+        "fields": [
+          {
+            "fieldPath": "listKey",
+            "columnName": "list_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "total",
+            "columnName": "total",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetched_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "list_key"
+          ]
+        }
+      },
+      {
+        "tableName": "list_item",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`list_key` TEXT NOT NULL, `ord` INTEGER NOT NULL, `server_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, PRIMARY KEY(`list_key`, `ord`))",
+        "fields": [
+          {
+            "fieldPath": "listKey",
+            "columnName": "list_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ord",
+            "columnName": "ord",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "list_key",
+            "ord"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_list_item_server_id_item_id",
+            "unique": false,
+            "columnNames": [
+              "server_id",
+              "item_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_list_item_server_id_item_id` ON `${TABLE_NAME}` (`server_id`, `item_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "favorite",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`work_key` TEXT NOT NULL, `title` TEXT NOT NULL, `year` INTEGER, `type` TEXT NOT NULL, `added_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, `removed_at` INTEGER, `image_tag` TEXT, PRIMARY KEY(`work_key`))",
+        "fields": [
+          {
+            "fieldPath": "workKey",
+            "columnName": "work_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "year",
+            "columnName": "year",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "added_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "removedAt",
+            "columnName": "removed_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "imageTag",
+            "columnName": "image_tag",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "work_key"
+          ]
+        }
+      },
+      {
+        "tableName": "favorite_instance",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`work_key` TEXT NOT NULL, `server_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, `synced` INTEGER NOT NULL, `ord` INTEGER NOT NULL, PRIMARY KEY(`work_key`, `server_id`, `item_id`))",
+        "fields": [
+          {
+            "fieldPath": "workKey",
+            "columnName": "work_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "synced",
+            "columnName": "synced",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ord",
+            "columnName": "ord",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "work_key",
+            "server_id",
+            "item_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_favorite_instance_server_id_item_id",
+            "unique": false,
+            "columnNames": [
+              "server_id",
+              "item_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_favorite_instance_server_id_item_id` ON `${TABLE_NAME}` (`server_id`, `item_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "favorite_write",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`server_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, `favorite` INTEGER NOT NULL, `attempts` INTEGER NOT NULL, `ord` INTEGER NOT NULL, PRIMARY KEY(`server_id`, `item_id`))",
+        "fields": [
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "favorite",
+            "columnName": "favorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ord",
+            "columnName": "ord",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "server_id",
+            "item_id"
+          ]
+        }
+      },
+      {
+        "tableName": "watchlist",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`work_key` TEXT NOT NULL, `title` TEXT NOT NULL, `year` INTEGER, `type` TEXT NOT NULL, `premiere_date` TEXT, `added_at` INTEGER NOT NULL, `instances` TEXT NOT NULL, `image_tag` TEXT, PRIMARY KEY(`work_key`))",
+        "fields": [
+          {
+            "fieldPath": "workKey",
+            "columnName": "work_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "year",
+            "columnName": "year",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "premiereDate",
+            "columnName": "premiere_date",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "added_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instances",
+            "columnName": "instances",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageTag",
+            "columnName": "image_tag",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "work_key"
+          ]
+        }
+      },
+      {
+        "tableName": "segment_marker",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`work_key` TEXT NOT NULL, `source` TEXT NOT NULL, `kind` TEXT NOT NULL, `duration_ms` INTEGER, `start_ms` INTEGER NOT NULL, `end_ms` INTEGER NOT NULL, `fetched_at` INTEGER NOT NULL, PRIMARY KEY(`work_key`, `source`, `kind`))",
+        "fields": [
+          {
+            "fieldPath": "workKey",
+            "columnName": "work_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "duration_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "start_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "end_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetched_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "work_key",
+            "source",
+            "kind"
+          ]
+        }
+      },
+      {
+        "tableName": "data_source",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`feature` TEXT NOT NULL, `source` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `ord` INTEGER NOT NULL, PRIMARY KEY(`feature`, `source`))",
+        "fields": [
+          {
+            "fieldPath": "feature",
+            "columnName": "feature",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabled",
+            "columnName": "enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ord",
+            "columnName": "ord",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "feature",
+            "source"
+          ]
+        }
+      },
+      {
+        "tableName": "sync_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`feature` TEXT NOT NULL, `server_id` TEXT NOT NULL, `last_pull_at` INTEGER NOT NULL, `last_error` TEXT, PRIMARY KEY(`feature`, `server_id`))",
+        "fields": [
+          {
+            "fieldPath": "feature",
+            "columnName": "feature",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastPullAt",
+            "columnName": "last_pull_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "last_error",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "feature",
+            "server_id"
+          ]
+        }
+      },
+      {
+        "tableName": "play_history",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`server_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, `type` TEXT NOT NULL, `work_key` TEXT NOT NULL, `series_key` TEXT, `series_name` TEXT, `title` TEXT, `runtime_ms` INTEGER, `played_at` INTEGER, `play_count` INTEGER NOT NULL, `fetched_at` INTEGER NOT NULL, PRIMARY KEY(`server_id`, `item_id`))",
+        "fields": [
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "workKey",
+            "columnName": "work_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seriesKey",
+            "columnName": "series_key",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "seriesName",
+            "columnName": "series_name",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "runtimeMs",
+            "columnName": "runtime_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "playedAt",
+            "columnName": "played_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "playCount",
+            "columnName": "play_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetched_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "server_id",
+            "item_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_play_history_work_key",
+            "unique": false,
+            "columnNames": [
+              "work_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_play_history_work_key` ON `${TABLE_NAME}` (`work_key`)"
+          }
+        ]
+      },
+      {
+        "tableName": "catalog_cache",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `json` TEXT NOT NULL, `fetchedAt` INTEGER NOT NULL, `size_bytes` INTEGER NOT NULL DEFAULT 0, `accessed_at` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "json",
+            "columnName": "json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetchedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "size_bytes",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "accessedAt",
+            "columnName": "accessed_at",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_catalog_cache_accessed_at",
+            "unique": false,
+            "columnNames": [
+              "accessed_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_catalog_cache_accessed_at` ON `${TABLE_NAME}` (`accessed_at`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '9fbaf910bdc8a4af5f6ef9a80fdad41b')"
+    ]
+  }
+}

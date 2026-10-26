@@ -1,5 +1,7 @@
 package app.zmby.ui.screens
 
+import app.zmby.media.workTitleOf
+import app.zmby.media.titleOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -25,24 +29,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +47,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import app.zmby.catalog.*
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import app.zmby.Diagnostics
 import app.zmby.data.Library
 import app.zmby.data.LibraryView
 import app.zmby.data.ServerItem
@@ -58,17 +61,12 @@ import app.zmby.emby.BaseItemDto
 import app.zmby.emby.ItemsResult
 import app.zmby.log.ZLog
 import app.zmby.media.episodeCode
-import app.zmby.media.formatClock
-import app.zmby.media.formatDuration
-import app.zmby.media.heroBadges
 import app.zmby.media.progressFraction
 import app.zmby.media.remainingLabel
 import app.zmby.ui.Nav
 import app.zmby.ui.Route
 import app.zmby.ui.components.BackdropScreen
-import app.zmby.ui.components.Badge
 import app.zmby.ui.components.GlassButton
-import app.zmby.ui.components.GlassIconButton
 import app.zmby.ui.components.GlassSurface
 import app.zmby.ui.components.Glyph
 import app.zmby.ui.components.Health
@@ -80,7 +78,6 @@ import app.zmby.ui.components.RowTitle
 import app.zmby.ui.components.Scrims
 import app.zmby.ui.components.Segment
 import app.zmby.ui.components.SegmentedWell
-import app.zmby.ui.components.TitleLogo
 import app.zmby.ui.components.ZmbyLogo
 import app.zmby.ui.components.horizontalRow
 import app.zmby.ui.components.onMenuKey
@@ -90,18 +87,15 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.focus.focusProperties
 import app.zmby.ui.components.scrollToTopFirmly
 import app.zmby.ui.open
-import app.zmby.ui.play
 import app.zmby.ui.rememberInitialFocus
 import app.zmby.ui.rememberResumeTick
 import app.zmby.ui.rememberRetained
 import app.zmby.ui.rememberShownAt
 import app.zmby.ui.screenModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.zmby.ui.resumeMsOf
 import app.zmby.ui.theme.Z
 import app.zmby.ui.userMessage
 import app.zmby.zmby
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** The search glyph opens the search screen instead of switching tabs. */
@@ -133,15 +127,25 @@ fun HomeScreen(nav: Nav, tab: Int, onTab: (Int) -> Unit) {
     LaunchedEffect(Unit) { library.measure() }
     // Initial focus belongs to entering Home, not to switching back to its first tab.
     val shownAt = rememberShownAt()
-    var backdrop by remember { mutableStateOf<String?>(null) }
+    // The hero carousel lives here: its pages are the home backdrop, drawn under the top bar.
+    val carousel = rememberRetained("heroCarousel") { HeroCarousel() }
+    val heroBackdrop = if (tab == 0) carousel.current?.let { library.backdrop(it) } else null
+    val backdropVisible = remember(carousel) { { carousel.backdropVisible } }
+    val backdropShift = remember(carousel) { { -carousel.scrolled } }
     val vm = screenModel("home") { HomeViewModel(app) }
     val source by vm.source.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf(false) }
     var browseTarget by rememberRetained("browseTarget") { mutableStateOf<BrowseTarget?>(null) }
 
-    BackdropScreen(if (tab == 0) backdrop else null, HOME_SCRIMS) {
+    BackdropScreen(
+        heroBackdrop,
+        HOME_SCRIMS,
+        visible = backdropVisible,
+        shift = backdropShift,
+        layer = if (tab == 0) ({ HeroBackdrop(carousel, HOME_SCRIMS) }) else null,
+    ) {
         when (tab) {
-            0 -> HomeFeed(nav, shownAt, onBackdrop = { backdrop = it }, onLibrary = { lib ->
+            0 -> HomeFeed(nav, shownAt, carousel, onLibrary = { lib ->
                 val series = lib.item.collectionType == "tvshows"
                 browseTarget = BrowseTarget(lib.server, lib.item.id, if (series) "Series" else "Movie")
                 onTab(if (series) 2 else 1)
@@ -198,10 +202,24 @@ private fun SourcePicker(servers: List<ServerStatus>, current: String, onPick: (
     }
 }
 
+/** The home page with nothing to show: a title, a line of advice, 重试 (focused) and 服务器状态. */
+@Composable
+private fun HomeEmpty(title: String, advice: String, focus: FocusRequester, onRetry: () -> Unit, onServers: () -> Unit) {
+    Column(Modifier.padding(top = 80.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        Text(title, fontSize = 48.sp, fontWeight = FontWeight.ExtraBold)
+        Text(advice, fontSize = 23.sp, color = Z.textSecondary, modifier = Modifier.width(820.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            GlassButton("重试", onRetry, Modifier.focusRequester(focus), glyph = Glyph.Refresh)
+            GlassButton("服务器状态", onServers)
+        }
+    }
+}
+
 @Composable
 private fun TopBar(tab: Int, servers: List<ServerStatus>, sourceLabel: String, onSource: () -> Unit, onTab: (Int) -> Unit, onServers: () -> Unit, onSettings: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 80.dp, end = 80.dp, top = 44.dp),
+        // Cached like the rows; the bottom padding keeps the buttons' shadows inside the layer.
+        Modifier.fillMaxWidth().cachedLayer().padding(start = 80.dp, end = 80.dp, top = 44.dp, bottom = 40.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.weight(1f)) { ZmbyLogo() }
@@ -240,7 +258,7 @@ private fun TopBar(tab: Int, servers: List<ServerStatus>, sourceLabel: String, o
 }
 
 @Composable
-private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onLibrary: (ServerItem) -> Unit) {
+private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, onLibrary: (ServerItem) -> Unit) {
     val context = LocalContext.current
     val app = context.zmby
     val library = app.library
@@ -258,63 +276,109 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
     LaunchedEffect(tick) { vm.refresh() }
     val serverHome by vm.serverHome.collectAsStateWithLifecycle()
     // 主推区: recent additions (ui-spec §2.1) — the chosen server's own, or every server's merged.
-    val featured = remember(serverHome, latest, resume) { (serverHome?.recent ?: latest).ifEmpty { resume }.take(5) }
-    var page by rememberRetained("page") { mutableIntStateOf(0) }
-    var heroFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(featured, heroFocused, rotates) {
-        while (rotates && !heroFocused && featured.size > 1) {
-            delay(9_000)
-            page = (page + 1) % featured.size
+    val chart by settings.tmdbChart.flow.collectAsStateWithLifecycle()
+    val language by settings.metadataLanguage.flow.collectAsStateWithLifecycle()
+    val posterLanguage by settings.posterLanguage.flow.collectAsStateWithLifecycle()
+    val logoLanguage by settings.logoLanguage.flow.collectAsStateWithLifecycle()
+    val token by settings.tmdbToken.flow.collectAsStateWithLifecycle()
+    var chartError by remember(chart, token) { mutableStateOf<String?>(null) }
+    val featured by produceState<List<ServerItem>>(emptyList(), chart, listOf(language, posterLanguage, logoLanguage, token), tick) {
+        withContext(Dispatchers.IO) {
+            try {
+                val titles = app.catalog.chart(CatalogChart.of(chart)).take(8)
+                value = titles.map { (app.catalog.cached(it.ref) ?: it).cardRef() }
+                chartError = null
+                for (work in titles) {
+                    try {
+                        val full = app.catalog.work(work.ref).cardRef()
+                        value = value.map { if (it.item.id == full.item.id) full else it }
+                    } catch (e: CancellationException) { throw e } catch (_: Exception) { /* A title remains a usable catalogue entry. */ }
+                }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { chartError = e.message }
         }
     }
-    val hero = featured.getOrNull(page.coerceAtMost((featured.size - 1).coerceAtLeast(0)))
-    // Resume/latest rows carry no media streams; the full item gives badges and the version count.
-    val heroFull by vm.heroFull.collectAsStateWithLifecycle()
-    LaunchedEffect(hero?.key, tick) { vm.showHero(hero) }
-    val error: String? = null
+    SideEffect { carousel.items = featured }
+    // A slide cut off by leaving home rests on its page when home shows again.
+    LaunchedEffect(carousel) { carousel.settle() }
+    LaunchedEffect(tick) { vm.forgetHeroFetches() }
+    HeroPrefetch(carousel, tick) { vm.prefetchHero(it) }
+    // Resume/latest rows carry no media streams; the full items give the badges.
+    val heroDetails by vm.heroDetails.collectAsStateWithLifecycle()
+    val serverList by app.registry.servers.collectAsStateWithLifecycle()
+    val watchEntries by app.watchlist.entries.collectAsStateWithLifecycle()
+    val showWatchlist by settings.showWatchlistRow.flow.collectAsStateWithLifecycle()
+    val servers = serverList
 
-    val backdropUrl = hero?.let { library.backdrop(it) }
-    LaunchedEffect(backdropUrl) { onBackdrop(backdropUrl) }
+    val activity = context as? android.app.Activity
+    val shown = featured.isNotEmpty() || resume.isNotEmpty()
+    LaunchedEffect(shown) { if (shown && activity != null) Diagnostics.homeShown(activity) }
+
     val scope = rememberCoroutineScope()
     Box(Modifier.fillMaxSize()) {
         // The scroll area starts below the overlaid top bar: scroll containers are focus groups, and a
         // group reaching up behind the tabs is not "below" them, so D-pad down would find nothing.
-        val scroll = rememberScrollState()
-        Column(Modifier.fillMaxSize().padding(top = CONTENT_TOP).verticalScroll(scroll)) {
-            Spacer(Modifier.height(170.dp - CONTENT_TOP))
-            Box(
-                Modifier
-                    .height(500.dp)
-                    .padding(start = 80.dp)
-                    .width(880.dp)
-                    .graphicsLayer { alpha = (1f - scroll.value / 300f).coerceIn(0f, 1f) },
-            ) {
-                if (hero != null) {
-                    Hero(
+        // A lazy column (P4 perf): a server's own home has a row per library, and a plain scrolling
+        // column composed and measured every one of them at once — 2.5–3 s on the Z9X 8K at cold start.
+        // Rows just outside the screen stay composed (ahead one and a half rows, behind one), and
+        // are prepared in idle time: moving down onto a row not yet composed built ~9 posters
+        // inside one frame (150 ms on the box).
+        @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+        val list = rememberLazyListState(cacheWindow = androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow(ahead = 600.dp, behind = 400.dp))
+        SideEffect { carousel.list = list }
+        val running = HeroCountdown(carousel, rotates, scope)
+        LazyColumn(Modifier.fillMaxSize().padding(top = CONTENT_TOP), state = list) {
+          item(key = "hero", contentType = "hero") {
+           // The text pages slide over the backdrop pages; 详情 and the dots stay put. Both fade and
+           // move up with the list as focus goes down to the rows (2026-10-25 user request).
+           Box(Modifier.fillMaxWidth().height(550.dp)) {
+            if (featured.isNotEmpty()) {
+                Column(Modifier.padding(top = 170.dp - CONTENT_TOP)) {
+                    HeroPages(carousel, heroDetails)
+                    HeroControls(
+                        carousel = carousel,
                         focus = rememberInitialFocus(featured.firstOrNull()?.key, shownAt),
-                        ref = hero,
-                        full = heroFull?.takeIf { it.id == hero.item.id },
-                        page = page,
-                        pages = featured.size,
-                        onPlay = {
-                            if (hero.item.type == "Series") nav.open(hero) else play(context, hero, hero.item.resumeMs)
-                        },
-                        onDetails = { nav.open(hero) },
-                        // Left on the first button, right on the last one: the previous / next title,
-                        // wrapping around; focus stays on that button.
-                        onStep = { delta -> if (featured.size > 1) page = Math.floorMod(page + delta, featured.size) },
+                        running = running,
+                        scope = scope,
+                        onOpen = { nav.open(it) },
                         onFocusChange = { focused ->
-                            heroFocused = focused
                             // Back on the hero: show the whole top of the page again, not just the button.
-                            if (focused && scroll.value > 0) scope.launch { scroll.scrollToTopFirmly() }
+                            if (focused && list.canScrollBackward) scope.launch { list.scrollToTopFirmly() }
                         },
                     )
-                } else if (error != null) {
-                    Text("加载失败：$error", fontSize = 24.sp, color = Z.textSecondary)
+                }
+            } else {
+                Box(Modifier.padding(start = 80.dp, top = 170.dp - CONTENT_TOP).width(880.dp)) {
+                    if (!app.catalog.configured || chartError != null) {
+                        Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                            Text("TMDB · ${CatalogChart.of(chart).label}", fontSize = 38.sp, fontWeight = FontWeight.Bold)
+                            Text(chartError ?: "在设置中填写 TMDB Read Access Token，启用影视榜单轮播", fontSize = 23.sp, color = Z.textSecondary)
+                            GlassButton("元数据设置", { nav.go(Route.Settings) }, Modifier.focusRequester(rememberInitialFocus("catalogSetup", shownAt)))
+                        }
+                    } else {
+                    // Nothing cached and nothing from the servers (P4 离线与错误处理): say why and offer a retry.
+                    val enabled = serverList.filter { it.enabled }
+                    val allOff = enabled.isNotEmpty() && enabled.all { it.health == Health.Off }
+                    val nothing = resume.isEmpty() && nextUp.isEmpty() && latest.isEmpty()
+                    if (nothing && (allOff || rows.loaded)) {
+                        HomeEmpty(
+                            if (allOff) "暂时连不上任何服务器" else "这些服务器上还没有可显示的内容",
+                            if (allOff) "检查网络或服务器状态后重试。打开过的影片和收藏在本地仍可浏览。" else "可以在服务器页打开媒体库的首页开关，或换一个首页来源。",
+                            focus = rememberInitialFocus(if (allOff) "offline" else "empty", shownAt),
+                            onRetry = {
+                                enabled.forEach { app.registry.retry(it.id) }
+                                scope.launch { library.measure() }
+                                vm.refresh(force = true)
+                            },
+                            onServers = { nav.go(Route.Servers) },
+                        )
+                    }
+                    }
                 }
             }
-            if (resume.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+           }
+          }
+            if (resume.isNotEmpty()) item(key = "resume", contentType = "row") {
+                Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     Box(Modifier.padding(start = 80.dp)) { RowTitle("继续观看") }
                     LazyRow(
                         modifier = Modifier.horizontalRow(),
@@ -327,8 +391,8 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
                     }
                 }
             }
-            if (showNextUp && nextUp.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            if (showNextUp && nextUp.isNotEmpty()) item(key = "nextup", contentType = "row") {
+                Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     Box(Modifier.padding(start = 80.dp)) { RowTitle("下一集") }
                     LazyRow(
                         modifier = Modifier.horizontalRow(),
@@ -340,7 +404,7 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
                             MediaCard16x9(
                                 imageUrl = library.landscapeImage(ref),
                                 onClick = { nav.open(ref) },
-                                title = item.seriesName ?: item.name,
+                                title = workTitleOf(item),
                                 topStart = library.status(ref.server)?.name,
                                 focusKey = "nextup:${ref.key}",
                             ) {
@@ -350,11 +414,8 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
                     }
                 }
             }
-            val watchEntries by app.watchlist.entries.collectAsStateWithLifecycle()
-            val showWatchlist by settings.showWatchlistRow.flow.collectAsStateWithLifecycle()
-            val servers by app.registry.servers.collectAsStateWithLifecycle()
-            if (showWatchlist && watchEntries.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            if (showWatchlist && watchEntries.isNotEmpty()) item(key = "watchlist", contentType = "row") {
+                Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     Box(Modifier.padding(start = 80.dp)) { RowTitle("待看") }
                     LazyRow(
                         modifier = Modifier.horizontalRow(),
@@ -376,8 +437,8 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
                 }
             }
             serverHome?.let { own ->
-                if (own.libraries.isNotEmpty()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                if (own.libraries.isNotEmpty()) item(key = "libraries", contentType = "row") {
+                    Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                         Box(Modifier.padding(start = 80.dp)) { RowTitle("媒体库") }
                         LazyRow(
                             modifier = Modifier.horizontalRow(),
@@ -398,8 +459,8 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
                 }
                 own.libraries.forEach { lib ->
                     val items = own.latest[lib.item.id].orEmpty()
-                    if (items.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                    if (items.isNotEmpty()) item(key = "liblatest:${lib.key}", contentType = "row") {
+                        Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                             Box(Modifier.padding(start = 80.dp)) { RowTitle("最新 · ${lib.item.name.orEmpty()}") }
                             LazyRow(
                                 modifier = Modifier.horizontalRow(),
@@ -409,7 +470,7 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
                                 items(items, key = { it.key }, contentType = { "poster" }) { ref ->
                                     PosterCard2x3(
                                         imageUrl = library.primaryImage(ref),
-                                        title = ref.item.name.orEmpty(),
+                                        title = titleOf(ref.item),
                                         onClick = { nav.open(ref) },
                                         subtitle = listOfNotNull(if (ref.item.type == "Series") "剧集" else "电影", ref.item.productionYear?.toString()).joinToString(" · "),
                                         focusKey = "liblatest:${lib.item.id}:${ref.key}",
@@ -421,8 +482,8 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
                     }
                 }
             }
-            if (serverHome == null && showLatest && latest.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            if (serverHome == null && showLatest && latest.isNotEmpty()) item(key = "latest", contentType = "row") {
+                Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     Box(Modifier.padding(start = 80.dp)) { RowTitle("最新添加") }
                     LazyRow(
                         modifier = Modifier.horizontalRow(),
@@ -434,7 +495,7 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
                             val count = rows.latestCopies[ref.key] ?: 1
                             PosterCard2x3(
                                 imageUrl = library.primaryImage(ref),
-                                title = item.name.orEmpty(),
+                                title = titleOf(item),
                                 onClick = { nav.open(ref) },
                                 topEnd = if (count > 1) "$count 个版本" else null,
                                 subtitle = listOfNotNull(if (item.type == "Series") "剧集" else "电影", item.productionYear?.toString()).joinToString(" · "),
@@ -449,90 +510,6 @@ private fun HomeFeed(nav: Nav, shownAt: Long, onBackdrop: (String?) -> Unit, onL
     }
 }
 
-@Composable
-private fun Hero(
-    focus: FocusRequester,
-    ref: ServerItem,
-    full: BaseItemDto?,
-    page: Int,
-    pages: Int,
-    onPlay: () -> Unit,
-    onDetails: () -> Unit,
-    onStep: (Int) -> Unit,
-    onFocusChange: (Boolean) -> Unit,
-) {
-    val app = LocalContext.current.zmby
-    val library = app.library
-    val scope = rememberCoroutineScope()
-    val item = ref.item
-    val isEpisode = item.type == "Episode"
-    val title = if (isEpisode) item.seriesName ?: item.name.orEmpty() else item.name.orEmpty()
-    val favorites by app.favorites.items.collectAsState()
-    val favorite = remember(favorites, ref.key) { app.favorites.isFavorite(ref) }
-    // focusGroup makes hasFocus cover every hero button, not just the first one; otherwise the
-    // carousel keeps rotating under 详情/收藏 and they act on a different title.
-    Column(Modifier.onFocusChanged { onFocusChange(it.hasFocus) }.focusGroup(), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        TitleLogo(library.logo(ref), title, maxWidth = 560.dp, maxHeight = 170.dp)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            val meta = listOfNotNull(
-                item.productionYear?.toString(),
-                if (isEpisode) listOfNotNull(episodeCode(item), item.name).joinToString(" ") else genresLabel(item),
-                formatDuration(item.runtimeMs),
-            )
-            Text(meta.joinToString("  ·  "), fontSize = 22.sp, color = Z.textPrimary.copy(alpha = 0.78f), maxLines = 1)
-            heroBadges(full?.mediaSources?.firstOrNull()).forEach { Badge(it, fontSize = 16) }
-        }
-        val overview = (full ?: item).overview
-        if (!overview.isNullOrBlank()) {
-            Text(overview, fontSize = 24.sp, lineHeight = 37.sp, color = Z.textPrimary.copy(alpha = 0.75f), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(760.dp))
-        }
-        Row(
-            Modifier.padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val resumeMs = resumeMsOf(item)
-            GlassButton(
-                if (resumeMs > 0) "继续播放 · ${formatClock(resumeMs)}" else "播放",
-                onPlay,
-                Modifier.focusRequester(focus).stepOn(Key.DirectionLeft, pages) { onStep(-1) },
-                glyph = Glyph.Play,
-            )
-            val versions = full?.mediaSources?.size ?: 0
-            GlassButton(if (versions > 1) "$versions 个版本" else "详情", onDetails)
-            GlassIconButton(
-                if (favorite) Glyph.Check else Glyph.Plus,
-                label = if (favorite) "已收藏" else "加入收藏",
-                onClick = { scope.launch { app.favorites.toggle(ref, listOf(ref)) } },
-            )
-            val watchEntries by app.watchlist.entries.collectAsState()
-            val inWatchlist = remember(watchEntries, ref.key) { app.watchlist.contains(ref) }
-            GlassIconButton(
-                Glyph.Bookmark,
-                label = if (inWatchlist) "已在待看" else "加入待看",
-                on = inWatchlist,
-                modifier = Modifier.stepOn(Key.DirectionRight, pages) { onStep(1) },
-                onClick = { app.toggleWatchlist(scope, ref) },
-            )
-        }
-        if (pages > 1) {
-            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                repeat(pages) { i ->
-                    Box(Modifier.height(8.dp).width(if (i == page) 34.dp else 8.dp).clip(CircleShape).background(if (i == page) Z.focusFill else Z.textPrimary.copy(alpha = 0.4f)))
-                }
-            }
-        }
-    }
-}
-
-/**
- * The hero's carousel keys (focus rules): [key] on an edge button turns the page instead of moving
- * focus, as long as there is more than one page. Held keys repeat, one title per repeat.
- */
-private fun Modifier.stepOn(key: Key, pages: Int, step: () -> Unit): Modifier = onPreviewKeyEvent { e ->
-    if (pages > 1 && e.type == KeyEventType.KeyDown && e.key == key) { step(); true } else false
-}
-
 /** "科幻 · 冒险": genres joined by a middle dot (never a slash). */
 internal fun genresLabel(item: BaseItemDto): String? = item.genres.take(2).joinToString(" · ").ifEmpty { null }
 
@@ -544,7 +521,7 @@ private fun ResumeCard(ref: ServerItem, onClick: () -> Unit, focusKey: String) {
     MediaCard16x9(
         imageUrl = library.landscapeImage(ref),
         onClick = onClick,
-        title = if (isEpisode) item.seriesName else item.name,
+        title = workTitleOf(item),
         topStart = library.status(ref.server)?.name,
         progress = progressFraction(item),
         focusKey = focusKey,
@@ -553,3 +530,12 @@ private fun ResumeCard(ref: ServerItem, onClick: () -> Unit, focusKey: String) {
         Text(caption, fontSize = 19.sp, color = Z.textSecondary, maxLines = 1)
     }
 }
+
+/**
+ * A home row (or the top bar) drawn into its own offscreen layer (P4 perf). The Z9X 8K redraws the
+ * whole screen every frame, and re-issuing every card's drawing kept its RenderThread at 10–14 ms a
+ * frame; a cached layer is redrawn only when something in it changes (the row being scrolled, the
+ * focused card), the others are one textured quad each.
+ */
+private fun Modifier.cachedLayer(): Modifier =
+    graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }

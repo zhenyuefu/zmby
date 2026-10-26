@@ -28,6 +28,17 @@ class EmbyClientTest {
     @After
     fun tearDown() = server.shutdown()
 
+    @Test fun listIDsAndResourceFactsDoNotNeedFullMetadata() = runTest {
+        server.enqueue(MockResponse().setBody("""{"Items":[{"Id":"i1","Type":"Movie","ProviderIds":{"Tmdb":"10"}}],"TotalRecordCount":1}"""))
+        assertEquals("10",client.search(session,"Mock").items.single().providerIds["Tmdb"])
+        assertTrue(server.takeRequest().requestUrl!!.queryParameter("Fields")!!.contains("ProviderIds"))
+        server.enqueue(MockResponse().setBody("""{"Id":"i1","Type":"Movie","ProviderIds":{"Tmdb":"10"}}"""))
+        client.resourceItem(session,"i1")
+        val fields=server.takeRequest().requestUrl!!.queryParameter("Fields")!!.split(',')
+        assertTrue("MediaSources" in fields && "ProviderIds" in fields)
+        assertTrue("People" !in fields && "Overview" !in fields && "Genres" !in fields)
+    }
+
     @Test
     fun authenticateSendsClientIdentityAndReadsToken() = runTest {
         server.enqueue(MockResponse().setBody("""{"User":{"Id":"u1","Name":"me"},"AccessToken":"tok","ServerId":"s1"}"""))
@@ -77,6 +88,30 @@ class EmbyClientTest {
     fun normalizesServerAddresses() {
         assertEquals("http://nas:8096", EmbyClient.normalizeBaseUrl(" nas:8096/ "))
         assertEquals("https://a.b/emby", EmbyClient.normalizeBaseUrl("https://a.b/emby/"))
+    }
+
+    @Test
+    fun fullDetailsExplicitlyRequestBiographyAndCast() = runTest {
+        server.enqueue(MockResponse().setBody("""{"Id":"p1","Type":"Person","Overview":"Biography"}"""))
+        assertEquals("Biography", client.item(session, "p1").overview)
+        val fields = server.takeRequest().requestUrl!!.queryParameter("Fields")!!.split(",")
+        assertTrue(fields.containsAll(listOf("ProviderIds", "Overview", "People", "ProductionLocations")))
+    }
+
+    @Test
+    fun personLookupUsesExternalIdsAndCastLookupStaysBounded() = runTest {
+        server.enqueue(MockResponse().setBody("""{"Items":[]}"""))
+        client.persons(session, listOf("tmdb.2053219", "imdb.nm9913973"))
+        val request = server.takeRequest().requestUrl!!
+        assertEquals("/emby/Persons", request.encodedPath)
+        assertEquals("tmdb.2053219,imdb.nm9913973", request.queryParameter("AnyProviderIdEquals"))
+        assertEquals("20", request.queryParameter("Limit"))
+        server.enqueue(MockResponse().setBody("""{"Items":[]}"""))
+        client.peopleByIds(session, listOf("p1", "p2"))
+        val cast = server.takeRequest().requestUrl!!
+        assertEquals("p1,p2", cast.queryParameter("Ids"))
+        assertEquals("Person", cast.queryParameter("IncludeItemTypes"))
+        assertEquals("2", cast.queryParameter("Limit"))
     }
 
     @Test

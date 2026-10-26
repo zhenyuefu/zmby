@@ -210,7 +210,39 @@ class EmbyClient(
 
     /** Full item, including MediaSources with their streams and chapters. */
     suspend fun item(s: ServerSession, itemId: String): BaseItemDto =
-        get(s.baseUrl, s, "Users/${s.userId}/Items/$itemId")
+        get(s.baseUrl, s, "Users/${s.userId}/Items/$itemId") {
+            addQueryParameter("Fields", "$LIST_FIELDS,People,OriginalTitle,PremiereDate,ProductionLocations,MediaSources,MediaStreams,Chapters")
+        }
+
+    /** Playback facts only; provider-backed detail pages do not ask for server descriptions or cast. */
+    suspend fun resourceItem(s: ServerSession, itemId: String): BaseItemDto =
+        get(s.baseUrl, s, "Users/${s.userId}/Items/$itemId") {
+            addQueryParameter("Fields", "ProviderIds,MediaSources,MediaStreams,Chapters,Path,RunTimeTicks,UserData,PresentationUniqueKey")
+        }
+
+    /** Verify a restored token for its own user; never uses another server's user id. */
+    suspend fun verifyUser(s: ServerSession): Boolean {
+        val body: kotlinx.serialization.json.JsonObject = get(s.baseUrl, s, "Users/${s.userId}")
+        return (body["Id"] as? kotlinx.serialization.json.JsonPrimitive)?.content == s.userId
+    }
+
+    /** Bounded person lookup; callers must check type and IDs because forks can ignore filters. */
+    suspend fun persons(s: ServerSession, ids: List<String>): ItemsResult =
+        get(s.baseUrl, s, "Persons") {
+            addQueryParameter("UserId", s.userId)
+            addQueryParameter("AnyProviderIdEquals", ids.joinToString(","))
+            addQueryParameter("Limit", "20")
+            addQueryParameter("Fields", "ProviderIds,Overview,PremiereDate,ProductionLocations")
+        }
+
+    /** Resolve the visible cast in one request, without walking the entire persons library. */
+    suspend fun peopleByIds(s: ServerSession, ids: List<String>): ItemsResult =
+        get(s.baseUrl, s, "Users/${s.userId}/Items") {
+            addQueryParameter("Ids", ids.joinToString(","))
+            addQueryParameter("IncludeItemTypes", "Person")
+            addQueryParameter("Fields", "ProviderIds,Overview,PremiereDate,ProductionLocations")
+            addQueryParameter("Limit", ids.size.toString())
+        }
 
     /** The item's images with their sizes; asked once per instance when its details open (local-data spec). */
     suspend fun images(s: ServerSession, itemId: String): List<ImageInfo> =
@@ -240,6 +272,20 @@ class EmbyClient(
             addQueryParameter("Recursive", "true")
             addQueryParameter("Limit", limit.toString())
             addQueryParameter("Fields", "$LIST_FIELDS,People,PremiereDate")
+        }
+
+    /** 观影统计: one page of the user's played films and episodes, most recently played first. */
+    suspend fun playedItems(s: ServerSession, start: Int, limit: Int): ItemsResult =
+        get(s.baseUrl, s, "Users/${s.userId}/Items") {
+            addQueryParameter("Recursive", "true")
+            addQueryParameter("IncludeItemTypes", "Movie,Episode")
+            addQueryParameter("Filters", "IsPlayed")
+            addQueryParameter("SortBy", "DatePlayed")
+            addQueryParameter("SortOrder", "Descending")
+            addQueryParameter("StartIndex", start.toString())
+            addQueryParameter("Limit", limit.toString())
+            addQueryParameter("Fields", "ProviderIds,RunTimeTicks,UserData")
+            addQueryParameter("EnableImages", "false")
         }
 
     suspend fun seasons(s: ServerSession, seriesId: String): ItemsResult =

@@ -111,6 +111,11 @@ class DataSources(
         _rows.value = all.associateBy { SourceRules.rowKey(it.feature, it.source) }
     }
 
+    suspend fun restore(rows: List<DataSourceRow>) {
+        _rows.value = _rows.value + rows.associateBy { SourceRules.rowKey(it.feature,it.source) }
+        persist(rows)
+    }
+
     fun enabled(feature: SourceFeature, server: String) = SourceRules.enabled(_rows.value, feature, server)
 
     /** The servers [feature] asks, in priority order: in its source, and switched on in the registry. */

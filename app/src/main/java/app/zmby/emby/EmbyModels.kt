@@ -1,5 +1,8 @@
 package app.zmby.emby
 
+import app.zmby.media.fileTitle
+import app.zmby.media.visibleText
+import app.zmby.media.titleOf
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -84,12 +87,13 @@ data class BaseItemDto(
     /** "Series S01E02 - Name" for episodes, otherwise the item name. */
     val displayTitle: String
         get() {
-            val name = name.orEmpty()
-            if (type != "Episode" || seriesName.isNullOrBlank()) return name
+            val series = visibleText(seriesName)
+            if (type != "Episode" || series == null) return titleOf(this)
+            val name = visibleText(name) ?: visibleText(originalTitle) ?: fileTitle(path)
             val s = parentIndexNumber
             val e = indexNumber
             val code = if (s != null && e != null) " S%02dE%02d".format(s, e) else ""
-            return "$seriesName$code - $name"
+            return if (name == null) "$series$code" else "$series$code - $name"
         }
 
     val runtimeMs: Long? get() = runTimeTicks?.let(::ticksToMs)
@@ -109,6 +113,7 @@ data class PersonDto(
     /** Actor, Director, Writer, Producer, GuestStar, Composer… */
     @SerialName("Type") val type: String? = null,
     @SerialName("PrimaryImageTag") val primaryImageTag: String? = null,
+    @SerialName("ProviderIds") val providerIds: Map<String, String> = emptyMap(),
 )
 
 /** One image of an item (`/Items/{id}/Images`), with the size used to pick the sharpest copy. */
@@ -126,6 +131,8 @@ data class ImageInfo(
 data class ChapterInfo(
     @SerialName("Name") val name: String? = null,
     @SerialName("StartPositionTicks") val startPositionTicks: Long = 0,
+    /** Emby 4.8+: Chapter, IntroStart, IntroEnd or CreditsStart (片段标记 from the server). */
+    @SerialName("MarkerType") val markerType: String? = null,
 )
 
 @Serializable
@@ -136,6 +143,7 @@ data class UserItemData(
     @SerialName("IsFavorite") val isFavorite: Boolean = false,
     @SerialName("UnplayedItemCount") val unplayedItemCount: Int? = null,
     @SerialName("LastPlayedDate") val lastPlayedDate: String? = null,
+    @SerialName("PlayCount") val playCount: Int? = null,
 )
 
 @Serializable

@@ -1,5 +1,7 @@
 package app.zmby.favorites
 
+import app.zmby.media.visibleText
+import app.zmby.media.titleOf
 import android.content.Context
 import app.zmby.aggregate.FanOut
 import app.zmby.aggregate.Keys
@@ -84,7 +86,7 @@ object FavoriteLogic {
         val known = (old?.instances.orEmpty().map { it.server to it.itemId } + instances.map { it.server to it.item.id }).distinct()
         val fav = Favorite(
             workKey = key,
-            title = lead.item.name ?: old?.title.orEmpty(),
+            title = visibleText(lead.item.name) ?: visibleText(old?.title) ?: titleOf(lead.item),
             year = lead.item.productionYear ?: old?.year,
             type = lead.item.type ?: old?.type ?: "Movie",
             addedAt = if (adding) now else old!!.addedAt,

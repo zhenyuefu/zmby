@@ -1,7 +1,9 @@
 package app.zmby.ui.screens
 
+import app.zmby.media.titleOf
 import app.zmby.data.SourceFeature
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,6 +35,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
@@ -62,6 +71,7 @@ import app.zmby.ui.components.PosterCard2x3
 import app.zmby.ui.components.RowTitle
 import app.zmby.ui.components.SelectableRow
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import app.zmby.search.LiveSearch
 import app.zmby.ui.components.groupCard
@@ -79,13 +89,15 @@ import kotlinx.coroutines.withContext
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import app.zmby.log.ZLog
+import app.zmby.catalog.CatalogWork
+import kotlinx.coroutines.CancellationException
 import app.zmby.search.Candidate
 import app.zmby.search.Pinyin
 import app.zmby.search.PinyinCandidates
 
 private val KEYS = "abcdefghijklmnopqrstuvwxyz1234567890".map { it.toString() }
 
-/** Both modes search as typed; pinyin also offers an independent, focusable candidate column. */
+/** Both modes search as typed; pinyin also offers candidates below the keyboard. */
 private enum class KeyMode { Pinyin, Abc }
 
 @Composable
@@ -104,19 +116,20 @@ fun SearchScreen(nav: Nav) {
     val liveState by live.state.collectAsState()
     val localCandidates by candidates.candidates.collectAsState()
     var rawHits by rememberRetained("pinyinHits", query) { mutableStateOf<List<Hit>>(emptyList()) }
-    var preview by remember { mutableStateOf<Candidate?>(null) }
+    var pendingResultFocus by remember { mutableStateOf<String?>(null) }
     val keyA = remember { FocusRequester() }
     val candidateEntry = remember { FocusRequester() }
+    val resultEntry = remember { FocusRequester() }
+    val resultGrid = rememberLazyGridState()
     DisposableEffect(Unit) { onDispose { candidates.clear(); live.close() } }
 
     LaunchedEffect(query, mode) {
         // Full live results provide remote candidates, avoiding a second set of candidate requests.
-        candidates.onInput(if (mode == KeyMode.Pinyin) query else "", fetchRemote = false)
+        // Matching local titles converts up to 2000 of them to pinyin: off the main thread.
+        withContext(Dispatchers.Default) { candidates.onInput(if (mode == KeyMode.Pinyin) query else "", fetchRemote = false) }
     }
-    LaunchedEffect(query, mode, preview) {
-        live.submit(preview?.title ?: query, preview?.let { c ->
-            c.item?.let { item -> c.serverKey?.let { id -> Hit(ServerItem(id, item), app.registry.get(id)?.order ?: 0) } }
-        })
+    LaunchedEffect(query, mode) {
+        live.submit(query)
     }
     LaunchedEffect(liveState) {
         snapshot = liveState.snapshot
@@ -136,14 +149,17 @@ fun SearchScreen(nav: Nav) {
             live.refresh()
         }
     }
-    val shownCandidates = if (mode == KeyMode.Pinyin && query.isNotBlank() && !Pinyin.hasHan(query)) {
-        PinyinCandidates.rank(query, localCandidates + rawHits.filter { Pinyin.hasHan(it.item.name.orEmpty()) }.map { h ->
-            Candidate(h.item.name.orEmpty(), h.item.productionYear, h.item, h.server, h.order)
-        })
-    } else emptyList()
+    // Ranking converts every candidate title to pinyin: on Dispatchers.Default, not in composition.
+    val shownCandidates by produceState(emptyList<Candidate>(), query, mode, localCandidates, rawHits) {
+        value = if (mode == KeyMode.Pinyin && query.isNotBlank() && !Pinyin.hasHan(query)) withContext(Dispatchers.Default) {
+            PinyinCandidates.rank(query, localCandidates + rawHits.filter { Pinyin.hasHan(it.item.name.orEmpty()) }.map { h ->
+                Candidate(h.item.name.orEmpty(), h.item.productionYear, h.item, h.server, h.order)
+            })
+        } else emptyList()
+    }
 
     fun changeQuery(text: String) {
-        preview = null
+        pendingResultFocus = null
         query = text
         rawHits = emptyList()
         live.submit("") // Cancel the previous HTTP work immediately, before the debounce.
@@ -151,16 +167,57 @@ fun SearchScreen(nav: Nav) {
     fun pick(c: Candidate) {
         ZLog.i("Search", "picked candidate '${c.title}' from ${c.serverKey ?: "local titles"}")
         changeQuery(c.title)
-        scope.launch { awaitFrame(); runCatching { keyA.requestFocus() } }
+        pendingResultFocus = c.title.trim()
+        // Keep a usable focus target while the candidate disappears and new results arrive.
+        scope.launch {
+            awaitFrame()
+            if (pendingResultFocus != null) keyA.requestFocus()
+        }
         val reuse = c.item?.let { item -> c.serverKey?.let { id -> Hit(ServerItem(id, item), app.registry.get(id)?.order ?: 0) } }
         live.submit(c.title, reuse, immediate = true, saveHistory = true)
     }
 
-    val resultHits = snapshot?.hits
-    val merged by produceState<MergeResult?>(null, resultHits) {
-        value = resultHits?.let { withContext(Dispatchers.Default) { Merger.merge(it) } }
+    val tmdbSearch by app.settings.tmdbSearch.flow.collectAsState()
+    val tmdbLanguage by app.settings.metadataLanguage.flow.collectAsState()
+    val tmdbToken by app.settings.tmdbToken.flow.collectAsState()
+    var tmdbError by remember(query) { mutableStateOf<String?>(null) }
+    val tmdbWorks by produceState<List<CatalogWork>>(emptyList(), query, tmdbSearch, tmdbLanguage, tmdbToken) {
+        value = emptyList()
+        if (query.isNotBlank() && tmdbSearch && app.catalog.configured) {
+            delay(350)
+            withContext(Dispatchers.IO) {
+                try { value = app.catalog.search(query); tmdbError = null }
+                catch (e: CancellationException) { throw e } catch (e: Exception) { tmdbError = e.message }
+            }
+        }
     }
-    Row(Modifier.fillMaxSize()) {
+    val resultHits = snapshot?.hits
+    // Keep cards mounted while merging incremental hits, and tag their source to reject stale focus.
+    val mergedInput by produceState<Pair<List<Hit>?, MergeResult?>>(null to null, resultHits) {
+        value = resultHits to resultHits?.let { withContext(Dispatchers.Default) { Merger.merge(it) } }
+    }
+    val merged = mergedInput.second
+    LaunchedEffect(pendingResultFocus, liveState, snapshot, mergedInput) {
+        val term = pendingResultFocus ?: return@LaunchedEffect
+        if (liveState.term != term || snapshot != liveState.snapshot) return@LaunchedEffect
+        if (mergedInput.first != resultHits) return@LaunchedEffect
+        val results = merged ?: return@LaunchedEffect
+        if (results.works.isNotEmpty() || results.unmerged.isNotEmpty()) {
+            resultGrid.scrollToItem(0)
+            awaitFrame()
+            if (resultEntry.requestFocus()) pendingResultFocus = null
+        } else if (liveState.snapshot?.done == true) {
+            awaitFrame()
+            keyA.requestFocus()
+            pendingResultFocus = null
+        }
+    }
+    val showCandidates = mode == KeyMode.Pinyin && query.isNotBlank() && !Pinyin.hasHan(query)
+    Row(Modifier.fillMaxSize().onPreviewKeyEvent {
+        // A later remote press takes control; delayed results must not steal that focus.
+        if (it.type == KeyEventType.KeyDown) pendingResultFocus = null
+        false
+    }) {
         SearchAside(
             query = query,
             mode = mode,
@@ -168,16 +225,19 @@ fun SearchScreen(nav: Nav) {
             onSpace = { if (query.isNotEmpty() && !query.endsWith(' ')) changeQuery(query + " ") },
             onDelete = { changeQuery(query.dropLast(1)) },
             onClear = { changeQuery("") },
-            onMode = { preview = null; mode = if (mode == KeyMode.Pinyin) KeyMode.Abc else KeyMode.Pinyin },
-            onSearch = { if (query.isNotBlank()) { preview = null; live.submit(query, immediate = true, saveHistory = true) } },
+            onMode = { pendingResultFocus = null; mode = if (mode == KeyMode.Pinyin) KeyMode.Abc else KeyMode.Pinyin },
+            onSearch = { if (query.isNotBlank()) live.submit(query, immediate = true, saveHistory = true) },
             keyA = keyA,
-            candidateEntry = candidateEntry.takeIf { shownCandidates.isNotEmpty() },
+            candidates = if (showCandidates) shownCandidates else emptyList(),
+            candidateEntry = candidateEntry,
+            onPick = ::pick,
         )
-        if (mode == KeyMode.Pinyin) CandidateColumn(shownCandidates, candidateEntry, keyA, onPreview = { preview = it }, onPick = ::pick)
         Column(
             Modifier.weight(1f).fillMaxHeight().padding(start = 40.dp, end = 60.dp, top = 64.dp),
             verticalArrangement = Arrangement.spacedBy(30.dp),
         ) {
+            if (tmdbWorks.isNotEmpty()) CatalogCards(nav, tmdbWorks, "TMDB · 影视目录")
+            tmdbError?.let { Text(it, color = Z.warn, fontSize = 18.sp) }
             val snap = snapshot
             if (snap != null) StatusRow(snap, servers)
             val works = merged?.works.orEmpty()
@@ -185,6 +245,7 @@ fun SearchScreen(nav: Nav) {
             if (works.isNotEmpty() || loose.isNotEmpty()) {
                 LazyVerticalGrid(
                     columns = GridCells.FixedSize(196.dp),
+                    state = resultGrid,
                     horizontalArrangement = Arrangement.spacedBy(28.dp),
                     verticalArrangement = Arrangement.spacedBy(32.dp),
                     contentPadding = PaddingValues(bottom = 60.dp, end = 30.dp),
@@ -195,11 +256,12 @@ fun SearchScreen(nav: Nav) {
                         val item = lead.item
                         PosterCard2x3(
                             imageUrl = library.primaryImage(lead.ref),
-                            title = item.name.orEmpty(),
+                            title = titleOf(item),
                             onClick = { nav.open(lead.ref) },
                             topEnd = "${work.entries.size} 个版本",
                             subtitle = listOfNotNull(if (item.type == "Series") "剧集" else "电影", item.productionYear?.toString()).joinToString(" · "),
                             focusKey = "result:${lead.ref.key}",
+                            modifier = if (work == works.first()) Modifier.focusRequester(resultEntry) else Modifier,
                         )
                     }
                     if (loose.isNotEmpty()) {
@@ -207,7 +269,11 @@ fun SearchScreen(nav: Nav) {
                             Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                 Text("未能合并", fontSize = 26.sp, fontWeight = FontWeight.Bold)
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                    loose.forEach { h -> LooseChip(h, library.status(h.server)?.name.orEmpty()) { nav.open(h.ref) } }
+                                    loose.forEachIndexed { i, h ->
+                                        LooseChip(h, library.status(h.server)?.name.orEmpty(),
+                                            modifier = if (works.isEmpty() && i == 0) Modifier.focusRequester(resultEntry) else Modifier,
+                                        ) { nav.open(h.ref) }
+                                    }
                                 }
                             }
                         }
@@ -216,7 +282,7 @@ fun SearchScreen(nav: Nav) {
             } else if (snap?.done == true) {
                 val failed = snap.states.values.count { it != SearchState.Done }
                 Text(
-                    if (failed == 0) "没有找到「${liveState.term}」" else "已返回的服务器里没有「${liveState.term}」",
+                    if (failed == 0) "所选服务器暂无「${liveState.term}」资源" else "已响应的服务器暂无「${liveState.term}」资源，其余待确认",
                     fontSize = 24.sp,
                     color = Z.textSecondary,
                 )
@@ -252,14 +318,14 @@ private const val MAX_CHIPS = 6
 
 /** 「标题 · 服务器」 for hits that could not be merged (no external IDs). */
 @Composable
-private fun LooseChip(h: Hit, server: String, onClick: () -> Unit) {
+private fun LooseChip(h: Hit, server: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
-    Focusable(onClick, shape = shape, focusedScale = 1.04f, outline = 0.dp, shadow = 0.dp, label = "未合并 ${h.item.name}", focusKey = "loose:${h.ref.key}") { focused ->
+    Focusable(onClick, modifier = modifier, shape = shape, focusedScale = 1.04f, outline = 0.dp, shadow = 0.dp, label = "未合并 ${h.item.name}", focusKey = "loose:${h.ref.key}") { focused ->
         Row(
             Modifier.then(if (focused) Modifier.liftShadow(shape).onFill(shape) else Modifier.groupCard(shape)).padding(horizontal = 22.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val title = listOfNotNull(h.item.name, h.item.productionYear?.let { "($it)" }).joinToString(" ")
+            val title = listOfNotNull(titleOf(h.item), h.item.productionYear?.let { "($it)" }).joinToString(" ")
             Text(title, fontSize = 19.sp, color = if (focused) Z.onFocus else Z.textPrimary, maxLines = 1)
             Text("· $server", fontSize = 19.sp, color = if (focused) Z.onFocusSecondary else Z.textTertiary, maxLines = 1)
         }
@@ -280,8 +346,25 @@ private fun SearchAside(
     onMode: () -> Unit,
     onSearch: () -> Unit,
     keyA: FocusRequester,
-    candidateEntry: FocusRequester?,
+    candidates: List<Candidate>,
+    candidateEntry: FocusRequester,
+    onPick: (Candidate) -> Unit,
 ) {
+    val searchKey = remember { FocusRequester() }
+    // A new input starts at index zero instead of keeping a former candidate as the scroll anchor.
+    val candidateList = remember(query, mode) { LazyListState() }
+    var candidateFocused by remember { mutableStateOf(false) }
+    var enterCandidates by remember(query, mode) { mutableStateOf(false) }
+    val candidateKeys = remember(candidates) { candidates.map { it.title to it.year } }
+    LaunchedEffect(candidateList, candidateKeys, candidateFocused, enterCandidates) {
+        if (candidates.isEmpty()) return@LaunchedEffect
+        if (!candidateFocused || enterCandidates) candidateList.scrollToItem(0)
+        if (enterCandidates) {
+            // Lazy items outside the viewport have no focus target until they are laid out.
+            awaitFrame()
+            if (candidateEntry.requestFocus()) enterCandidates = false
+        }
+    }
     Column(
         Modifier.width(520.dp).fillMaxHeight().background(Z.aside).padding(start = 64.dp, end = 40.dp, top = 64.dp, bottom = 40.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
@@ -308,7 +391,7 @@ private fun SearchAside(
             KEYS.chunked(6).forEachIndexed { r, row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEach { key ->
-                        val base = if (key == row.last() && candidateEntry != null) Modifier.weight(1f).focusProperties { right = candidateEntry } else Modifier.weight(1f)
+                        val base = Modifier.weight(1f)
                         val m = if (key == KEYS.first()) base.focusRequester(first).focusRequester(keyA) else base
                         Key(key, m, fontSize = 26) { onKey(key) }
                     }
@@ -322,36 +405,49 @@ private fun SearchAside(
                 Key("清空", Modifier.weight(1f), onClick = onClear)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Key(if (mode == KeyMode.Pinyin) "切到 ABC" else "切到拼音", Modifier.weight(1f), onClick = onMode)
-                Key("搜索", Modifier.weight(1f), onClick = onSearch)
+                val downToCandidates = if (candidates.isNotEmpty()) Modifier.onPreviewKeyEvent {
+                    if (it.key == Key.DirectionDown) {
+                        if (it.type == KeyEventType.KeyDown) enterCandidates = true
+                        true
+                    } else false
+                } else Modifier
+                Key(if (mode == KeyMode.Pinyin) "切到 ABC" else "切到拼音", Modifier.weight(1f).then(downToCandidates), onClick = onMode)
+                Key("搜索", Modifier.weight(1f).focusRequester(searchKey).then(downToCandidates), onClick = onSearch)
             }
         }
+        if (candidates.isNotEmpty()) CandidateColumn(
+            candidates = candidates,
+            entry = candidateEntry,
+            keyboard = searchKey,
+            state = candidateList,
+            modifier = Modifier.weight(1f).onFocusChanged { candidateFocused = it.hasFocus }.focusGroup(),
+            onPick = onPick,
+        )
     }
 }
 
-/** A stable vertical column; candidate focus previews its full Chinese search on the right. */
+/** Candidates only submit on confirmation; moving focus leaves the current results intact. */
 @Composable
 private fun CandidateColumn(
     candidates: List<Candidate>,
     entry: FocusRequester,
     keyboard: FocusRequester,
-    onPreview: (Candidate) -> Unit,
+    state: LazyListState,
+    modifier: Modifier,
     onPick: (Candidate) -> Unit,
 ) {
     Column(
-        Modifier.width(336.dp).fillMaxHeight().padding(start = 20.dp, end = 20.dp, top = 64.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("拼音候选", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
+        Text("候选", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
             itemsIndexed(candidates, key = { _, c -> "${c.title}:${c.year}" }, contentType = { _, _ -> "candidate" }) { i, c ->
                 SelectableRow(
                     onClick = { onPick(c) },
-                    modifier = Modifier.then(if (i == 0) Modifier.focusRequester(entry) else Modifier)
-                        .focusProperties { left = keyboard },
+                    modifier = if (i == 0) Modifier.focusRequester(entry).focusProperties { up = keyboard } else Modifier,
                     tile = true,
                     showCheck = false,
-                    onFocus = { onPreview(c) },
                     label = "候选 ${c.title}",
                     focusKey = "candidate:${c.title}:${c.year}",
                 ) { focused ->

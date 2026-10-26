@@ -94,6 +94,7 @@ fun ServersScreen(nav: Nav) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 GlassButton("扫码导入", { nav.go(Route.Import) }, glyph = Glyph.Qr, height = 64.dp, horizontalPadding = 30.dp, fontSize = 21)
                 GlassButton("添加服务器", { nav.go(Route.AddServer) }, glyph = Glyph.Plus, height = 64.dp, horizontalPadding = 30.dp, fontSize = 21)
+                GlassButton("备份与恢复", { nav.go(Route.Backup) }, height = 64.dp, horizontalPadding = 30.dp, fontSize = 21)
                 GlassButton("全部测速", { scope.launch { library.measure() } }, height = 64.dp, horizontalPadding = 30.dp, fontSize = 21)
             }
         }
@@ -119,6 +120,10 @@ fun ServersScreen(nav: Nav) {
             }
             current?.let { s ->
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    if (s.config.needsLogin) {
+                        Text("需重新登录",fontSize = 22.sp,color = Z.warn)
+                        GlassButton("扫码重新登录", { nav.go(Route.Import) }, glyph = Glyph.Qr)
+                    }
                     LinesCard(s)
                     LibrariesCard(s.id)
                     OptionsCard(s, onRemoved = { currentId = null })

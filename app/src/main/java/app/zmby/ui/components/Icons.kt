@@ -46,6 +46,9 @@ enum class Glyph(val path: String, val filled: Boolean = false) {
     Bookmark("M7 4h10v16l-5-4-5 4z"),
     Sort("M7 4v16M4 17l3 3 3-3M17 20V4M14 7l3-3 3 3"),
     Filter("M4 5h16l-6 8v6l-4-2v-4z"),
+    // Refresh (观影统计, retry), and the manual segment marks on the detail page.
+    Refresh("M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"),
+    Marks("M4 6h16M4 18h16M8 3v6M16 15v6"),
 }
 
 private val parsed = HashMap<Glyph, Path>()

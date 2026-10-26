@@ -1,5 +1,6 @@
 package app.zmby.favorites
 
+import app.zmby.media.titleOf
 import app.zmby.aggregate.Keys
 import app.zmby.data.Library
 import app.zmby.data.ServerItem
@@ -45,7 +46,7 @@ object WatchlistLogic {
         val item = lead.item
         return WatchlistRow(
             workKey = Keys.work(lead.server, item),
-            title = item.name.orEmpty(),
+            title = titleOf(item),
             year = item.productionYear,
             type = item.type ?: "Movie",
             premiereDate = item.premiereDate,

@@ -47,17 +47,15 @@ class LiveSearchTest {
         assertEquals(LiveSearchState(), live.state.value)
     }
 
-    @Test fun `candidate previews search Chinese and explicit submission is not repeated by typing effect`() = runTest {
+    @Test fun `confirmed candidate searches immediately and is not repeated by typing effect`() = runTest {
         val calls = mutableListOf<String>()
         val history = mutableListOf<String>()
         val live = LiveSearch(this, { term, _ -> calls += term; flowOf(snapshot(true)) }, history::add)
         live.submit("xjcy"); advanceTimeBy(401); runCurrent()
-        live.submit("星际穿越"); advanceTimeBy(401); runCurrent()
-        assertEquals(listOf("xjcy", "星际穿越"), calls)
         assertTrue(history.isEmpty())
         live.submit("星际穿越", immediate = true, saveHistory = true); runCurrent()
         live.submit("星际穿越"); advanceTimeBy(401); runCurrent()
-        assertEquals(3, calls.size)
+        assertEquals(listOf("xjcy", "星际穿越"), calls)
         assertEquals(listOf("星际穿越"), history)
     }
 

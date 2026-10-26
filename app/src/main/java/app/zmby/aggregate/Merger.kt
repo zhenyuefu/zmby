@@ -30,7 +30,7 @@ data class MergeResult(val works: List<MergedWork>, val unmerged: List<Hit>)
  * (possible); the rest are 「未能合并」, interleaved server by server. Films and series never mix.
  */
 object Merger {
-    fun merge(hits: List<Hit>): MergeResult {
+    fun merge(hits: List<Hit>, strictExternal: Boolean = false): MergeResult {
         val ordered = hits.sortedWith(compareBy<Hit> { it.order }.thenBy { it.rank })
         val clusters = mutableListOf<MutableList<Hit>>()
         val reasons = mutableListOf<MutableMap<String, Verdict>>()
@@ -45,7 +45,11 @@ object Merger {
             val ids = externalKeys(hit.item)
             val candidates = ids.flatMap { idClusters[it].orEmpty() }.distinct()
             val fits = candidates.filter { i ->
-                val pairs = clusters[i].map { same(it.item, hit.item) }
+                val pairs = clusters[i].map {
+                    if (strictExternal) {
+                        if (MetadataIdentity.same(it.item, hit.item)) PairLevel.Strong else PairLevel.None
+                    } else same(it.item, hit.item)
+                }
                 pairs.none { it == PairLevel.None } && pairs.any { it == PairLevel.Strong }
             }
             val cluster: Int
@@ -64,6 +68,7 @@ object Merger {
         val titleClusters = clusters.indices.groupBy { i -> clusters[i].first().item.let { it.type to titleYear(it) } }
         val unmerged = mutableListOf<Hit>()
         for (hit in loose) {
+            if (strictExternal) { unmerged += hit; continue }
             val title = titleYear(hit.item)
             val fits = if (title == null) emptyList() else titleClusters[hit.item.type to title].orEmpty()
                 .filter { i -> clusters[i].none { it.server == hit.server } }

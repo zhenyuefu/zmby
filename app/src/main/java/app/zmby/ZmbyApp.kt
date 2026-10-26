@@ -14,6 +14,7 @@ import app.zmby.data.PrefsRegistryStore
 import app.zmby.data.ServerRegistry
 import app.zmby.data.PrefsCapsStore
 import app.zmby.data.ServerCapsStore
+import app.zmby.data.enforceStartupLimit
 import app.zmby.data.Settings
 import app.zmby.data.Disk
 import app.zmby.store.LocalStore
@@ -103,6 +104,31 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     /** 设置 › 数据来源: which servers each feature asks. */
     lateinit var sources: DataSources
         private set
+    lateinit var catalogCache: app.zmby.catalog.LimitedCatalogCache
+        private set
+    var activeImageCacheMb = app.zmby.data.CacheLimits.IMAGES_DEFAULT_MB
+        private set
+    lateinit var catalog: app.zmby.catalog.CatalogRepository
+        private set
+    /** 片头片尾: segment markers from the providers in 片段标记来源 (P4). */
+    lateinit var segments: app.zmby.segments.SegmentRepository
+        private set
+    /** 观影统计 (P4): play history of the 观影统计 servers, local first. */
+    lateinit var stats: app.zmby.stats.WatchStats
+        private set
+
+    val backups by lazy { app.zmby.backup.BackupRepository(this) }
+
+    /** Versions to fall back on per playback request (播放失败自动换源), handed over by token. */
+    private val alternates = java.util.concurrent.ConcurrentHashMap<String, List<app.zmby.playback.Alternate>>()
+
+    fun putAlternates(list: List<app.zmby.playback.Alternate>): String? {
+        if (list.isEmpty()) return null
+        if (alternates.size > 8) alternates.clear()
+        return UUID.randomUUID().toString().also { alternates[it] = list }
+    }
+
+    fun takeAlternates(token: String?): List<app.zmby.playback.Alternate> = token?.let { alternates.remove(it) }.orEmpty()
 
     /** The LAN log server; [lanAddress] is what to type on the Mac, or null while it is off. */
     val lanServer = LanServer()
@@ -140,6 +166,7 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     /** Everything that reads preferences or files: runs on [Dispatchers.IO], never on the main thread. */
     private suspend fun init() {
         settings = Settings(this)
+        activeImageCacheMb = settings.imageCacheMb.value
         ZLog.i(TAG, "start ${BuildConfigCompat.versionName(this)} on ${Build.MODEL} (API ${Build.VERSION.SDK_INT})")
         sessionStore = SessionStore(this)
         val info = ClientInfo(
@@ -174,6 +201,20 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         zidooStatus = ZidooStatusApi(local)
         registry = ServerRegistry(PrefsRegistryStore(this), persist = Disk::write)
         store = LocalStore(ZmbyDatabase.open(this), emby.json)
+        store.canonicalMetadataOnly = true
+        catalogCache = app.zmby.catalog.LimitedCatalogCache(store.db, { settings.metadataCacheMb.value * app.zmby.data.CacheLimits.MIB })
+        val catalogHttp = app.zmby.catalog.CatalogHttp(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(30, TimeUnit.SECONDS).build(), catalogCache, { settings.tmdbToken.value })
+        catalog = app.zmby.catalog.CatalogRepository(catalogHttp, catalogCache,
+            { settings.metadataLanguage.value }, { settings.posterLanguage.value }, { settings.logoLanguage.value }, { settings.animeAliases.value })
+        ZLog.secret(settings.tmdbToken.value)
+        catalogCache.prune(System.currentTimeMillis() - 30 * app.zmby.catalog.CatalogHttp.DAY)
+        appScope.launch(Dispatchers.IO) {
+            settings.metadataCacheMb.flow.collect {
+                try { catalogCache.trimToLimit() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { ZLog.w(TAG, "metadata cache trim failed", e) }
+            }
+        }
         library = Library(this, emby, registry, sessionStore, capsStore, store)
         fanOut = FanOut(registry)
         home = HomeFeed(library, fanOut, store)
@@ -188,18 +229,36 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         favorites = Favorites(this, library, fanOut, appScope, store, inSource = { sources.enabled(SourceFeature.Favorites, it) })
         favorites.load()
         watchlist = Watchlist(library, store, appScope)
+        val segmentHttp = app.zmby.segments.SegmentHttp(http, "zmby/${BuildConfigCompat.versionName(this)}")
+        segments = app.zmby.segments.SegmentRepository(
+            markers = store.sources,
+            clients = listOf(
+                app.zmby.segments.TheIntroDbClient(segmentHttp),
+                app.zmby.segments.IntroDbClient(segmentHttp),
+                app.zmby.segments.PublicMetaDbClient(segmentHttp),
+            ),
+            providers = { sources.providers() },
+            key = { p -> if (p == SegmentProvider.PublicMetaDB) settings.publicMetaDbKey.value.takeIf { it.isNotBlank() } else null },
+        )
+        ZLog.secret(settings.publicMetaDbKey.value)
+        stats = app.zmby.stats.WatchStats(store, library, { sources.servers(SourceFeature.Stats) }, sources.rows)
         appScope.launch(Dispatchers.IO) { runCatching { store.trim() }.onFailure { ZLog.w(TAG, "trim failed", it) } }
     }
 
     /** Coil uses the app's client, so artwork goes out with the server's User-Agent too. */
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
         .okHttpClient { http }
-        // Artwork survives restarts (local-data spec: Coil disk cache, 300 MB).
-        .diskCache { DiskCache.Builder().directory(cacheDir.resolve("image_cache")).maxSizeBytes(IMAGE_CACHE_BYTES).build() }
+        // One Coil disk cache per directory. A new budget is applied on the next process start.
+        .diskCache { DiskCache.Builder().directory(cacheDir.resolve("image_cache")).maxSizeBytes(activeImageCacheMb * app.zmby.data.CacheLimits.MIB).build() }
         // Emby image URLs carry the image's tag, so a cached copy is valid until the URL changes;
         // servers rarely send cache headers, and honouring them would leave posters blank offline.
         .respectCacheHeaders(false)
-        .build()
+        .build().also { loader ->
+            appScope.launch(Dispatchers.IO) {
+                runCatching { loader.diskCache?.enforceStartupLimit() }
+                    .onFailure { ZLog.w(TAG, "image cache trim failed", it) }
+            }
+        }
 
     private fun applyLanLog(on: Boolean) {
         Thread {
@@ -236,8 +295,27 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         }
     }
 
-    /** The servers the metadata merge draws from, in priority order (设置 › 数据来源 › 影片信息来源). */
-    fun metadataServers(): List<String> = sources.servers(SourceFeature.Metadata)
+    /** The store key of [item] on [server] (an episode under its series' key when known). */
+    suspend fun workKeyOf(server: String, item: app.zmby.emby.BaseItemDto): String =
+        store.workKeyOf(server, item.id)
+            ?: app.zmby.store.StoreKeys.work(server, item, item.seriesId?.let { store.workKeyOf(server, it) })
+
+    /**
+     * The segments for playing [item] on [server] in a version of [durationMs] (片头片尾跳过). The
+     * episode's series supplies the external IDs; Emby markers need the full item (chapters), from
+     * the store or, failing that, one request.
+     */
+    suspend fun segmentPlan(server: String, item: app.zmby.emby.BaseItemDto, durationMs: Long?): app.zmby.segments.SegmentPlan {
+        val seriesId = item.seriesId?.takeIf { item.type == "Episode" }
+        val series = seriesId?.let { id -> store.detail(server, id)?.item ?: runCatching { library.providerIdsOf(server, id) }.getOrNull() }
+        val full = if (item.chapters.isNotEmpty()) item else store.detail(server, item.id)?.item?.takeIf { it.chapters.isNotEmpty() }
+            ?: if (sources.providers().any { it.enabled && it.provider == SegmentProvider.Emby }) runCatching { library.item(server, item.id) }.getOrNull() ?: item else item
+        val key = workKeyOf(server, item)
+        return segments.plan(full, series, key, durationMs) {
+            val order = registry.all.associate { it.id to it.order }
+            store.copiesOfWork(key, server).sortedBy { order[it.server] ?: Int.MAX_VALUE }.map { it.item }
+        }
+    }
 
     /** After a playback ended with [outcome] (the stop report is on its way to the server). */
     suspend fun onPlayed(ref: ServerItem, outcome: PlaybackOutcome) {
@@ -262,7 +340,6 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     private companion object {
         const val TAG = "App"
         const val STALE_SESSION_MS = 12 * 60 * 60 * 1000L
-        const val IMAGE_CACHE_BYTES = 300L * 1024 * 1024
         const val SOURCES_MIGRATED = "migration:data_sources"
     }
 }

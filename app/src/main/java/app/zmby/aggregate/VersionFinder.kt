@@ -89,6 +89,7 @@ class VersionFinder(private val source: VersionSource, private val fanOut: FanOu
                 return WorkMatch(null, null, Match.explain(hits) { Match.compare(ref, it) })
             }
         }
+        if (ref.id.startsWith("catalog:")) return WorkMatch(null, null, "无已确认外部 ID 的资源")
         val name = ref.name?.takeIf { it.isNotBlank() } ?: return WorkMatch(null, null, "缺少片名")
         // Name hits are re-read with full fields before judging.
         val candidates = source.searchType(server, name, type, nameCandidates)

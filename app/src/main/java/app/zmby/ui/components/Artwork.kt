@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -109,8 +110,11 @@ private fun CardFrame(
                     .then(if (focused) Modifier.shadow(40.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.7f), spotColor = Color.Black.copy(alpha = 0.7f)) else Modifier)
                     .clip(shape)
                     .then(if (focused) Modifier.border(4.dp, Z.focusFill, shape) else Modifier),
-                content = art,
-            )
+            ) {
+                // Chips sit on the card's own artwork, not on the page backdrop: plain glass, without
+                // the backdrop slice and the per-chip position callback it needs on every scroll frame.
+                CompositionLocalProvider(LocalBackdrop provides null) { art() }
+            }
             Box(Modifier.padding(top = 14.dp)) { caption() }
         }
     }

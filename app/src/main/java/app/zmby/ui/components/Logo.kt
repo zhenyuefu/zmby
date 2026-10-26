@@ -28,6 +28,18 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import app.zmby.ui.theme.Z
 import coil.compose.AsyncImage
+import coil.imageLoader
+import app.zmby.media.UNTITLED
+import app.zmby.media.visibleText
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * The zmby mark (ui-spec §2.7): three rounded tiles stacked diagonally (many servers) ending in the
@@ -65,36 +77,81 @@ fun ZmbyLogo(markSize: Dp = 46.dp, wordSize: Int = 32, modifier: Modifier = Modi
  * the text's place, fitted into [maxWidth]×[maxHeight], left-aligned and sitting on the bottom edge.
  * While loading, the image is laid out (invisibly) at its full box so the page does not jump when it
  * arrives.
+ *
+ * A Logo decoded before (an earlier visit, the home hero's prefetch) is drawn in the very first
+ * frame, with no text before it. One that is only in the disk cache shows nothing for the moment its
+ * decode takes (at most [DECODE_GRACE_MS]) instead of flashing the text; only a Logo that has to
+ * come from the server shows the text first.
  */
 @Composable
 fun TitleLogo(logoUrl: String?, title: String, maxWidth: Dp, maxHeight: Dp, modifier: Modifier = Modifier) {
-    var state by remember(logoUrl) { mutableStateOf(if (logoUrl == null) LogoState.None else LogoState.Loading) }
+    val context = LocalContext.current
+    val loader = context.imageLoader
+    val density = LocalDensity.current
+    val w = with(density) { maxWidth.roundToPx() }
+    val h = with(density) { maxHeight.roundToPx() }
+    val request = remember(logoUrl, w, h) { logoUrl?.let { logoRequest(context, it, w, h) } }
+    val cached = remember(request) {
+        if (logoUrl == null) null else loader.memoryCache?.get(logoCacheKey(logoUrl, w, h))?.bitmap?.asImageBitmap()
+    }
+    var state by remember(request) {
+        mutableStateOf(
+            when {
+                request == null -> LogoState.None
+                cached != null -> LogoState.Loaded
+                else -> LogoState.Checking
+            },
+        )
+    }
+    LaunchedEffect(request) {
+        if (state != LogoState.Checking || logoUrl == null) return@LaunchedEffect
+        val onDisk = withContext(Dispatchers.IO) {
+            runCatching { loader.diskCache?.openSnapshot(logoUrl)?.use { true } ?: false }.getOrDefault(false)
+        }
+        if (state != LogoState.Checking) return@LaunchedEffect
+        if (!onDisk) {
+            state = LogoState.Loading
+            return@LaunchedEffect
+        }
+        state = LogoState.Decoding
+        delay(DECODE_GRACE_MS)
+        if (state == LogoState.Decoding) state = LogoState.Loading
+    }
     Box(modifier, contentAlignment = Alignment.BottomStart) {
-        if (state != LogoState.Loaded) TextTitle(title)
-        if (logoUrl != null && state != LogoState.None) {
+        if (state == LogoState.None || state == LogoState.Loading) TextTitle(title)
+        val box = Modifier.size(maxWidth, maxHeight)
+        if (cached != null) {
+            Image(remember(cached) { BitmapPainter(cached) }, title, box, Alignment.BottomStart, ContentScale.Fit)
+        } else if (request != null && state != LogoState.None) {
             AsyncImage(
-                model = logoUrl,
+                model = request,
                 contentDescription = title,
                 contentScale = ContentScale.Fit,
                 alignment = Alignment.BottomStart,
                 onSuccess = { state = LogoState.Loaded },
                 onError = { state = LogoState.None },
-                modifier = Modifier.size(maxWidth, maxHeight).alpha(if (state == LogoState.Loaded) 1f else 0f),
+                modifier = box.alpha(if (state == LogoState.Loaded) 1f else 0f),
             )
         }
     }
 }
 
-private enum class LogoState { None, Loading, Loaded }
+/** How long a Logo found in the disk cache may take to decode before the text title shows instead. */
+private const val DECODE_GRACE_MS = 300L
+
+/** Checking: looking in the disk cache; Decoding: found there, being decoded (nothing shown yet). */
+private enum class LogoState { None, Checking, Decoding, Loading, Loaded }
 
 @Composable
 private fun TextTitle(title: String) {
     Text(
-        title,
+        // Never blank (ui-spec §1.3): callers pass titleOf(…); this guards the rest.
+        visibleText(title) ?: UNTITLED,
         fontSize = 60.sp,
         lineHeight = 67.sp,
         fontWeight = FontWeight.Black,
         letterSpacing = (-1).sp,
+        color = Z.textPrimary,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.widthIn(max = 860.dp),

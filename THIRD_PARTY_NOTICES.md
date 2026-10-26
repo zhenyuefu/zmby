@@ -31,3 +31,12 @@ README 的 PNG 截图由本项目在 Android TV 模拟器中运行产生；演�
 仓库不附带影视海报、视频、真实服务器配置、第三方 APK 或反编译源码。
 
 Emby 与 Zidoo 的名称用于说明兼容目标，商标与产品归各自权利人所有。
+
+
+## 外部影视数据库
+
+TMDB API 与图片：https://www.themoviedb.org 。`tmdb_logo.xml` 将其官方 blue_short SVG 转为 Android VectorDrawable，保留图形、配色和宽高比，仅用于关于页归属标识；不按本项目 GPL 重新许可 TMDB 商标。This product uses the TMDB API but is not endorsed or certified by TMDB. 用户自行提供 Read Access Token；影视数据和图片的权利属于相应权利人，不随本项目源码许可证重新授权。
+
+Bangumi API：https://bgm.tv （API 文档：https://github.com/bangumi/api）。资料由运行时直连获取，不随源码打包。
+
+bangumi-data/bangumi-data：https://github.com/bangumi-data/bangumi-data ，数据许可证 CC BY 4.0（https://creativecommons.org/licenses/by/4.0/）。运行时通过 jsDelivr / unpkg 获取，仅用于原名 / 译名 / Bangumi 入口识别；未捆绑数据副本，也不将其当作逐集映射表。

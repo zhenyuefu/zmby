@@ -48,6 +48,7 @@ data class ServerConfig(
     val favoriteSyncNote: String? = null,
     /** Which client the server is spoken to as (User-Agent and client name), with what Auto found. */
     val ua: UaSetting = UaSetting(),
+    val needsLogin: Boolean = false,
 ) {
     val line: ServerLine get() = lines.firstOrNull { it.id == lineId } ?: lines.first()
 
@@ -143,7 +144,7 @@ class ServerRegistry(
         val health = when {
             !c.enabled || cooling -> Health.Off
             c.lineId in lines && lines[c.lineId] == null -> Health.Off
-            f.failures > 0 -> Health.Warn
+            c.needsLogin || f.failures > 0 -> Health.Warn
             c.lineId !in lines -> Health.Warn
             (lines[c.lineId] ?: 0) > SLOW_MS -> Health.Warn
             else -> Health.Ok
@@ -175,7 +176,7 @@ class ServerRegistry(
                 val newLines = config.lines.filter { l -> same.lines.none { it.url.equals(l.url, true) } }
                     .mapIndexed { i, l -> l.copy(id = newId(), name = l.name.takeUnless { it == "主线路" } ?: "线路 ${same.lines.size + i + 1}") }
                 // The login just made tells what this server accepts now.
-                result = same.copy(lines = same.lines + newLines, token = config.token, ua = if (same.ua.canFallBack) same.ua.copy(detected = config.ua.detected ?: same.ua.detected) else same.ua)
+                result = same.copy(lines = same.lines + newLines, token = config.token, needsLogin = false, ua = if (same.ua.canFallBack) same.ua.copy(detected = config.ua.detected ?: same.ua.detected) else same.ua)
                 list.map { if (it.id == same.id) result else it }
             }
         }
@@ -183,6 +184,13 @@ class ServerRegistry(
     }
 
     fun update(id: String, edit: (ServerConfig) -> ServerConfig) = change { list -> list.map { if (it.id == id) edit(it) else it } }
+
+    /** A validated restore is published as one registry update. */
+    fun restore(configs: List<ServerConfig>) {
+        require(configs.map { it.id }.distinct().size == configs.size && configs.all { it.lines.isNotEmpty() })
+        configs.forEach { ZLog.secret(it.token) }
+        change { configs }
+    }
 
     fun remove(id: String) {
         change { list -> list.filter { it.id != id } }

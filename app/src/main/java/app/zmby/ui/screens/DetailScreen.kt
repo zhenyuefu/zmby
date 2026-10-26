@@ -66,6 +66,8 @@ import app.zmby.media.versionTitle
 import app.zmby.playback.TrackChoice
 import app.zmby.playback.TrackPreference
 import app.zmby.ui.Nav
+import app.zmby.ui.components.LoadState
+import app.zmby.ui.Route
 import app.zmby.ui.components.BackdropLayer
 import app.zmby.ui.components.BackdropProvider
 import app.zmby.ui.components.Badge
@@ -105,28 +107,41 @@ import androidx.compose.ui.focus.onFocusChanged
 internal val DETAIL_SCRIMS = Scrims(listOf(0f to 0.97f, 0.4f to 0.8f, 0.75f to 0.15f), bottomFrom = 360f / 1080f, bottomSolid = 0.5f)
 
 @Composable
-fun DetailScreen(nav: Nav, server: String, itemId: String) {
+fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean = false, provider: app.zmby.catalog.CatalogId? = null) {
     val context = LocalContext.current
     val app = context.zmby
     val library = app.library
     val tick = rememberResumeTick()
     // Local first: the cached item, merged work and cast show at once; the refresh updates them in place.
-    val vm = screenModel("detail:$server:$itemId") { DetailViewModel(app, server, itemId) }
-    LaunchedEffect(tick) { vm.refresh() }
+    val vm = screenModel("detail:$server:$itemId") { DetailViewModel(app, server, itemId, provider, resourceOnly) }
+    val languages by app.settings.metadataLanguage.flow.collectAsState()
+    val posters by app.settings.posterLanguage.flow.collectAsState()
+    val logos by app.settings.logoLanguage.flow.collectAsState()
+    val token by app.settings.tmdbToken.flow.collectAsState()
+    LaunchedEffect(tick, languages, posters, logos, token) { vm.refresh(replace = true) }
+    val providerWork by vm.catalog.collectAsStateWithLifecycle()
+    val canonical = providerWork?.takeIf { vm.catalogLanguageKey == listOf(languages,posters,logos,token) }
+    val lookup by vm.lookup.collectAsStateWithLifecycle()
+    val fallbackReady by vm.fallbackReady.collectAsStateWithLifecycle()
     val cached by vm.detail.collectAsStateWithLifecycle()
     val meta by vm.meta.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val cachedVersions by vm.cachedVersions.collectAsStateWithLifecycle()
-    val it = cached?.ref?.item
-    if (it == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(error?.let { "加载失败：$it" } ?: "", fontSize = 24.sp, color = Z.textSecondary)
-        }
+    val metadataItem = cached?.ref?.item ?: canonical?.item()
+    val lookupWork = canonical ?: lookup
+    // Resource lookup starts as soon as the external identity is known, while metadata is loading.
+    val versions = when {
+        lookupWork != null -> rememberCatalogVersions(lookupWork, null, emptyList(), tick, cached?.ref)
+        metadataItem != null && server != "catalog" -> rememberVersions(server, metadataItem, cached = cachedVersions, forKey = cached?.workKey)
+        else -> VersionsState(emptyList(),0,null)
+    }
+    val it = metadataItem
+    if (it == null || canonical == null && !fallbackReady) {
+        LoadState(error, onRetry = { if(server != "catalog") app.registry.retry(server); vm.refresh() }, onServers = { nav.go(Route.Servers) })
         return
     }
-    val ref = ServerItem(server, it)
-    val display = remember(ref, meta) { app.display(ref, meta) }
-    val versions = rememberVersions(server, it, cached = cachedVersions, forKey = cached?.workKey)
+    val ref = cached?.ref ?: ServerItem("catalog",it)
+    val display = canonical?.display() ?: app.display(ref,meta)
     // OK on a version selects it (the header's play button and the cards below use it); until then
     // the default version (VersionRanker) is selected. While focus is on the version cards, the
     // focused one previews its tracks.
@@ -141,21 +156,26 @@ fun DetailScreen(nav: Nav, server: String, itemId: String) {
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
 
+    var marking by remember { mutableStateOf<ServerItem?>(null) }
     BackdropProvider(display.backdrop, DETAIL_SCRIMS) {
+      Box(Modifier.fillMaxSize()) {
         // The backdrop scrolls away with the page, as in the design (it is the top 1080 of a taller page).
         Box(Modifier.fillMaxSize().verticalScroll(scroll)) {
             BackdropLayer(Modifier.fillMaxWidth().height(1080.dp))
             Column(Modifier.fillMaxWidth()) {
                 // The version that plays: its own item (another server's copy has its own resume point).
-                val playRef = selected?.ref ?: ref
+                val playRef = selected?.ref
                 DetailHeader(
                     ref,
                     display,
-                    playItem = playRef.item,
+                    playItem = playRef?.item,
                     instances = versions.instances,
-                    onPlay = { startMs -> play(context, playRef, startMs, selected?.source?.id, tracksFor(selected)) },
+                    onPlay = { startMs -> playRef?.let { play(context, it, startMs, selected?.source?.id, tracksFor(selected), versions.alternatesTo(selected)) } },
                     // Back on the header: scroll all the way up so the title shows again, not just the buttons.
                     onFocused = { if (scroll.value > 0) scope.launch { scroll.scrollToTopFirmly() } },
+                    onMarks = { marking = playRef },
+                    availability = if (versions.searching > 0) "正在查找资源…" else if (versions.unresponsive.isNotEmpty()) "资源状态待确认 · 重试" else "暂无资源",
+                    onRetry = versions.retry,
                 )
                 Spacer(Modifier.height(64.dp))
                 val trackEntry = remember { FocusRequester() }
@@ -164,10 +184,10 @@ fun DetailScreen(nav: Nav, server: String, itemId: String) {
                         picked = v
                         library.rememberVersion(Keys.work(server, it), v.server.id, v.source.id)
                     }, onPreview = { v -> preview = v }, onPlay = { v ->
-                        play(context, v.ref, v.item.resumeMs, v.source.id, tracksFor(v))
+                        play(context, v.ref, v.item.resumeMs, v.source.id, tracksFor(v), versions.alternatesTo(v))
                     }, downTarget = trackEntry)
                 } else {
-                    Text("服务器还没有这部片的版本信息", fontSize = 21.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 80.dp))
+                    Text("暂无资源", fontSize = 21.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 80.dp))
                 }
                 shown?.let { v ->
                     Spacer(Modifier.height(56.dp))
@@ -176,19 +196,18 @@ fun DetailScreen(nav: Nav, server: String, itemId: String) {
                     }
                 }
                 // 演职人员: the page's last block (ui-spec §2.2 4).
-                val cast by vm.cast.collectAsStateWithLifecycle()
-                if (cast.isNotEmpty()) {
-                    Spacer(Modifier.height(56.dp))
-                    CastRow(nav, server, cast, up = trackEntry.takeIf { shown != null }, entry = remember { FocusRequester() })
-                }
+                if (canonical != null) CanonicalCast(nav, canonical!!.cast) else ServerCast(nav, ref)
+                CatalogRelated(nav, canonical, cached?.ref)
                 Spacer(Modifier.height(80.dp))
             }
         }
+        marking?.let { m -> SegmentMarksPanel(m.server, m.item, onDismiss = { marking = null }) }
+      }
     }
 }
 
 @Composable
-private fun DetailHeader(ref: ServerItem, display: DetailDisplay, playItem: BaseItemDto, instances: List<ServerItem>, onPlay: (Long) -> Unit, onFocused: () -> Unit) {
+private fun DetailHeader(ref: ServerItem, display: DetailDisplay, playItem: BaseItemDto?, instances: List<ServerItem>, onPlay: (Long) -> Unit, onFocused: () -> Unit, onMarks: () -> Unit, availability: String = "暂无资源", onRetry: () -> Unit = {}) {
     val app = LocalContext.current.zmby
     val library = app.library
     val item = ref.item
@@ -220,26 +239,29 @@ private fun DetailHeader(ref: ServerItem, display: DetailDisplay, playItem: Base
             Text(display.overview, fontSize = 23.sp, lineHeight = 37.sp, color = Z.textPrimary.copy(alpha = 0.75f), maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(820.dp))
         }
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            val resume = resumeMsOf(playItem)
+            val resume = playItem?.let { resumeMsOf(it) } ?: 0L
             GlassButton(
-                if (resume > 0) "继续播放 · ${formatClock(resume)}" else "播放",
-                { onPlay(resume) },
+                if (playItem == null) availability else if (resume > 0) "继续播放 · ${formatClock(resume)}" else "播放",
+                { if (playItem == null) onRetry() else onPlay(resume) },
                 Modifier.focusRequester(rememberInitialFocus(item.id)),
                 glyph = Glyph.Play,
+                label = "detailPlay:${item.id}",
             )
             if (resume > 0) GlassButton("从头播放", { onPlay(0) })
-            GlassIconButton(Glyph.Check, label = if (played) "已看（取消）" else "标记为已看", onClick = {
+            if (ref.server != "catalog") GlassIconButton(Glyph.Check, label = if (played) "已看（取消）" else "标记为已看", onClick = {
                 scope.launch { runCatching { library.setPlayed(ref.server, item.id, !played) }.onSuccess { played = it.played } }
             })
-            GlassIconButton(if (favorite) Glyph.Check else Glyph.Plus, label = if (favorite) "已收藏" else "加入收藏", onClick = {
+            if (ref.server != "catalog") GlassIconButton(if (favorite) Glyph.Check else Glyph.Plus, label = if (favorite) "已收藏" else "加入收藏", onClick = {
                 scope.launch { app.favorites.toggle(ref, (listOf(ref) + instances).distinctBy { it.key }) }
             })
             // 待看 next to 收藏 (favorites spec); white when the work is on the list.
             val watchEntries by app.watchlist.entries.collectAsState()
             val inWatchlist = remember(watchEntries, ref.key) { app.watchlist.contains(ref) }
-            GlassIconButton(Glyph.Bookmark, label = if (inWatchlist) "已在待看" else "加入待看", on = inWatchlist, onClick = {
+            if (ref.server != "catalog") GlassIconButton(Glyph.Bookmark, label = if (inWatchlist) "已在待看" else "加入待看", on = inWatchlist, onClick = {
                 app.toggleWatchlist(scope, ref, (listOf(ref) + instances).distinctBy { it.key })
             })
+            // 本地手动标记: 片头结束 and 片尾开始 for skipping.
+            if (playItem != null) GlassIconButton(Glyph.Marks, label = "片头片尾", onClick = onMarks)
         }
     }
 }

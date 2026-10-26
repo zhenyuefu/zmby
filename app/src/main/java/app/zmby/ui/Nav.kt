@@ -29,20 +29,27 @@ import app.zmby.zmby
 sealed interface Route {
     data object Home : Route
     /** Every item route names its server: the same id elsewhere can be a different film. */
-    data class Detail(val server: String, val itemId: String) : Route
+    data class Detail(val server: String, val itemId: String, val resourceOnly: Boolean = false) : Route
     /** A series; with [episodeId], opened on that episode's season with the episode focused. */
     data class Series(val server: String, val seriesId: String, val episodeId: String? = null) : Route
+    data class Catalog(val ref: app.zmby.catalog.CatalogId, val fallbackServer: String? = null, val fallbackId: String? = null) : Route
+    data class CatalogPerson(val source: String, val id: String) : Route
     data object Search : Route
     data object Servers : Route
     /** Add a server (log in). */
     data object AddServer : Route
     /** Phone-side bulk import over the LAN (QR code). */
     data object Import : Route
+    data object BackupImport : Route
+    data object Backup : Route
+    data class Restore(val uri: String, val source: String) : Route
     data object Settings : Route
     /** 人物页: [personKey] in the store, reached from [server]'s own person [personId]. */
     data class Person(val personKey: String, val server: String, val personId: String) : Route
     /** 设置 › 数据来源 › one feature's servers or providers. */
     data class DataSource(val feature: app.zmby.data.SourceFeature) : Route
+    /** 观影统计 (P4). */
+    data object Stats : Route
 }
 
 interface Nav {
@@ -58,6 +65,11 @@ interface Nav {
  */
 fun Nav.open(ref: ServerItem) {
     val item = ref.item
+    if (ref.server == "catalog") {
+        val parts = item.id.removePrefix("catalog:").split(':')
+        if (parts.size == 3) go(Route.Catalog(app.zmby.catalog.CatalogId(parts[0], parts[1], parts[2])))
+        return
+    }
     when (item.type) {
         "Series" -> go(Route.Series(ref.server, item.id))
         "Season" -> item.seriesId?.let { go(Route.Series(ref.server, it)) }
@@ -73,10 +85,15 @@ fun resumeMsOf(item: BaseItemDto): Long {
     return WatchThreshold.startPosition(item.resumeMs, item.runtimeMs, percent)
 }
 
-/** Plays [ref] on its own server; progress goes back to that server. */
-fun play(context: Context, ref: ServerItem, startMs: Long, mediaSourceId: String? = null, tracks: TrackChoice = TrackChoice()) {
-    val json = context.zmby.library.itemJson(ref.item)
-    context.startActivity(PlaybackActivity.intent(context, ref.server, json, startMs, mediaSourceId, tracks))
+/**
+ * Plays [ref] on its own server; progress goes back to that server. [alternates] are the other
+ * versions in default order, tried in turn if this one fails to start (播放失败自动换源).
+ */
+fun play(context: Context, ref: ServerItem, startMs: Long, mediaSourceId: String? = null, tracks: TrackChoice = TrackChoice(), alternates: List<app.zmby.playback.Alternate> = emptyList()) {
+    require(ref.server != "catalog") { "Catalogue entries have no playback address" }
+    val app = context.zmby
+    val json = app.library.itemJson(ref.item)
+    context.startActivity(PlaybackActivity.intent(context, ref.server, json, startMs, mediaSourceId, tracks, app.putAlternates(alternates)))
 }
 
 /**

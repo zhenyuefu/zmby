@@ -3,7 +3,9 @@ package app.zmby.playback
 import app.zmby.log.ZLog
 import app.zmby.zidoo.PlayerStatusSource
 import app.zmby.zidoo.ZidooResult
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.delay
+import app.zmby.segments.SegmentSkipper
 import kotlin.math.abs
 
 /** Where playback state goes; implemented against Emby's /Sessions/Playing endpoints. */
@@ -42,7 +44,13 @@ class PlaybackMonitor(
     private val watchedPercent: Int = WatchThreshold.DEFAULT_PERCENT,
     private val config: MonitorConfig = MonitorConfig(),
     private val now: () -> Long = System::currentTimeMillis,
+    /** 片头片尾跳过: looked up while the player starts; used from the first poll after it is ready. */
+    private val skipper: Deferred<SegmentSkipper?>? = null,
 ) {
+    /** Seeks zmby made past segments (for the log and tests). */
+    var skips = 0
+        private set
+
     var started = false
         private set
     var lastPositionMs: Long? = null
@@ -57,6 +65,7 @@ class PlaybackMonitor(
         if (!awaitStartup()) return
         var lastReport = now()
         var lastPaused = false
+        var previous: Long? = null
         while (true) {
             delay(config.pollMs)
             val status = player.status() ?: continue
@@ -68,6 +77,24 @@ class PlaybackMonitor(
             if (status.positionMs > 0) lastPositionMs = status.positionMs
             if (status.durationMs > 0) lastDurationMs = status.durationMs
             val paused = !status.playing
+            val skip = skipper?.takeIf { it.isCompleted }?.getCompletedOrNull()
+            val target = if (skip != null && status.durationMs > 0) skip.onSample(previous, status.positionMs, status.durationMs) else null
+            previous = status.positionMs
+            if (target != null) {
+                // Like a user's seek: the new position is reported at once, so the server's resume
+                // point never lags behind the jump.
+                val ok = player.seekTo(target)
+                ZLog.i(TAG, "skip ${status.positionMs}ms -> ${target}ms ${if (ok) "ok" else "failed"}")
+                if (ok) {
+                    skips++
+                    previous = target
+                    lastPositionMs = target
+                    reporter.progress(target, paused)
+                    lastReport = now()
+                    lastPaused = paused
+                    continue
+                }
+            }
             val due = now() - lastReport >= config.reportIntervalMs
             if (due || paused != lastPaused) {
                 ZLog.d(TAG, "poll pos=${status.positionMs}ms/${status.durationMs}ms ${if (paused) "paused" else "playing"}")
@@ -128,6 +155,9 @@ class PlaybackMonitor(
 }
 
 private const val TAG = "Monitor"
+
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private fun <T> Deferred<T>.getCompletedOrNull(): T? = runCatching { getCompleted() }.getOrNull()
 
 /**
  * The position to report when playback ends, or null to leave the server's resume point alone.

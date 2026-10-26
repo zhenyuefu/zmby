@@ -34,6 +34,8 @@ class RedactorTest {
         assertTrue(out, "Client=\"zmby\"" in out && "UserId=\"u1\"" in out)
         assertMasked("X-Emby-Token: secret-token-2", "secret-token-2")
         assertMasked("Authorization: Bearer abc.def.ghi", "abc.def.ghi")
+        // A segment database key quoted in an error line, not as a header.
+        assertMasked("PublicMetaDB refused Bearer pmdb_0123456789abcdef", "pmdb_0123456789abcdef")
     }
 
     @Test

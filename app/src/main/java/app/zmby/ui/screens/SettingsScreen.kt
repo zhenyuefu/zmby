@@ -33,7 +33,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import app.zmby.R
+import app.zmby.catalog.CatalogChart
+import app.zmby.log.ZLog
 import app.zmby.playback.TrackPreference
+import app.zmby.segments.CreditsSkip
+import app.zmby.data.CacheLimits
+import coil.imageLoader
 import app.zmby.data.QualityPreference
 import app.zmby.aggregate.VersionPrefs
 import androidx.compose.ui.text.input.KeyboardType
@@ -54,7 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private enum class Category(val label: String) {
-    General("通用"), Playback("播放"), Tracks("音频与字幕"), Home("首页与媒体库"), Servers("服务器"), Sources("数据来源"), Appearance("外观"), About("关于")
+    General("通用"), Metadata("元数据与图片"), Cache("本地缓存"), Playback("播放"), Tracks("音频与字幕"), Home("首页与媒体库"), Servers("服务器"), Sources("数据来源"), Appearance("外观"), About("关于")
 }
 
 /** Settings.dc.html: categories on the left (moving onto one shows it), grouped rows on the right. */
@@ -103,8 +109,10 @@ fun SettingsScreen(nav: Nav) {
             verticalArrangement = Arrangement.spacedBy(26.dp),
         ) {
             when (category) {
-                Category.General -> General()
-                Category.Playback -> Playback()
+                Category.General -> General(nav)
+                Category.Metadata -> MetadataSettings()
+                Category.Cache -> CacheSettings()
+                Category.Playback -> Playback(nav)
                 Category.Tracks -> Tracks()
                 Category.Home -> HomeRows(nav)
                 Category.Servers -> ServersSummary(nav)
@@ -123,8 +131,11 @@ private fun appVersion(): String {
 }
 
 @Composable
-private fun General() {
+private fun General(nav: Nav) {
     val settings = LocalContext.current.zmby.settings
+    SettingsGroup("观影") {
+        ValueSetting("观影统计", null, onClick = { nav.go(Route.Stats) }, glyph = Glyph.Chart)
+    }
     val percent by settings.watchedPercent.collectAsState()
     val steps = remember(percent) { (listOf(70, 80, 85, 90, 95) + percent).distinct().sorted() }
     SettingsGroup("进度") {
@@ -133,11 +144,28 @@ private fun General() {
 }
 
 @Composable
-private fun Playback() {
-    val settings = LocalContext.current.zmby.settings
+private fun Playback(nav: Nav) {
+    val app = LocalContext.current.zmby
+    val settings = app.settings
     val offerNext by settings.offerNextEpisode.flow.collectAsState()
+    val countdown by settings.upNextCountdown.flow.collectAsState()
+    val failover by settings.autoFailover.flow.collectAsState()
     SettingsGroup("播放器") {
         ToggleSetting("看完后提示下一集", offerNext, { settings.offerNextEpisode.set(!offerNext) })
+        ToggleSetting("倒计时自动播放下一集", countdown && offerNext, { settings.upNextCountdown.set(!countdown) }, dimmed = !offerNext,
+            sub = "沿用同一服务器、线路与音轨字幕语言")
+        ToggleSetting("播放失败自动换源", failover, { settings.autoFailover.set(!failover) })
+    }
+    val skipIntro by settings.skipIntro.flow.collectAsState()
+    val skipRecap by settings.skipRecap.flow.collectAsState()
+    val skipCredits by settings.skipCredits.flow.collectAsState()
+    val rows by app.sources.rows.collectAsState()
+    SettingsGroup("片头片尾") {
+        ToggleSetting("跳过片头", skipIntro, { settings.skipIntro.set(!skipIntro) })
+        ToggleSetting("跳过回顾", skipRecap, { settings.skipRecap.set(!skipRecap) })
+        ChoiceSetting("跳过片尾", CreditsSkip.entries.map { it.label }, skipCredits.ordinal, { settings.skipCredits.set(CreditsSkip.entries[it]) })
+        rows.size
+        ValueSetting(SourceFeature.Segments.label, app.sources.label(SourceFeature.Segments), onClick = { nav.go(Route.DataSource(SourceFeature.Segments)) })
     }
     val quality by settings.quality.flow.collectAsState()
     val nonDisc by settings.preferNonDisc.flow.collectAsState()
@@ -201,6 +229,7 @@ private fun ServersSummary(nav: Nav) {
             }
             ValueSetting(s.name, listOf(s.lineName, state).joinToString(" · "), onClick = { nav.go(Route.Servers) })
         }
+        ValueSetting("备份与恢复", "导出与恢复", onClick = { nav.go(Route.Backup) })
         ValueSetting("管理服务器", "共 ${servers.size} 台", onClick = { nav.go(Route.Servers) })
     }
 }
@@ -214,7 +243,7 @@ private fun Sources(nav: Nav) {
     SettingsGroup("数据来源") {
         // Recompose on changes to the choices or the servers.
         rows.size; servers.size
-        SourceFeature.entries.forEach { f ->
+        SourceFeature.entries.filter { it != SourceFeature.Metadata }.forEach { f ->
             ValueSetting(f.label, app.sources.label(f), onClick = { nav.go(Route.DataSource(f)) }, glyph = sourceGlyph(f))
         }
     }
@@ -249,6 +278,10 @@ private fun About() {
         ValueSetting("版本", appVersion())
         ValueSetting("设备", listOf(Build.MANUFACTURER, Build.MODEL).filter { it.isNotBlank() }.distinct().joinToString(" "))
     }
+    SettingsGroup("数据来源与致谢") {
+        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.tmdb_logo), contentDescription = "TMDB", modifier = Modifier.padding(24.dp).width(180.dp).height(24.dp))
+        Text("TMDB · https://www.themoviedb.org\nThis product uses the TMDB API but is not endorsed or certified by TMDB.\nBangumi · https://bgm.tv\nbangumi-data/bangumi-data · CC BY 4.0", fontSize = 18.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
+    }
     SettingsGroup("日志") {
         ToggleSetting(
             "局域网日志",
@@ -259,4 +292,64 @@ private fun About() {
             mono = lanLog && address != null,
         )
     }
+}
+
+@Composable
+private fun MetadataSettings() {
+    val app = LocalContext.current.zmby
+    val settings = app.settings
+    val token by settings.tmdbToken.flow.collectAsState()
+    val text by settings.metadataLanguage.flow.collectAsState()
+    val poster by settings.posterLanguage.flow.collectAsState()
+    val logo by settings.logoLanguage.flow.collectAsState()
+    val chart by settings.tmdbChart.flow.collectAsState()
+    val search by settings.tmdbSearch.flow.collectAsState()
+    val anime by settings.animeAliases.flow.collectAsState()
+    val languages = listOf("zh-CN" to "简体中文", "zh-TW" to "繁體中文（台灣）", "zh-HK" to "繁體中文（香港）", "en-US" to "English", "ja-JP" to "日本語", "ko-KR" to "한국어")
+    SettingsGroup("影视数据库直连") {
+        Column(Modifier.padding(24.dp)) {
+            var draft by remember(token) { mutableStateOf(token) }
+            Field("TMDB API Read Access Token", draft, { draft = it }, KeyboardType.Ascii, secret = true, last = true, onSubmit = {
+                ZLog.secret(draft.trim())
+                settings.tmdbToken.set(draft.trim())
+            })
+        }
+        ToggleSetting("搜索包含 TMDB", search, { settings.tmdbSearch.set(!search) })
+        ToggleSetting("Bangumi 与 bangumi-data 番剧别名", anime, { settings.animeAliases.set(!anime) }, sub = "按原名与译名查找番剧；季集关系不明确时保留待确认")
+    }
+    SettingsGroup("语言偏好") {
+        ChoiceSetting("元数据语言", languages.map { it.second }, languages.indexOfFirst { it.first == text }.coerceAtLeast(0), { settings.metadataLanguage.set(languages[it].first) })
+        ChoiceSetting("海报语言", languages.map { it.second }, languages.indexOfFirst { it.first == poster }.coerceAtLeast(0), { settings.posterLanguage.set(languages[it].first) })
+        ChoiceSetting("Logo 语言", languages.map { it.second }, languages.indexOfFirst { it.first == logo }.coerceAtLeast(0), { settings.logoLanguage.set(languages[it].first) })
+        Text("图片严格匹配语言；缺失时回退原语言。无法确认简繁的中文图片不作为匹配结果。", fontSize = 18.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
+    }
+    SettingsGroup("首页轮播榜单") {
+        val charts = CatalogChart.entries
+        ChoiceSetting("TMDB 榜单", charts.map { it.label }, charts.indexOf(CatalogChart.of(chart)), { settings.tmdbChart.set(charts[it].name) })
+    }
+}
+
+@OptIn(coil.annotation.ExperimentalCoilApi::class)
+@Composable
+private fun CacheSettings() {
+    val context = LocalContext.current
+    val app = context.zmby
+    val metadataLimit by app.settings.metadataCacheMb.flow.collectAsState()
+    val imageLimit by app.settings.imageCacheMb.flow.collectAsState()
+    val metadataSize by app.catalogCache.size.collectAsState(0L)
+    val imageSize by androidx.compose.runtime.produceState<Long?>(null, imageLimit) {
+        value = withContext(Dispatchers.IO) { context.imageLoader.diskCache?.size }
+    }
+    SettingsGroup("元数据缓存") {
+        ChoiceSetting("元数据上限", CacheLimits.metadataMb.map(CacheLimits::label), CacheLimits.metadataMb.indexOf(metadataLimit),
+            { app.settings.metadataCacheMb.set(CacheLimits.metadataMb[it]) }, sub = "立即生效，超限时优先清理较少使用的资料")
+        ValueSetting("已用容量", CacheLimits.usage(metadataSize), sub = "影视资料、人物、季集、搜索和榜单缓存")
+    }
+    SettingsGroup("图片缓存") {
+        ChoiceSetting("图片上限", CacheLimits.imagesMb.map(CacheLimits::label), CacheLimits.imagesMb.indexOf(imageLimit),
+            { app.settings.imageCacheMb.set(CacheLimits.imagesMb[it]) },
+            sub = if (imageLimit != app.activeImageCacheMb) "已保存，重启应用后生效；当前上限 ${CacheLimits.label(app.activeImageCacheMb)}" else "调整后需重启应用，优先清理较少使用的图片")
+        ValueSetting("已用容量", imageSize?.let(CacheLimits::usage) ?: "正在读取…", sub = "海报、背景、Logo 和人物头像")
+    }
+    Text("收藏、待看和观看记录单独保存，不计入以上缓存上限。", fontSize = 19.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
 }
