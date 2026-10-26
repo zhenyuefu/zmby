@@ -1,0 +1,227 @@
+PUBLIC_MANIFEST.sha256
+  s_485dafd7a1a674::t_004d605e25dd7f 6,8,15,18-20,24-25,29,32-40,47-58,61,64-66,69-70,72-73,75,89-91,94-96,98-115,117-124,128-129,132-134,136-140,143,148,152,156,158-159,161-162,165-166,168,170-172,177-178,180-181,183-184,199,201-204,207,211,234
+README.md
+  s_485dafd7a1a674::t_824d27a224a629 15,23,30-32,39-40,61,64-66,77,81,91,93,110,173-175,216-239
+app/build.gradle.kts
+  s_485dafd7a1a674::t_389c44073c7009 28-29,60
+app/src/main/AndroidManifest.xml
+  s_485dafd7a1a674::t_dd1ed1dcd50941 2-3,30,35-36,48-49
+app/src/main/java/app/zmby/MainActivity.kt
+  s_485dafd7a1a674::t_dc132bb57378fc 38-48,53,72,113,122-123
+app/src/main/java/app/zmby/PlaybackActivity.kt
+  s_485dafd7a1a674::t_3483946555eb81 28-30,37-38,54,71,110,170,196,201,222,228-230,234-236,252-254,258,263,269-270,279,284-285,291-294,299-306,308,311-330,337,341-342,345-346
+app/src/main/java/app/zmby/ZmbyApp.kt
+  s_485dafd7a1a674::t_0f893e2d210b1d 3,206-212,217,354-358,369,381-387,391,404-419
+app/src/main/java/app/zmby/aggregate/HeroPicks.kt
+  s_485dafd7a1a674::t_622431ec474264 1-62
+app/src/main/java/app/zmby/aggregate/HomeFeed.kt
+  s_485dafd7a1a674::t_3921828cf11eec 149-184,263-264
+app/src/main/java/app/zmby/aggregate/Recommendations.kt
+  s_485dafd7a1a674::t_02be211da7ccc6 1-97
+app/src/main/java/app/zmby/backup/BackupCodec.kt
+  s_485dafd7a1a674::t_70976e9a79097a 115,117-119,122-124,144-146
+app/src/main/java/app/zmby/backup/BackupRepository.kt
+  s_485dafd7a1a674::t_6cd4ab4a7e50f2 10,12,15-26,28,30-32,42,46,57,59-70,76,79-80,82-100,128-129
+app/src/main/java/app/zmby/catalog/AnimeIndex.kt
+  s_485dafd7a1a674::t_4391d1ce571062 1,3-8,10-33,36-45,48,51-66,68-82,85-97
+app/src/main/java/app/zmby/catalog/CatalogCache.kt
+  s_485dafd7a1a674::t_b1740d0253ab7e 36
+app/src/main/java/app/zmby/catalog/CatalogHttp.kt
+  s_485dafd7a1a674::t_7bd72d5de615cb 17-20,23-26,37-112,119-121,126,130-131,140-156,176-183
+app/src/main/java/app/zmby/catalog/CatalogModels.kt
+  s_485dafd7a1a674::t_c0e637ae2048cf 84-102,104
+app/src/main/java/app/zmby/catalog/CatalogRepository.kt
+  s_485dafd7a1a674::t_14a51082bf9cdd 12-13,36,39-41,55,58-75,105,107,116,155-156
+app/src/main/java/app/zmby/catalog/CatalogResources.kt
+  s_485dafd7a1a674::t_da7cf4443d7af8 9-14,28,42-52,54
+app/src/main/java/app/zmby/catalog/LimitedCatalogCache.kt
+  s_485dafd7a1a674::t_45f9b66079ba0a 5,10-14,21-28,31-33,38,67-72
+app/src/main/java/app/zmby/data/ImportGuard.kt
+  s_485dafd7a1a674::t_da9b62e47f0c41 1-64
+app/src/main/java/app/zmby/data/Library.kt
+  s_485dafd7a1a674::t_60477214586739 3,49,85-89,93,206,259,281-290,321,441
+app/src/main/java/app/zmby/data/PhoneInput.kt
+  s_485dafd7a1a674::t_c24d4710bc43d6 1-188
+app/src/main/java/app/zmby/data/PhoneInputPage.kt
+  s_485dafd7a1a674::t_2898919e7b5399 1-64
+app/src/main/java/app/zmby/data/ServerCaps.kt
+  s_485dafd7a1a674::t_b631b8ffc53679 3,23,71
+app/src/main/java/app/zmby/data/ServerImport.kt
+  s_485dafd7a1a674::t_8c7c41b34df32d 93-103,108,111-113,125-135,137-139,148,157-158,163-241,254-267,269-270,276-293,301,305-307,309,311-324,326,331,333,336-355,358,366,381,386-391,394,396-397,408-414
+app/src/main/java/app/zmby/data/ServerImportPage.kt
+  s_485dafd7a1a674::t_864c516099a84a 105,110,117
+app/src/main/java/app/zmby/data/ServerRegistry.kt
+  s_485dafd7a1a674::t_db0d0e525c2219 3,107
+app/src/main/java/app/zmby/data/Settings.kt
+  s_485dafd7a1a674::t_ac032953270a01 3,41,54,78,123-124
+app/src/main/java/app/zmby/emby/ClientIdentity.kt
+  s_485dafd7a1a674::t_dc712027a2925d 43
+app/src/main/java/app/zmby/emby/EmbyClient.kt
+  s_485dafd7a1a674::t_17b9f82c11f747 223-228,230-231,234-245,248-261
+app/src/main/java/app/zmby/emby/EmbyModels.kt
+  s_485dafd7a1a674::t_ed1f2d07c8b100 6,9-12,61,84,202-203,238-266
+app/src/main/java/app/zmby/log/LanServer.kt
+  s_485dafd7a1a674::t_ae7f9e383cea6c 25-26,51-57,65-67,70
+app/src/main/java/app/zmby/media/Titles.kt
+  s_485dafd7a1a674::t_33b33e1364c583 60-72
+app/src/main/java/app/zmby/media/TrackBadges.kt
+  s_485dafd7a1a674::t_1480868719cbf4 1-146
+app/src/main/java/app/zmby/playback/EmbyPlayback.kt
+  s_485dafd7a1a674::t_a95993f1b1b795 19-20,86-90,129-191,194,201,218,243-245
+app/src/main/java/app/zmby/playback/Failover.kt
+  s_485dafd7a1a674::t_da38556621f991 20-22,31-40
+app/src/main/java/app/zmby/playback/MediaStorePlaybackStore.kt
+  s_485dafd7a1a674::t_2489c7311e0665 7,22-30
+app/src/main/java/app/zmby/playback/PlaybackMonitor.kt
+  s_485dafd7a1a674::t_b754e55055cef7 6,50-51,115,177-191
+app/src/main/java/app/zmby/playback/StreamRelay.kt
+  s_485dafd7a1a674::t_82e483e0a52be1 53-57,76-85,91-102,123-125,137,154-157,159-171,173-177,179-201,203,205-206,211,216-217
+app/src/main/java/app/zmby/store/Entities.kt
+  s_485dafd7a1a674::t_d627ec67f78ca3 23
+app/src/main/java/app/zmby/store/LocalStore.kt
+  s_485dafd7a1a674::t_a5fc35210a5553 25-26,139,144,149-152
+app/src/main/java/app/zmby/ui/Nav.kt
+  s_485dafd7a1a674::t_ecd51c0c07f8eb 142
+app/src/main/java/app/zmby/ui/NavEntry.kt
+  s_485dafd7a1a674::t_e6f7e7ed4b0110 7,44-45,51
+app/src/main/java/app/zmby/ui/components/Artwork.kt
+  s_485dafd7a1a674::t_aed62c7971192e 53,98,136
+app/src/main/java/app/zmby/ui/components/Controls.kt
+  s_485dafd7a1a674::t_a4f20382a8cd30 3-4,26,39,156-157,232,307,312-313,317-319
+app/src/main/java/app/zmby/ui/components/Focus.kt
+  s_485dafd7a1a674::t_81d143c70196ea 74,76,78,109-112
+app/src/main/java/app/zmby/ui/components/Glass.kt
+  s_485dafd7a1a674::t_3aca8e8a5b01c2 3,223,340,343,349-370
+app/src/main/java/app/zmby/ui/components/Icons.kt
+  s_485dafd7a1a674::t_dd7b3d36444e6f 52-57
+app/src/main/java/app/zmby/ui/components/Images.kt
+  s_485dafd7a1a674::t_f873991544c744 3,78
+app/src/main/java/app/zmby/ui/components/LoadState.kt
+  s_485dafd7a1a674::t_12ff40749c8538 27
+app/src/main/java/app/zmby/ui/components/Logo.kt
+  s_485dafd7a1a674::t_4bab3143d82b81 48,67,87,121,146,150-153,156
+app/src/main/java/app/zmby/ui/components/SettingRows.kt
+  s_485dafd7a1a674::t_9ec8757cbfab7c 48,89
+app/src/main/java/app/zmby/ui/components/SlidingChoice.kt
+  s_485dafd7a1a674::t_124515c6ede355 35
+app/src/main/java/app/zmby/ui/screens/Accordion.kt
+  s_485dafd7a1a674::t_ef0f27b64ba6cf 1-365
+app/src/main/java/app/zmby/ui/screens/BrowseModel.kt
+  s_485dafd7a1a674::t_af97cc2ac5e057 45-46,66-67,101-102,105-119,163,177-178
+app/src/main/java/app/zmby/ui/screens/BrowseScreen.kt
+  s_485dafd7a1a674::t_157683d2d5e701 34,63-77,83,108-109,112-116,120,141-142,144-148,150,186-188,191-193,199-203,206,217,223,238-240,252-253,256,259-260,269-277,283-284,288-327,331-333,339-343,345-370,372-378,380-382,384,386,389-399,401-437,443-444,456,461-462,466,471,473,480,482,484-485,489-492,515,517-530,533-591,597,599-621,629
+app/src/main/java/app/zmby/ui/screens/CatalogScreen.kt
+  s_485dafd7a1a674::t_94e69d324a0fdb 45,142
+app/src/main/java/app/zmby/ui/screens/CatalogVersions.kt
+  s_485dafd7a1a674::t_b124696684c691 16-24,44,49,56,61-62,69-75
+app/src/main/java/app/zmby/ui/screens/Chrome.kt
+  s_485dafd7a1a674::t_7a6cfffb860c74 1-435
+app/src/main/java/app/zmby/ui/screens/DataSourceScreen.kt
+  s_485dafd7a1a674::t_1dcf1944b9700e 16,166-168
+app/src/main/java/app/zmby/ui/screens/DetailBlocks.kt
+  s_485dafd7a1a674::t_34ee909ea6dc83 1-265
+app/src/main/java/app/zmby/ui/screens/DetailModel.kt
+  s_485dafd7a1a674::t_edd16ffe3e1db8 29-31,113,126,129-137
+app/src/main/java/app/zmby/ui/screens/DetailScreen.kt
+  s_485dafd7a1a674::t_dd364bb5cbe777 41-43,72,100-101,107-108,122,139-140,142,152,157,162,166-168,171-191,195-197,199-200,211,215-216,218-231,236-254,258,260,262-269,275-288,290,304,327,355-363
+app/src/main/java/app/zmby/ui/screens/FavoritesGrid.kt
+  s_485dafd7a1a674::t_1da3299f3754db 12-15,30,42,47-48,50-53,56-60,62,73,75,79
+app/src/main/java/app/zmby/ui/screens/HomeExitConfirmation.kt
+  s_485dafd7a1a674::t_f261fe3ce5ed63 1-20
+app/src/main/java/app/zmby/ui/screens/HomeHero.kt
+  s_485dafd7a1a674::t_298fdd7597de0b 54,63,123,133-136,290,298,303-304,311,338,352,399
+app/src/main/java/app/zmby/ui/screens/HomeModel.kt
+  s_485dafd7a1a674::t_1f9bda9c407a5e 8-9,26,65-81,106-109
+app/src/main/java/app/zmby/ui/screens/HomeScreen.kt
+  s_485dafd7a1a674::t_b33e2de50f6e7c 57,101-111,122-126,128-130,144,146-154,156-202,206-218,223,225,230-242,245-252,254-256,263,267-268,274,276,281,283-286,291,315-319,334-345,374,379,389,398,402,420-421
+app/src/main/java/app/zmby/ui/screens/ImportScreen.kt
+  s_485dafd7a1a674::t_be4dcdaa20d268 12,14-15,36-40,48,63-65,67-68,70-80,83-88,93-94,96-97,99-100,117-121,123,132,141-166,168
+app/src/main/java/app/zmby/ui/screens/PhoneInputDialog.kt
+  s_485dafd7a1a674::t_30bc7617c094f4 3-14,16-26,28-29,31,33,38-51,54-57,59-72,75-80,82-93,95,98-151,153-158,160-166,168-172,178-179
+app/src/main/java/app/zmby/ui/screens/RecommendationsBlock.kt
+  s_485dafd7a1a674::t_85f57a8da845fd 1,3-37,39,41-48,51,55-57,59-67,69-86,88-96,98-102,104-105,107-117,120-121,123-130,132-133,135-175
+app/src/main/java/app/zmby/ui/screens/SeriesScreen.kt
+  s_485dafd7a1a674::t_2c459130bb502c 30-32,35-36,81-82,164,167,177,182,203-234,237-239,241-242,247-248,250-269,271-278,281,287,289-295,299-304,306,308-315,317-320,324-333,335,337,339-348,354-435,453,467,487
+app/src/main/java/app/zmby/ui/screens/ServersScreen.kt
+  s_485dafd7a1a674::t_68e25c7ee6944b 23,289-291,304
+app/src/main/java/app/zmby/ui/screens/SettingsScreen.kt
+  s_485dafd7a1a674::t_8c828cf89ccd3c 38-40,235,300-309,323-328,335
+app/src/main/java/app/zmby/ui/screens/Versions.kt
+  s_485dafd7a1a674::t_3661f2d1156be9 3,8,17,22-23,39-40,50-55,83,105-106,124,129-130,158,186,260,266,301-302,312,330-341,343,345,369,373-375,377,379,386,393,423-463,468,488-494,496,500,503,506-509,513-529,531-536,540-541,547-548,550-562,573,577,586,599,603-638,642,645-662
+app/src/main/java/app/zmby/ui/screens/WatchlistGrid.kt
+  s_485dafd7a1a674::t_901bb7f7e5e2f6 13-15,39,56,64-65,68,71-75,85,88,96,98,102
+app/src/main/java/app/zmby/ui/theme/Theme.kt
+  s_485dafd7a1a674::t_834d35ae038c5e 12-15,17,89-115,119
+app/src/main/java/app/zmby/zidoo/ZidooIntents.kt
+  s_485dafd7a1a674::t_e54284e1d208c9 3,32,50-51
+app/src/main/java/app/zmby/zidoo/ZidooPlayer.kt
+  s_485dafd7a1a674::t_469443361a5883 158-159
+app/src/main/res/drawable/banner.xml
+  s_485dafd7a1a674::t_f14f2b794d517e 2,4-5
+app/src/test/java/app/zmby/aggregate/HeroMergeTest.kt
+  s_485dafd7a1a674::t_871464e734a50c 1-47
+app/src/test/java/app/zmby/aggregate/RecommendationMergeTest.kt
+  s_485dafd7a1a674::t_bbeea05830ace9 1-56
+app/src/test/java/app/zmby/backup/BackupCodecTest.kt
+  s_485dafd7a1a674::t_91b7f2c5d70d1d 57,59
+app/src/test/java/app/zmby/catalog/CatalogRepositoryTest.kt
+  s_485dafd7a1a674::t_6f03e71266bd30 11-13,15-83,103
+app/src/test/java/app/zmby/catalog/CatalogRulesTest.kt
+  s_485dafd7a1a674::t_de23aa2d0f5d38 64-67,70-99
+app/src/test/java/app/zmby/catalog/LimitedCatalogCacheTest.kt
+  s_485dafd7a1a674::t_9057bd4ea2899c 80-98
+app/src/test/java/app/zmby/data/ImportGuardTest.kt
+  s_485dafd7a1a674::t_1f9a2889eb54de 1-39
+app/src/test/java/app/zmby/data/PhoneInputTest.kt
+  s_485dafd7a1a674::t_51a5155223976f 1-81
+app/src/test/java/app/zmby/data/ServerImportTest.kt
+  s_485dafd7a1a674::t_017083a9544c17 141-161,163,170,208-224,226-315,320
+app/src/test/java/app/zmby/emby/ClientIdentityTest.kt
+  s_485dafd7a1a674::t_596657c514f352 187-192
+app/src/test/java/app/zmby/emby/EmbyModelsTest.kt
+  s_485dafd7a1a674::t_be411347c6d02c 1-39
+app/src/test/java/app/zmby/media/TitlesTest.kt
+  s_485dafd7a1a674::t_906730fdbcaae6 58-74
+app/src/test/java/app/zmby/media/TrackBadgesTest.kt
+  s_485dafd7a1a674::t_c000852468466c 1-69
+app/src/test/java/app/zmby/playback/DirectRelayFallbackTest.kt
+  s_485dafd7a1a674::t_30b3f640523068 1-100
+app/src/test/java/app/zmby/playback/FailoverTest.kt
+  s_485dafd7a1a674::t_5ee9e94a536731 15-18,20,22-37
+app/src/test/java/app/zmby/playback/MediaStorePlaybackStoreTest.kt
+  s_485dafd7a1a674::t_546a87db50726e 1,4-6,11,14-21,23
+app/src/test/java/app/zmby/playback/PlaybackMonitorTest.kt
+  s_485dafd7a1a674::t_1466a4ef927564 12,43-60,208-225
+app/src/test/java/app/zmby/store/LocalStoreTest.kt
+  s_485dafd7a1a674::t_46f639a1577365 58,63,66-68
+app/src/test/java/app/zmby/store/StoreKeysTest.kt
+  s_485dafd7a1a674::t_5e8e71cfbde903 8
+app/src/test/java/app/zmby/ui/AccordionTest.kt
+  s_485dafd7a1a674::t_f981ca75135079 1-120
+app/src/test/java/app/zmby/ui/BrowseHelpersTest.kt
+  s_485dafd7a1a674::t_3f64e5b10264be 1-40
+app/src/test/java/app/zmby/ui/DetailBlocksTest.kt
+  s_485dafd7a1a674::t_937b13ff9bbdde 1-56
+app/src/test/java/app/zmby/ui/HomeExitConfirmationTest.kt
+  s_485dafd7a1a674::t_0327ef389b7148 1-33
+app/src/test/java/app/zmby/ui/VersionCardsTest.kt
+  s_485dafd7a1a674::t_6ccf8601063113 11-13,15,20-27,64-73
+tools/mock_emby.py
+  s_485dafd7a1a674::t_bbc56dd58ede27 207-210,246-251,289-320,561-656,781-797,824,883-906,1146,1149-1150,1154-1156,1166,1185-1186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e350f14cd2625f77ff147933e5f46cc1ff157b9",
+  "prompts": {},
+  "sessions": {
+    "s_485dafd7a1a674": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17981-8166-7c30-a9ea-15793ac69fc6",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    }
+  }
+}
