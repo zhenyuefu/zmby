@@ -51,6 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -59,6 +60,7 @@ import androidx.tv.material3.Text
 import app.zmby.data.ServerItem
 import app.zmby.emby.BaseItemDto
 import app.zmby.media.episodeCode
+import app.zmby.media.episodeName
 import app.zmby.media.formatDuration
 import app.zmby.media.heroBadges
 import app.zmby.media.workTitleOf
@@ -118,7 +120,7 @@ private const val HERO_GONE_PX = 600f
 /** Logo box (ui-spec §1.3) and the fixed text block under the 50-px gap below the top bar. */
 private val LOGO_WIDTH = 560.dp
 private val LOGO_HEIGHT = 170.dp
-private val INFO_HEIGHT = 326.dp
+private val INFO_HEIGHT = 374.dp
 
 /**
  * The hero's state, kept on the home's back stack entry: the page counter runs without bounds
@@ -127,6 +129,10 @@ private val INFO_HEIGHT = 326.dp
 @Stable
 class HeroCarousel {
     var items by mutableStateOf<List<ServerItem>>(emptyList())
+
+    /** The source line above each title by [ServerItem.key] (「家里 NAS · 为你推荐」), else [defaultLabel]. */
+    var labels by mutableStateOf<Map<String, String>>(emptyMap())
+    var defaultLabel by mutableStateOf<String?>(null)
 
     /** The page the keys asked for (unbounded). */
     var target by mutableIntStateOf(0)
@@ -281,7 +287,7 @@ fun HeroPages(carousel: HeroCarousel, details: Map<String, BaseItemDto>) {
                             compositingStrategy = CompositingStrategy.Offscreen
                         },
                 ) {
-                    HeroInfo(ref, details[ref.key])
+                    HeroInfo(ref, details[ref.key], carousel.labels[ref.key] ?: carousel.defaultLabel)
                 }
             }
         }
@@ -289,18 +295,20 @@ fun HeroPages(carousel: HeroCarousel, details: Map<String, BaseItemDto>) {
 }
 
 @Composable
-private fun HeroInfo(ref: ServerItem, full: BaseItemDto?) {
+private fun HeroInfo(ref: ServerItem, full: BaseItemDto?, label: String?) {
     val library = LocalContext.current.zmby.library
     val item = ref.item
     val isEpisode = item.type == "Episode"
     Column(Modifier.padding(start = 80.dp).width(880.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        // Where the title came from (Main.dc.html: 19/600 at 68 % above the Logo).
+        Text(label.orEmpty(), fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = Z.textSecondary, maxLines = 1, modifier = Modifier.height(24.dp))
         Box(Modifier.height(LOGO_HEIGHT), contentAlignment = Alignment.BottomStart) {
             TitleLogo(library.logo(ref), workTitleOf(item), maxWidth = LOGO_WIDTH, maxHeight = LOGO_HEIGHT)
         }
         Row(Modifier.height(34.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             val meta = listOfNotNull(
                 item.productionYear?.toString(),
-                if (isEpisode) listOfNotNull(episodeCode(item), item.name).joinToString(" ") else genresLabel(item),
+                if (isEpisode) listOfNotNull(episodeCode(item), episodeName(item)).joinToString(" ") else genresLabel(item),
                 formatDuration(item.runtimeMs),
             )
             Text(meta.joinToString("  ·  "), fontSize = 22.sp, color = Z.textPrimary.copy(alpha = 0.78f), maxLines = 1)
@@ -327,6 +335,7 @@ fun HeroControls(
     scope: CoroutineScope,
     onOpen: (ServerItem) -> Unit,
     onFocusChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
         Modifier
@@ -340,7 +349,7 @@ fun HeroControls(
         GlassButton(
             "详情",
             onClick = { carousel.chosen()?.let(onOpen) },
-            modifier = Modifier.focusRequester(focus).onPreviewKeyEvent { e ->
+            modifier = Modifier.focusRequester(focus).then(modifier).onPreviewKeyEvent { e ->
                 val delta = when (e.key) {
                     Key.DirectionLeft -> -1
                     Key.DirectionRight -> 1
@@ -387,7 +396,7 @@ private fun PageDots(carousel: HeroCarousel, running: Boolean) {
  * Returns whether it runs.
  */
 @Composable
-fun HeroCountdown(carousel: HeroCarousel, rotates: Boolean, scope: CoroutineScope): Boolean {
+fun rememberHeroCountdown(carousel: HeroCarousel, rotates: Boolean, scope: CoroutineScope): Boolean {
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val resumed = lifecycle.isAtLeast(Lifecycle.State.RESUMED)
     val shown by remember(carousel) { derivedStateOf { carousel.scrolled < TEXT_FADE_PX } }

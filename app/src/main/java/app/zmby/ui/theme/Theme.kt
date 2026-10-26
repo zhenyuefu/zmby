@@ -9,8 +9,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -82,12 +86,37 @@ private val MinimalScroll = object : BringIntoViewSpec {
     }
 }
 
+/** [MinimalScroll] for inner lists; detail pages control their own section anchor. */
+@OptIn(ExperimentalFoundationApi::class)
+val defaultScrollSpec: BringIntoViewSpec get() = MinimalScroll
+
+/** Card focus scrolls its inner list. The page moves only when changing section or returning to the header. */
+@OptIn(ExperimentalFoundationApi::class)
+val detailPageScrollSpec: BringIntoViewSpec = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
+}
+
+/** A card already has padding: asking for an extra viewport margin at its edge is unreachable. */
+@OptIn(ExperimentalFoundationApi::class)
+val detailCardScrollSpec: BringIntoViewSpec = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = when {
+        size > containerSize -> offset
+        offset < 0f -> offset
+        offset + size > containerSize -> offset + size - containerSize
+        else -> 0f
+    }
+}
+
+/** Keep any remaining vertical delta/fling inside the card instead of moving the anchored page. */
+val detailCardScrollBoundary: NestedScrollConnection = object : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset = Offset(0f, available.y)
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = Velocity(0f, available.y)
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ZmbyTheme(content: @Composable () -> Unit) {
-    val config = LocalConfiguration.current
-    val real = LocalDensity.current
-    val widthPx = config.screenWidthDp * real.density
+    val widthPx = LocalWindowInfo.current.containerSize.width.coerceAtLeast(1).toFloat()
     val design = Density(density = widthPx / Z.DESIGN_WIDTH, fontScale = 1f)
     MaterialTheme(colorScheme = darkColorScheme(background = Z.bg, surface = Z.bg, onSurface = Z.textPrimary, primary = Z.focusFill)) {
         CompositionLocalProvider(

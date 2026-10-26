@@ -220,33 +220,45 @@ class EmbyClient(
             addQueryParameter("Fields", "ProviderIds,MediaSources,MediaStreams,Chapters,Path,RunTimeTicks,UserData,PresentationUniqueKey")
         }
 
+    /**
+     * Titles like [itemId] (为你推荐, ui-spec §2.14), with their media sources for the version
+     * count on each card. Read-only: it changes nothing on the server.
+     */
+    suspend fun similar(s: ServerSession, itemId: String, limit: Int = 12): ItemsResult =
+        get(s.baseUrl, s, "Items/$itemId/Similar") {
+            addQueryParameter("UserId", s.userId)
+            addQueryParameter("Limit", limit.toString())
+            addQueryParameter("Fields", "$LIST_FIELDS,MediaSources")
+        }
+
+    /**
+     * Emby's suggestions for the user (首页主推区). Emby 4.x takes the generic item-query parameters
+     * here (IncludeItemTypes, Limit, Fields); `Type` is Jellyfin's name for the same filter and
+     * is ignored by Emby. Read-only.
+     */
+    suspend fun suggestions(s: ServerSession, limit: Int = 12): ItemsResult =
+        get(s.baseUrl, s, "Users/${s.userId}/Suggestions") {
+            addQueryParameter("IncludeItemTypes", "Movie,Series")
+            addQueryParameter("Type", "Movie,Series")
+            addQueryParameter("Limit", limit.toString())
+            addQueryParameter("EnableTotalRecordCount", "false")
+            addQueryParameter("Fields", LIST_FIELDS)
+        }
+
+    /** Films like those the user watched: [categoryLimit] categories of at most [itemLimit]. Read-only. */
+    suspend fun movieRecommendations(s: ServerSession, categoryLimit: Int = 4, itemLimit: Int = 8): List<RecommendationDto> =
+        get(s.baseUrl, s, "Movies/Recommendations") {
+            addQueryParameter("UserId", s.userId)
+            addQueryParameter("CategoryLimit", categoryLimit.toString())
+            addQueryParameter("ItemLimit", itemLimit.toString())
+            addQueryParameter("Fields", LIST_FIELDS)
+        }
+
     /** Verify a restored token for its own user; never uses another server's user id. */
     suspend fun verifyUser(s: ServerSession): Boolean {
         val body: kotlinx.serialization.json.JsonObject = get(s.baseUrl, s, "Users/${s.userId}")
         return (body["Id"] as? kotlinx.serialization.json.JsonPrimitive)?.content == s.userId
     }
-
-    /** Bounded person lookup; callers must check type and IDs because forks can ignore filters. */
-    suspend fun persons(s: ServerSession, ids: List<String>): ItemsResult =
-        get(s.baseUrl, s, "Persons") {
-            addQueryParameter("UserId", s.userId)
-            addQueryParameter("AnyProviderIdEquals", ids.joinToString(","))
-            addQueryParameter("Limit", "20")
-            addQueryParameter("Fields", "ProviderIds,Overview,PremiereDate,ProductionLocations")
-        }
-
-    /** Resolve the visible cast in one request, without walking the entire persons library. */
-    suspend fun peopleByIds(s: ServerSession, ids: List<String>): ItemsResult =
-        get(s.baseUrl, s, "Users/${s.userId}/Items") {
-            addQueryParameter("Ids", ids.joinToString(","))
-            addQueryParameter("IncludeItemTypes", "Person")
-            addQueryParameter("Fields", "ProviderIds,Overview,PremiereDate,ProductionLocations")
-            addQueryParameter("Limit", ids.size.toString())
-        }
-
-    /** The item's images with their sizes; asked once per instance when its details open (local-data spec). */
-    suspend fun images(s: ServerSession, itemId: String): List<ImageInfo> =
-        get(s.baseUrl, s, "Items/$itemId/Images")
 
     /** Only the base fields and ProviderIds of [ids]: what is needed to key works without a full fetch. */
     suspend fun providerIdsOf(s: ServerSession, ids: List<String>): ItemsResult =
@@ -255,13 +267,6 @@ class EmbyClient(
             addQueryParameter("Fields", "ProviderIds")
             addQueryParameter("EnableImages", "false")
             addQueryParameter("EnableUserData", "false")
-        }
-
-    /** A person by name on this server (`/Persons/{Name}`): its own id, ProviderIds, overview and birth date. */
-    suspend fun person(s: ServerSession, name: String): BaseItemDto =
-        get(s.baseUrl, s, "Persons/${name.replace('/', ' ')}") {
-            addQueryParameter("UserId", s.userId)
-            addQueryParameter("Fields", "ProviderIds,Overview,PremiereDate,ProductionLocations")
         }
 
     /** Films and series with this server's person [personId], with People for the role. */

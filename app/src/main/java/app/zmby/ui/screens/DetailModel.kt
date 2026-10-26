@@ -1,6 +1,5 @@
 package app.zmby.ui.screens
 
-import app.zmby.media.visibleText
 import app.zmby.media.titleOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,12 +10,9 @@ import app.zmby.aggregate.Verdict
 import app.zmby.data.ServerItem
 import app.zmby.log.ZLog
 import app.zmby.store.CachedDetail
-import app.zmby.store.CastEntry
-import app.zmby.store.WorkMeta
 import app.zmby.ui.userMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,29 +21,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * One item's details, local first (local-data spec): what the store has (the merged work, the cast,
- * the last version cards) shows at once; [refresh] fetches the item again, the image sizes it still
- * needs and merges the work anew, and the screen follows the store.
+ * One item's details, local first (local-data spec): the cached item and the last version cards
+ * show at once; [refresh] loads canonical TMDB / Bangumi metadata, falling back to this one server's
+ * item. Server copies are never merged across servers.
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 class DetailViewModel(private val app: ZmbyApp, val server: String, val itemId: String, private val provider: app.zmby.catalog.CatalogId? = null, private val resourceOnly: Boolean = false) : ViewModel() {
     val detail: StateFlow<CachedDetail?> = app.store.detailFlow(server, itemId)
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
-
-    val meta: StateFlow<WorkMeta?> = detail.map { it?.workKey }.distinctUntilChanged()
-        .flatMapLatest { key -> if (key == null) flowOf(null) else app.store.metaFlow(key) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
-
-    val cast: StateFlow<List<CastEntry>> = detail.map { it?.workKey }.distinctUntilChanged()
-        .flatMapLatest { key -> if (key == null) flowOf(emptyList()) else app.store.castFlow(key) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
@@ -125,7 +110,7 @@ class DetailViewModel(private val app: ZmbyApp, val server: String, val itemId: 
     }
 }
 
-/** What the header shows: the merged work where the store has one, else the item's own fields. */
+/** What the header shows without canonical metadata: the one server item's own fields. */
 data class DetailDisplay(
     val title: String,
     val overview: String?,
@@ -138,18 +123,18 @@ data class DetailDisplay(
     val logo: String?,
 )
 
-fun ZmbyApp.display(ref: ServerItem, meta: WorkMeta?): DetailDisplay {
+fun ZmbyApp.display(ref: ServerItem): DetailDisplay {
     val item = ref.item
     return DetailDisplay(
-        title = visibleText(meta?.title) ?: titleOf(item),
-        overview = meta?.overview ?: item.overview,
-        genres = meta?.genres?.takeIf { it.isNotEmpty() } ?: item.genres,
-        year = meta?.year ?: item.productionYear,
-        runtimeMs = (meta?.runtimeTicks ?: item.runTimeTicks)?.let { it / 10_000 },
-        rating = meta?.rating ?: item.communityRating,
-        ratingTmdb = meta?.ratingTmdb ?: item.providerIds.keys.any { it.equals("Tmdb", ignoreCase = true) },
-        backdrop = meta?.backdrop?.let { library.imageUrl(it, "Backdrop", 1080) } ?: library.backdrop(ref),
-        logo = meta?.logo?.let { library.imageUrl(it, "Logo", 340) } ?: library.logo(ref),
+        title = titleOf(item),
+        overview = item.overview,
+        genres = item.genres,
+        year = item.productionYear,
+        runtimeMs = item.runTimeTicks?.let { it / 10_000 },
+        rating = item.communityRating,
+        ratingTmdb = item.providerIds.keys.any { it.equals("Tmdb", ignoreCase = true) },
+        backdrop = library.backdrop(ref),
+        logo = library.logo(ref),
     )
 }
 

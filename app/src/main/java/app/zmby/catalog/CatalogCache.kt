@@ -33,4 +33,5 @@ interface CatalogDao : CatalogStorage {
     @Query("SELECT COALESCE(SUM(size_bytes), 0) FROM catalog_cache") fun sizeFlow(): Flow<Long>
     @Query("SELECT `key`, size_bytes FROM catalog_cache ORDER BY accessed_at ASC, `key` ASC") suspend fun oldestFirst(): List<CatalogCacheSize>
     @Query("DELETE FROM catalog_cache WHERE `key` IN (:keys)") suspend fun delete(keys: List<String>)
+    @Query("DELETE FROM catalog_cache WHERE `key` LIKE :pattern") suspend fun deleteLike(pattern: String): Int
 }

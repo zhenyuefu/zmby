@@ -1,5 +1,6 @@
 package app.zmby.zidoo
 
+import androidx.core.net.toUri
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -28,7 +29,7 @@ object ZidooIntents {
     fun genericIntent(spec: ZidooLaunchSpec): Intent = baseIntent(spec)
 
     private fun baseIntent(spec: ZidooLaunchSpec): Intent {
-        val intent = (if (spec.viewAction) Intent(Intent.ACTION_VIEW) else Intent()).setDataAndType(Uri.parse(spec.uri), spec.mimeType)
+        val intent = (if (spec.viewAction) Intent(Intent.ACTION_VIEW) else Intent()).setDataAndType(spec.uri.toUri(), spec.mimeType)
         for ((key, value) in spec.extras) {
             when (value) {
                 is Boolean -> intent.putExtra(key, value)
@@ -46,6 +47,8 @@ object ZidooIntents {
     /** The player's own subtitle title suffixes in the current locale (see [ZidooPlayerStrings]). */
     fun playerStrings(context: Context, player: ZidooPlayer.Component): ZidooPlayerStrings = runCatching {
         val res = context.packageManager.getResourcesForApplication(player.pkg)
+        // These IDs belong to the installed third-party player and cannot be referenced via our R.
+        @android.annotation.SuppressLint("DiscouragedApi")
         fun string(name: String) = res.getIdentifier(name, "string", player.pkg).takeIf { it != 0 }?.let(res::getString)
         ZidooPlayerStrings(string("in_text_subtitle"), string("ex_subtitle"))
     }.getOrDefault(ZidooPlayerStrings())

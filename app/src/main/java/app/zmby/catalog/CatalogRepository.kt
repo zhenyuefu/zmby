@@ -9,6 +9,8 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
     private val textLanguage: () -> String, private val posterLanguage: () -> String, private val logoLanguage: () -> String,
     private val animeEnabled: () -> Boolean) {
     val configured get() = api.configured
+    /** Null when TMDB accepts [token] (用手机输入 checks it before saving), else why not. */
+    suspend fun verifyToken(token: String): String? = api.verifyToken(token)
     private fun viewKey(ref: CatalogId) = "view:${ref.key}:${textLanguage()}:${posterLanguage()}:${logoLanguage()}"
     suspend fun cached(ref: CatalogId): CatalogWork? = withContext(Dispatchers.IO) {
         cache.get(viewKey(ref))?.let { runCatching { api.json.decodeFromString(CatalogWork.serializer(), it.json) }.getOrNull() }
@@ -31,14 +33,12 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
             results.singleOrNull()?.str("id")?.let { return@withContext CatalogId("tmdb", kind, it) }
         }
         ids["bangumi"]?.takeIf { it.toLongOrNull()?.let { n -> n > 0 } == true }?.let { return@withContext CatalogId("bangumi", kind, it) }
-        if (animeEnabled()) alias(item)?.let { row ->
-            val subject = AnimeAliases.subject(row) ?: return@let
-            return@withContext CatalogId("bangumi", kind, subject)
-        }
+        if (animeEnabled()) alias(item)?.let { subject -> return@withContext CatalogId("bangumi", kind, subject) }
         null
     }
-    suspend fun alias(item: BaseItemDto): JsonObject? = withContext(Dispatchers.IO) {
-        AnimeAliases.find(api.aliases(), listOfNotNull(item.name, item.originalTitle), item.productionYear)
+    /** The Bangumi subject bangumi-data's aliases give [item] unambiguously, if any. */
+    suspend fun alias(item: BaseItemDto): String? = withContext(Dispatchers.IO) {
+        api.animeIndex().find(listOfNotNull(item.name, item.originalTitle), item.productionYear)
     }
     suspend fun tmdbCandidates(work: CatalogWork): List<CatalogWork> = withContext(Dispatchers.IO) {
         if (!configured) return@withContext emptyList()
@@ -52,9 +52,27 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
     }
     suspend fun chart(chart: CatalogChart): List<CatalogWork> = withContext(Dispatchers.IO) {
         if (!configured) return@withContext emptyList()
-        api.tmdb(chart.path, mapOf("language" to textLanguage(), "region" to textLanguage().substringAfter('-', "US")), 60 * 60_000)
+        api.tmdb(chart.path, mapOf("language" to textLanguage(), "region" to CatalogRegion.of(textLanguage())), 60 * 60_000)
             .rows("results").mapNotNull { brief(it, if (chart.path.startsWith("movie/")) "movie" else if (chart.path.startsWith("tv/")) "tv" else null) }
     }
+    /** TMDB's `recommendations` for [ref] (为你推荐); one page, cached like the other TMDB answers. */
+    suspend fun recommendations(ref: CatalogId): List<CatalogWork> = withContext(Dispatchers.IO) {
+        if (!configured || ref.source != "tmdb") return@withContext emptyList()
+        api.tmdb("${ref.kind}/${ref.id}/recommendations", mapOf("language" to textLanguage()))
+            .rows("results").mapNotNull { brief(it, ref.kind) }
+    }
+
+    /** The stored 为你推荐 list of a work (local first, ui-spec §2.14). */
+    suspend fun storedRecommendations(workKey: String): app.zmby.aggregate.StoredRecommendations? = withContext(Dispatchers.IO) {
+        cache.get(recsKey(workKey))?.let { runCatching { api.json.decodeFromString(app.zmby.aggregate.StoredRecommendations.serializer(), it.json) }.getOrNull() }
+    }
+
+    suspend fun storeRecommendations(workKey: String, recs: app.zmby.aggregate.StoredRecommendations) = withContext(Dispatchers.IO) {
+        cache.put(CatalogCache(recsKey(workKey), api.json.encodeToString(app.zmby.aggregate.StoredRecommendations.serializer(), recs), recs.fetchedAt))
+    }
+
+    private fun recsKey(workKey: String) = "recs:v1:$workKey:${textLanguage()}"
+
     private fun brief(row: JsonObject, hint: String? = null): CatalogWork? {
         val kind = row.str("media_type") ?: hint ?: return null
         val id = row.str("id") ?: return null
@@ -84,9 +102,9 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
         val castBody = body.child(creditsKey)
         val cast = castBody.rows("cast").mapNotNull { p ->
             val id = p.str("id") ?: return@mapNotNull null
-            CatalogPerson("tmdb", id, p.str("name").orEmpty(), p.str("character") ?: p.rows("roles").mapNotNull { it.str("character") }.distinct().joinToString(" / "), art(p.str("profile_path"), "w185"))
+            CatalogPerson("tmdb", id, p.str("name").orEmpty(), p.str("character") ?: p.rows("roles").mapNotNull { it.str("character") }.distinct().joinToString(" · "), art(p.str("profile_path"), "w185"))
         } + castBody.rows("crew").filter { p -> p.str("job") in setOf("Director", "Writer", "Screenplay") || p.rows("jobs").any { it.str("job") in setOf("Director", "Writer", "Screenplay") } }
-            .mapNotNull { p -> p.str("id")?.let { CatalogPerson("tmdb", it, p.str("name").orEmpty(), p.str("job") ?: p.rows("jobs").mapNotNull { it.str("job") }.distinct().joinToString(" / "), art(p.str("profile_path"), "w185")) } }
+            .mapNotNull { p -> p.str("id")?.let { CatalogPerson("tmdb", it, p.str("name").orEmpty(), p.str("job") ?: p.rows("jobs").mapNotNull { it.str("job") }.distinct().joinToString(" · "), art(p.str("profile_path"), "w185")) } }
         val ids = mapOf("Tmdb" to ref.id) + body.child("external_ids").let { ext -> listOfNotNull(ext.str("imdb_id")?.let { "Imdb" to it }, ext.str("tvdb_id")?.let { "Tvdb" to it }).toMap() }
         CatalogWork(ref, text(titleField) ?: originalTitle, originalTitle, text("overview").orEmpty(),
             (body.str("release_date") ?: body.str("first_air_date"))?.take(4)?.toIntOrNull(), body.dec("vote_average"),
@@ -95,7 +113,7 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
             art(ArtworkLanguage.choose(images.rows("backdrops"), posterLanguage(), original, neutral = true), "w1280"),
             art(ArtworkLanguage.choose(images.rows("logos"), logoLanguage(), original), "w500"),
             body.rows("seasons").mapNotNull { s -> s.num("season_number")?.let { CatalogSeason(it, s.str("name") ?: "第 $it 季", s.num("episode_count") ?: 0, s.str("air_date")) } },
-            cast.groupBy { it.key }.values.map { people -> people.first().copy(role = people.map { it.role }.filter { it.isNotBlank() }.distinct().joinToString(" / ")) }, ids)
+            cast.groupBy { it.key }.values.map { people -> people.first().copy(role = people.map { it.role }.filter { it.isNotBlank() }.distinct().joinToString(" · ")) }, ids)
     }
     suspend fun episodes(work: CatalogWork, season: Int): List<CatalogEpisode> = withContext(Dispatchers.IO) {
         if (work.ref.source == "tmdb") {
@@ -134,8 +152,8 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
         return CatalogWork(ref, bgmName(body), body.str("name").orEmpty(), body.str("summary").orEmpty(), body.str("date")?.take(4)?.toIntOrNull(),
             body.child("rating").dec("score"), body.rows("tags").mapNotNull { it.str("name") }.take(5),
             // Bangumi artwork has no script tags, so do not substitute it for a strict poster preference.
-            seasons = if (ref.kind == "tv") listOf(CatalogSeason(1, "本篇 · Bangumi 条目", body.num("eps") ?: body.num("total_episodes") ?: 0), CatalogSeason(0, "SP / 特别篇", 0)) else emptyList(),
-            cast = cast.groupBy { it.key }.values.map { it.first().copy(role = it.map { p -> p.role }.distinct().joinToString(" / ")) }, ids = mapOf("Bangumi" to ref.id))
+            seasons = if (ref.kind == "tv") listOf(CatalogSeason(1, "本篇 · Bangumi 条目", body.num("eps") ?: body.num("total_episodes") ?: 0), CatalogSeason(0, "SP · 特别篇", 0)) else emptyList(),
+            cast = cast.groupBy { it.key }.values.map { it.first().copy(role = it.map { p -> p.role }.distinct().joinToString(" · ")) }, ids = mapOf("Bangumi" to ref.id))
     }
     private fun personKey(source: String, id: String) = "person-view:$source:$id:${textLanguage()}"
     suspend fun cachedPerson(source: String, id: String): CatalogBiography? = withContext(Dispatchers.IO) {

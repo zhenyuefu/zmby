@@ -3,7 +3,6 @@ package app.zmby.store
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.zmby.emby.BaseItemDto
-import app.zmby.emby.ImageInfo
 import app.zmby.emby.PersonDto
 import app.zmby.emby.UserItemData
 import app.zmby.favorites.Favorite
@@ -52,37 +51,21 @@ class LocalStoreTest {
         val row = db.works().instance("a", "1")!!
         assertEquals("movie:tmdb:27205", row.workKey)
         assertNotNull("a list update must not drop the full item", row.detailJson)
-        assertEquals(1, store.castFlow("movie:tmdb:27205").first().size)
     }
 
     @Test fun `a work first keyed by its item moves to the external key once scraped`() = runBlocking {
         store.putDetail("a", movie("1", "Some.Film.2025", tmdb = null))
-        store.remerge("item:a:1", listOf("a"))
-        assertNotNull(db.works().meta("item:a:1"))
+        assertEquals("item:a:1", db.works().instance("a", "1")!!.workKey)
         store.putItems("a", listOf(movie("1", "Some Film", tmdb = "777")))
         assertEquals("movie:tmdb:777", db.works().instance("a", "1")!!.workKey)
-        assertNull("the item-only row is dropped and merged again under the work key", db.works().meta("item:a:1"))
     }
 
-    @Test fun `two servers with the same TMDB merge into one row, Chinese first`() = runBlocking {
+    @Test fun `server copies of one work are stored per server and never merged`() = runBlocking {
         store.putDetail("en", movie("1", "Inception", overview = "A thief"))
         store.putDetail("cn", movie("9", "盗梦空间", overview = "盗贼"))
-        store.putImages("en", "1", listOf(ImageInfo("Primary", null, "p1", 2000, 3000)))
-        store.putImages("cn", "9", listOf(ImageInfo("Primary", null, "p9", 500, 750)))
-        val meta = store.remerge("movie:tmdb:27205", listOf("en", "cn"))!!
-        assertEquals("盗梦空间", meta.title)
-        assertEquals("盗贼", meta.overview)
-        assertEquals("en", meta.primary!!.server)
-        // Only metadata-source servers take part.
-        assertEquals("Inception", store.remerge("movie:tmdb:27205", listOf("en"))!!.title)
-    }
-
-    @Test fun `an item without external IDs is never merged with another`() = runBlocking {
-        store.putDetail("a", movie("1", "降临", tmdb = null))
-        store.putDetail("b", movie("2", "降临", tmdb = null))
-        assertEquals("item:a:1", db.works().instance("a", "1")!!.workKey)
-        val meta = store.remerge("item:a:1", listOf("b", "a"))!!
-        assertEquals("a", meta.titleServer)
+        assertNull("no merged work row is written", db.works().meta("movie:tmdb:27205"))
+        assertEquals("Inception", store.detail("en", "1")!!.item.name)
+        assertEquals("盗梦空间", store.detail("cn", "9")!!.item.name)
     }
 
     @Test fun `lists come back in order and empty when never fetched`() = runBlocking {
@@ -149,19 +132,5 @@ class LocalStoreTest {
         assertEquals("沙丘2", state.favorites.single().title)
         assertEquals(5L, state.lastPull["a"])
         assertNull(Favorites.decodeJson("not json"))
-    }
-
-    @Test fun `a person page with a TMDB id makes one person of several servers`() = runBlocking {
-        store.putDetail("a", movie("1", "Inception").copy(people = listOf(PersonDto("pa", "Leonardo DiCaprio", "Cobb", "Actor", "img"))))
-        store.putDetail("b", movie("9", "盗梦空间").copy(people = listOf(PersonDto("pb", "莱昂纳多·迪卡普里奥", "柯布", "Actor"))))
-        val k1 = store.mergePerson("a", BaseItemDto(id = "pa", name = "Leonardo DiCaprio", type = "Person", providerIds = mapOf("Tmdb" to "6193")))
-        val k2 = store.mergePerson("b", BaseItemDto(id = "pb", name = "莱昂纳多·迪卡普里奥", type = "Person", providerIds = mapOf("Tmdb" to "6193"), premiereDate = "1974-11-11T00:00:00Z"))
-        assertEquals("person:tmdb:6193", k1)
-        assertEquals(k1, k2)
-        val p = store.person(k1)!!
-        assertEquals("莱昂纳多·迪卡普里奥", p.name)
-        assertEquals("1974-11-11T00:00:00Z", p.birthDate)
-        assertEquals(setOf("a", "b"), store.aliases(k1).map { it.serverId }.toSet())
-        assertEquals(k1, store.castFlow("movie:tmdb:27205").first().single().person.personKey)
     }
 }

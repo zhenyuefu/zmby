@@ -155,6 +155,8 @@ data class ZidooResult(
     val endBy: String?,
 ) {
     val completed: Boolean get() = endBy == ZidooPlayer.END_BY_COMPLETION
+    /** MX result error; never infer failure from RESULT_CANCELED or a missing result. */
+    val failed: Boolean get() = endBy == "playback_error"
 
     companion object {
         fun parse(extra: (String) -> Any?): ZidooResult = ZidooResult(

@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import app.zmby.log.ZLog
@@ -18,7 +19,15 @@ import java.io.IOException
  * Files stay pending (invisible to the player) until fully written.
  */
 class MediaStorePlaybackStore(private val resolver: ContentResolver, private val now: () -> Long = System::currentTimeMillis) : PlaybackFileStore {
-    private val collection: Uri = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+    // Construction also happens on Android 9, where browsing/direct playback remain available.
+    // Resolve only when a local STRM operation is requested, with a clear error on older devices.
+    private val collection: Uri
+        get() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                throw IOException("本地 STRM 外挂字幕需要 Android 10 或更新版本")
+            }
+            return MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        }
     private val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$DIR/"
 
     override val location: String get() = relativePath

@@ -42,6 +42,8 @@ data class BrowseState(
     val generation: Int = 0,
     /** The first page failed and nothing is cached (shown with 重试). */
     val error: String? = null,
+    /** Everything in the library without the filters (the count beside the page name). */
+    val libraryTotal: Int? = null,
 )
 
 /**
@@ -61,6 +63,8 @@ class BrowseViewModel(private val app: ZmbyApp, private val types: String) : Vie
     /** The slots last reported on screen, to fetch their pages once the total is known. */
     private var lastRange = 0 to 0
     private val checkedSorts = HashSet<String>()
+    /** Library totals by "server|library", known from an unfiltered first page or a count request. */
+    private val libraryTotals = HashMap<String, Int>()
 
     init {
         val home = app.settings.homeSource.value.takeIf { id -> app.registry.get(id)?.enabled == true }
@@ -94,9 +98,25 @@ class BrowseViewModel(private val app: ZmbyApp, private val types: String) : Vie
         loading.values.forEach { it.cancel() }
         loading.clear()
         _pages.value = emptyMap()
-        _state.update { it.copy(total = 0, loaded = false, sortUnsupported = false, generation = it.generation + 1) }
+        val key = libraryKey()
+        _state.update { it.copy(total = 0, loaded = false, sortUnsupported = false, generation = it.generation + 1, libraryTotal = libraryTotals[key]) }
         ensure(0, 0)
         loadGenres()
+        if (_state.value.query.filtered && key !in libraryTotals) loadLibraryTotal(key)
+    }
+
+    private fun libraryKey(): String = _state.value.let { "${it.server}|${it.libraryId}" }
+
+    /** The library's own count while filters narrow the grid: one Limit=0 request without them. */
+    private fun loadLibraryTotal(key: String) {
+        val s = _state.value
+        val server = s.server ?: return
+        viewModelScope.launch {
+            val n = runCatching { app.library.browse(server, types, false, s.libraryId, 0, 0, s.query.cleared().params()).totalRecordCount }
+                .onFailure { if (it is CancellationException) throw it }.getOrNull() ?: return@launch
+            libraryTotals[key] = n
+            if (libraryKey() == key) _state.update { it.copy(libraryTotal = n) }
+        }
     }
 
     /** The slots [first]..[last] are (nearly) on screen: fetch their pages and the next one. */
@@ -140,7 +160,7 @@ class BrowseViewModel(private val app: ZmbyApp, private val types: String) : Vie
         if (cached != null && cached.items.isNotEmpty() && gen == _state.value.generation) {
             _pages.update { it + (page to cached.items) }
             val first = !_state.value.loaded
-            _state.update { if (it.loaded) it else it.copy(total = cached.total, loaded = true) }
+            _state.update { if (it.loaded) it else it.copy(total = cached.total, loaded = true, libraryTotal = if (s.query.filtered) it.libraryTotal else cached.total) }
             if (first) ensure(lastRange.first, lastRange.second)
         }
         if (cached != null && !Freshness.due(Freshness.Kind.Browse, cached.fetchedAt, System.currentTimeMillis())) return
@@ -154,7 +174,8 @@ class BrowseViewModel(private val app: ZmbyApp, private val types: String) : Vie
                 !withContext(Dispatchers.Default) { SortCheck.consistent(result.items, s.query.sort, s.query.descending) }
             if (unsupported) ZLog.w("Browse", "${app.registry.get(server)?.name} did not keep the ${s.query.sort} order")
             val first = !_state.value.loaded
-            _state.update { it.copy(total = result.totalRecordCount, loaded = true, sortUnsupported = it.sortUnsupported || unsupported, error = null) }
+            if (!s.query.filtered) libraryTotals["$server|${s.libraryId}"] = result.totalRecordCount
+            _state.update { it.copy(total = result.totalRecordCount, loaded = true, sortUnsupported = it.sortUnsupported || unsupported, error = null, libraryTotal = if (s.query.filtered) it.libraryTotal else result.totalRecordCount) }
             if (first) ensure(lastRange.first, lastRange.second)
         } catch (e: CancellationException) {
             throw e

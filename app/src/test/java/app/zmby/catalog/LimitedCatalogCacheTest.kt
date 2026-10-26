@@ -77,4 +77,23 @@ class LimitedCatalogCacheTest {
         assertEquals("Watch", db.watchlist().all().single().title)
         assertEquals(5L, db.playHistory().newest("a"))
     }
+    @Test fun `rows over the per-row cap are not stored and legacy bangumi-data rows are dropped`() = runBlocking {
+        limit = 64L * 1024 * 1024
+        put("big", "x".repeat(LimitedCatalogCache.MAX_ROW_BYTES.toInt() + 1))
+        assertNull(db.catalog().get("big"))
+        put("small")
+        assertNotNull(cache.get("small"))
+        db.catalog().put(CatalogCache("https://cdn.jsdelivr.net/npm/bangumi-data@0.3/dist/data.json", "[]", now))
+        assertEquals(1, cache.dropLegacyRows())
+        assertNotNull(cache.get("small"))
+    }
+    @Test fun `a row too large for the cursor window reads as a miss and is removed`() = runBlocking {
+        limit = 64L * 1024 * 1024
+        // Written the way the old client stored bangumi-data: one multi-megabyte row.
+        db.catalog().put(CatalogCache("huge", "x".repeat(3 * 1024 * 1024), now))
+        // Reproduces the review finding with real SQLite: the plain DAO read throws.
+        assertTrue(runCatching { db.catalog().get("huge") }.exceptionOrNull() is android.database.sqlite.SQLiteBlobTooBigException)
+        assertNull(cache.get("huge"))
+        assertNull(runCatching { db.catalog().get("huge") }.getOrNull())
+    }
 }

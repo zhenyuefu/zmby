@@ -204,6 +204,10 @@ for e in range(1, 231):
     if e <= 204:
         ep["UserData"].update({"Played": True, "PlayedPercentage": 100})
 
+# Series carry their unwatched count, as Emby does (the browse page's 「n 集未看」 corner).
+ITEMS["longseason"]["UserData"]["UnplayedItemCount"] = 6
+ITEMS["anime"]["UserData"]["UnplayedItemCount"] = 26
+
 
 def series_episodes(cat, series_id):
     return sorted((d for d in cat.items.values() if d["Type"] == "Episode" and d.get("SeriesId") == series_id),
@@ -239,6 +243,12 @@ def brief(d, keep_sources=False, people=False):
 
 def request_kind(path, q):
     """What a request is for, as counted per server."""
+    if path.endswith("/Similar"):
+        return "Similar"
+    if path.endswith("/Suggestions"):
+        return "Suggestions"
+    if path == "/Movies/Recommendations":
+        return "Recommendations"
     if path.endswith("/Items/Latest"):
         return "Latest"
     if path.endswith("/Items/Resume"):
@@ -274,6 +284,38 @@ def request_kind(path, q):
     if "/Items/" in path and path.startswith("/Users/"):
         return "Item"
     return "Other"
+
+
+def similar_items(cat, iid, limit):
+    """/Items/{id}/Similar: same type, sharing a genre, best rated first (Emby ranks by shared genres, tags, people)."""
+    d = cat.items.get(iid)
+    if not d:
+        return None
+    genres = set(d.get("Genres") or [])
+    res = [x for x in cat.items.values() if x["Id"] != iid and x["Type"] == d["Type"] and genres & set(x.get("Genres") or [])]
+    res.sort(key=lambda x: (-(x.get("CommunityRating") or 0), x["Name"]))
+    return res[:limit]
+
+
+def suggested_items(cat, q):
+    """/Users/{uid}/Suggestions: unwatched films and series, best rated first; IncludeItemTypes as Emby's generic query."""
+    types = (q.get("IncludeItemTypes") or q.get("Type") or "Movie,Series").split(",")
+    res = [x for x in cat.items.values() if x["Type"] in types and not x["UserData"].get("Played") and not x["UserData"].get("PlaybackPositionTicks")]
+    res.sort(key=lambda x: (-(x.get("CommunityRating") or 0), x.get("DateCreated", ""), x["Name"]))
+    return res
+
+
+def movie_recommendations(cat, q):
+    """/Movies/Recommendations: one category per film watched or started, of films like it."""
+    seen = [x for x in cat.items.values() if x["Type"] == "Movie" and (x["UserData"].get("Played") or x["UserData"].get("PlaybackPositionTicks"))]
+    seen.sort(key=lambda x: x["UserData"].get("LastPlayedDate", ""), reverse=True)
+    out = []
+    for i, base in enumerate(seen[:int(q.get("CategoryLimit") or 5)]):
+        items = [x for x in (similar_items(cat, base["Id"], 50) or []) if not x["UserData"].get("Played")]
+        if items:
+            out.append({"BaselineItemName": base["Name"], "CategoryId": i + 1, "RecommendationType": "SimilarToRecentlyPlayed",
+                        "Items": [brief(x) for x in items[:int(q.get("ItemLimit") or 8)]]})
+    return out
 
 
 def sort_items(res, q):
@@ -516,6 +558,102 @@ def build_noid():
     return items
 
 
+_BANGUMI_DATA = None
+
+
+def bangumi_data():
+    """30 000 filler items plus 长篇番剧 (2010, Bangumi subject 990042), about 4 MB of JSON."""
+    global _BANGUMI_DATA
+    if _BANGUMI_DATA is None:
+        items = [{"title": f"填充条目{i}", "titleTranslate": {"zh-Hans": [f"Filler {i}"]}, "type": "tv", "lang": "ja",
+                  "begin": "2001-01-01T00:00:00.000Z", "sites": [{"site": "bangumi", "id": str(100000 + i)}]} for i in range(1, 30001)]
+        items.append({"title": "Chouhen Anime", "titleTranslate": {"zh-Hans": ["长篇番剧"], "zh-Hant": ["長篇番劇"]}, "type": "tv",
+                      "lang": "ja", "begin": "2010-04-01T00:00:00.000Z", "sites": [{"site": "bangumi", "id": "990042"}]})
+        _BANGUMI_DATA = json.dumps({"siteMeta": {}, "items": items}, ensure_ascii=False).encode()
+    return _BANGUMI_DATA
+
+
+def mock_bangumi(rest, q):
+    """Just enough of api.bgm.tv/v0 for subject 990042."""
+    if rest == "subjects/990042":
+        return ({"id": 990042, "name": "Chouhen Anime", "name_cn": "长篇番剧（Bangumi 资料）", "summary": "来自 mock Bangumi 的简介。",
+                 "date": "2010-04-01", "eps": 3, "rating": {"score": 7.5}, "tags": [{"name": "TV"}]},)
+    if rest == "subjects/990042/characters":
+        return ([],)
+    if rest == "episodes":
+        data = [{"id": 9900420 + e, "type": 0, "sort": e, "name": f"Episode {e}", "name_cn": f"第 {e} 话", "airdate": "2010-04-01"} for e in (1, 2, 3)]
+        return ({"total": 3, "data": data},)
+    return ({"title": "Not Found"}, 404)
+
+
+# Titles only TMDB knows (为你推荐 shows them as 「无资源」); ids stay clear of the mock's real ones.
+TMDB_ONLY = [
+    {"id": 990201, "media_type": "tv", "name": "沙丘：预言", "original_name": "Dune: Prophecy", "first_air_date": "2024-11-17", "vote_average": 7.0, "genres": ["科幻"]},
+    {"id": 990202, "media_type": "movie", "title": "银河漫游指南", "original_title": "The Hitchhiker's Guide", "release_date": "2005-04-28", "vote_average": 6.8, "genres": ["科幻"]},
+    {"id": 990203, "media_type": "movie", "title": "一九四二", "original_title": "Back to 1942", "release_date": "2012-11-29", "vote_average": 7.1, "genres": ["剧情", "历史"]},
+]
+
+
+def tmdb_rows():
+    """Every mock film and series with a TMDB id as TMDB list rows, plus [TMDB_ONLY]."""
+    rows = []
+    for d in ITEMS.values():
+        tid = (d.get("ProviderIds") or {}).get("Tmdb")
+        if not tid or d["Type"] not in ("Movie", "Series") or d.get("_lib") == "lib-docs":
+            continue
+        movie = d["Type"] == "Movie"
+        rows.append({"id": int(tid), "media_type": "movie" if movie else "tv", ("title" if movie else "name"): d["Name"],
+                     ("original_title" if movie else "original_name"): d["Name"], "overview": d.get("Overview", ""),
+                     ("release_date" if movie else "first_air_date"): f"{d.get('ProductionYear') or 2000}-01-01",
+                     "vote_average": d.get("CommunityRating") or 7.0, "genres": d.get("Genres") or []})
+    return rows + TMDB_ONLY
+
+
+def mock_tmdb(rest, q, headers):
+    """Just enough of api.themoviedb.org/3 for the hero chart, detail pages and 为你推荐 (debug.zmby.tmdb_base)."""
+    if not (headers.get("Authorization") or "").startswith("Bearer ") or len(headers.get("Authorization")) < 12:
+        return ({"status_code": 7, "status_message": "Invalid API key"}, 401)
+    rows = tmdb_rows()
+    parts = rest.split("/")
+    if rest == "configuration":
+        return ({"images": {"secure_base_url": "https://image.tmdb.org/t/p/"}},)
+    if parts[0] in ("trending", "movie", "tv") and parts[-1] in ("week", "now_playing", "popular", "top_rated", "airing_today", "on_the_air"):
+        kind = None if parts[0] == "trending" else parts[0]
+        return ({"page": 1, "results": [r for r in rows if kind is None or r["media_type"] == kind][:10]},)
+    if parts[0] in ("search", "find"):
+        return ({"results": [], "movie_results": [], "tv_results": []},)
+    if len(parts) >= 2 and parts[0] in ("movie", "tv"):
+        kind, tid = parts[0], parts[1]
+        row = next((r for r in rows if str(r["id"]) == tid and r["media_type"] == kind), None)
+        if row is None:
+            return ({"status_code": 34, "status_message": "not found"}, 404)
+        if len(parts) == 3 and parts[2] == "recommendations":
+            same = [r for r in rows if r is not row and r["media_type"] == kind and set(r["genres"]) & set(row["genres"])]
+            other = [r for r in TMDB_ONLY if r is not row and set(r["genres"]) & set(row["genres"])]
+            return ({"page": 1, "results": same + [r for r in other if r not in same]},)
+        if len(parts) == 3 and parts[2] == "images":
+            return ({"posters": [], "backdrops": [], "logos": []},)
+        if len(parts) == 4 and parts[2] == "season":
+            n = int(parts[3])
+            if tid == "202750" and n == 1:
+                eps = [{"id": 2027500 + e, "episode_number": e, "name": f"第 {e} 集的标题", "overview": f"第 {e} 集（TMDB）",
+                        "air_date": "2023-04-22" if e <= 12 else "2026-11-02"} for e in range(1, 15)]
+                return ({"episodes": eps},)
+            return ({"episodes": []},)
+        body = dict(row)
+        body["genres"] = [{"id": i, "name": g} for i, g in enumerate(row["genres"])]
+        body["original_language"] = "zh"
+        body["translations"] = {"translations": []}
+        body["external_ids"] = {}
+        body["credits" if kind == "movie" else "aggregate_credits"] = {"cast": [], "crew": []}
+        if kind == "tv":
+            body["seasons"] = [{"season_number": 1, "name": "第 1 季", "episode_count": 14, "air_date": "2023-04-22"}]
+        return (body,)
+    if parts[0] == "person":
+        return ({"id": int(parts[1]), "name": "Mock Person", "biography": "", "combined_credits": {"cast": [], "crew": []}},)
+    return ({"status_code": 34, "status_message": "not found"}, 404)
+
+
 # With --pinyin the main server also understands pinyin; 朋友的服 always does (it has the plugin).
 PINYIN_EXTRA = {"f-dune": ["shaqiu2", "sq2"], "f-inter": ["xingjixiaoying", "xjxy"], "f-ls": [], "f-an": ["changpianfanju", "cpfj"]}
 
@@ -640,6 +778,23 @@ class Emby(BaseHTTPRequestHandler):
             for c in CATALOGS:
                 c.requests.clear()
             return self.send_json({"ok": True})
+        # bangumi-data stand-in (over 2 MB, like the real ~8 MB dataset) and a tiny Bangumi API for its
+        # one real alias, so alias matching can be tested offline. Debug builds read the URL from
+        # `adb shell setprop debug.zmby.bangumi_data http://10.0.2.2:8096/_mock/bangumi-data.json`.
+        if path == "/_mock/bangumi-data.json":
+            body = bangumi_data()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
+        if path.startswith("/_mock/bgm/v0/"):
+            return self.send_json(*mock_bangumi(path[len("/_mock/bgm/v0/"):], q))
+        # Any /_mock/tmdb<suffix>/3/ base works, so a fresh suffix bypasses what the app cached.
+        if path.startswith("/_mock/tmdb") and "/3/" in path:
+            rest = path.split("/3/", 1)[1]
+            print(f"  TMDB {rest}", flush=True)
+            return self.send_json(*mock_tmdb(rest, q, self.headers))
         if not path.startswith("/ZidooVideoPlay") and path != "/System/Info/Public":
             kind = request_kind(path, q)
             cat.requests[kind] = cat.requests.get(kind, 0) + 1
@@ -666,7 +821,7 @@ class Emby(BaseHTTPRequestHandler):
             return self.send_json({"error": "unauthorized"}, 401)
         if path == f"/Users/{USER}" and method == "GET":
             return self.send_json({"Id": USER, "Name": "Mock User"})
-        if path.startswith(f"/Users/{USER}/") or path.startswith("/Shows/"):
+        if path.startswith(f"/Users/{USER}/") or path.startswith("/Shows/") or path == "/Movies/Recommendations":
             if cat.hang:
                 print(f"  [{cat.name}] hanging {cat.hang}s", flush=True)
                 time.sleep(cat.hang)
@@ -725,6 +880,30 @@ class Emby(BaseHTTPRequestHandler):
             return self.send_json({"Items": [{"Id": f"g-{n}", "Name": n, "Type": "Genre"} for n in names], "TotalRecordCount": len(names)})
         if path == f"/Users/{USER}/Views":
             return self.send_json({"Items": cat.views, "TotalRecordCount": len(cat.views)})
+        # 为你推荐 and the home hero's 建议 · 推荐 (read-only; --no-suggestions or a server's own setting
+        # answers 404 like a fork without these endpoints, "empty" answers nothing).
+        mode = getattr(cat, "suggestions", OPTS.get("suggestions", "on"))
+        if len(parts) == 3 and parts[0] == "Items" and parts[2] == "Similar":
+            res = similar_items(cat, parts[1], int(q.get("Limit") or 12))
+            if res is None:
+                return self.send_json({}, 404)
+            keep = "MediaSources" in (q.get("Fields") or "")
+            print(f"  SIMILAR {parts[1]} -> {len(res)}", flush=True)
+            return self.send_json({"Items": [brief(x, keep_sources=keep) for x in res], "TotalRecordCount": len(res)})
+        if path == f"/Users/{USER}/Suggestions" or path == "/Movies/Recommendations":
+            if mode == "404":
+                print(f"  [{cat.name}] no {path} on this server -> 404", flush=True)
+                return self.send_json({"error": "not found"}, 404)
+            if path == "/Movies/Recommendations":
+                cats = [] if mode == "empty" else movie_recommendations(cat, q)
+                print(f"  RECOMMENDATIONS -> {len(cats)} categories", flush=True)
+                return self.send_json(cats)
+            res = [] if mode == "empty" else suggested_items(cat, q)
+            print(f"  SUGGESTIONS -> {len(res)}", flush=True)
+            out = page_of([brief(x) for x in res], q)
+            if q.get("EnableTotalRecordCount") == "false":
+                out["TotalRecordCount"] = 0
+            return self.send_json(out)
         if path == f"/Users/{USER}/Items/Resume":
             res = [d for d in cat.items.values() if d["UserData"].get("PlaybackPositionTicks")]
             res.sort(key=lambda d: d["UserData"].get("LastPlayedDate", ""), reverse=True)
@@ -964,11 +1143,17 @@ def main():
     ap.add_argument("--logo-delay", type=float, default=0, help="answer Logo images only after this many seconds (title text shows meanwhile)")
     ap.add_argument("--dark-logo", action="store_true", help="the first film's Logo is drawn in black on transparent (zmby lightens it)")
     ap.add_argument("--broken-logos", action="store_true", help="Logo images answer 404 although ImageTags.Logo is set")
+    ap.add_argument("--many-tracks", action="store_true", help="give dune2-remux 25 audio tracks and 60 subtitles for bounded-list checks")
     ap.add_argument("--official-only", action="store_true",
                     help="answer only official Emby clients (User-Agent and client name), 403 HTML page for anything else")
+    ap.add_argument("--suggestions", choices=("on", "404", "empty"), default="on",
+                    help="Suggestions and Movies/Recommendations on 家里 NAS: answered, missing (404) or empty")
     ap.add_argument("--multi", action="store_true",
                     help="also run five more servers that disagree with this one, on --port+2 … --port+6 (see MULTI below)")
     a = ap.parse_args()
+    if a.many_tracks:
+        DUNE_STREAMS.extend(audio(100 + i, ("eng", "chi", "jpn", "fra")[i % 4], "aac", ch=2, title=f"测试音轨 {i + 6}") for i in range(20))
+        DUNE_STREAMS.extend(sub(200 + i, ("chi", "eng", "jpn", "fra")[i % 4], "subrip", f"测试字幕 {i + 9}") for i in range(52))
     global VIDEO
     VIDEO = a.video
     OPTS["direct_stream_url"] = not a.no_direct_stream_url
@@ -978,6 +1163,7 @@ def main():
     MAIN.pinyin = a.pinyin
     MAIN.official_only = a.official_only
     OPTS.update(logo_delay=a.logo_delay, broken_logos=a.broken_logos, dark_logo=a.dark_logo)
+    MAIN.suggestions = a.suggestions
 
     def serve(host, port, handler, cat):
         srv = ThreadingHTTPServer((host, port), handler)
@@ -996,6 +1182,8 @@ def main():
                             (4, Catalog("公益服 B", "mock-pub-b", build_public_b(), TWO_LIBS[:1], hang=25)),
                             (5, Catalog("无 ID 服", "mock-noid", build_noid(), TWO_LIBS[:1])),
                             (6, Catalog("严格服", "mock-strict", ITEMS, VIEWS, official_only=True))):
+            # 公益服 A is a fork without Suggestions and Movies/Recommendations; 无 ID 服 has nothing to suggest.
+            cat.suggestions = {"公益服 A": "404", "无 ID 服": "empty"}.get(cat.name, "on")
             servers.append(serve("0.0.0.0", a.port + offset, Emby, cat))
             print(f"mock emby {cat.name!r} on :{a.port + offset}", flush=True)
     for s in servers[1:]:

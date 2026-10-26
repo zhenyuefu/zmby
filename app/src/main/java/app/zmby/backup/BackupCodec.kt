@@ -112,13 +112,16 @@ object BackupCodec {
 
 @Serializable
 enum class RestoreMode { Merge, Replace }
+/** What restoring one backed-up server does; the wording lives with the UI ([app.zmby.data.label]). */
 @Serializable
-data class RestoreRow(val incoming: BackupServer, val existingId: String?, val action: String, val needsLogin: Boolean = false)
+enum class RestoreAction { Add, UpdateLines, Same }
+@Serializable
+data class RestoreRow(val incoming: BackupServer, val existingId: String?, val action: RestoreAction, val needsLogin: Boolean = false)
 @Serializable
 data class RestorePlan(val rows: List<RestoreRow>) {
-    val added get() = rows.count { it.action == "新增" }
-    val updated get() = rows.count { it.action == "更新线路" }
-    val skipped get() = rows.count { it.action == "相同跳过" }
+    val added get() = rows.count { it.action == RestoreAction.Add }
+    val updated get() = rows.count { it.action == RestoreAction.UpdateLines }
+    val skipped get() = rows.count { it.action == RestoreAction.Same }
 }
 
 object RestorePlanner {
@@ -138,9 +141,9 @@ object RestorePlanner {
                 ?: existing.firstOrNull { it.id !in used && (c.userId.isBlank() || c.userId == it.userId) && it.lines.any { a -> c.lines.any { b -> a.url.trimEnd('/').equals(b.url.trimEnd('/'), true) } } }
             same?.let { used += it.id }
             RestoreRow(row, same?.id, when {
-                same == null -> "新增"
-                c.lines.any { b -> same.lines.none { a -> a.url.trimEnd('/').equals(b.url.trimEnd('/'), true) } } -> "更新线路"
-                else -> "相同跳过"
+                same == null -> RestoreAction.Add
+                c.lines.any { b -> same.lines.none { a -> a.url.trimEnd('/').equals(b.url.trimEnd('/'), true) } } -> RestoreAction.UpdateLines
+                else -> RestoreAction.Same
             }, needsLogin = if(same == null) c.token.isBlank() else same.needsLogin && c.token.isBlank())
         })
     }

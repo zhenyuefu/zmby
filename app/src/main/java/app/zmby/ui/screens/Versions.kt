@@ -1,9 +1,11 @@
 package app.zmby.ui.screens
 
+import androidx.compose.runtime.mutableIntStateOf
 import app.zmby.data.SourceFeature
 import app.zmby.ui.userMessage
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -12,10 +14,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -40,6 +47,12 @@ import app.zmby.log.ZLog
 import kotlinx.coroutines.android.awaitFrame
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,6 +80,7 @@ import app.zmby.media.versionTitle
 import app.zmby.playback.TrackChoice
 import app.zmby.playback.TrackPreference
 import app.zmby.ui.Nav
+import app.zmby.ui.LocalNavEntry
 import app.zmby.ui.components.BackdropLayer
 import app.zmby.ui.components.BackdropProvider
 import app.zmby.ui.components.Badge
@@ -88,6 +102,8 @@ import app.zmby.ui.rememberInitialFocus
 import app.zmby.ui.rememberResumeTick
 import app.zmby.ui.rememberRetained
 import app.zmby.ui.resumeMsOf
+import app.zmby.ui.theme.detailCardScrollBoundary
+import app.zmby.ui.theme.detailCardScrollSpec
 import app.zmby.ui.theme.Mono
 import app.zmby.ui.theme.Z
 import app.zmby.zidoo.ZidooIntents
@@ -105,9 +121,12 @@ import app.zmby.ui.components.Health
 
 /** One playable version: a media source of an item on a server. */
 data class Version(val server: ServerStatus, val item: BaseItemDto, val source: MediaSourceInfo) {
+    val key: String get() = "${server.id}:${item.id}:${source.id}"
     val tier: QualityTier get() = qualityTier(source)
     val ref: ServerItem get() = ServerItem(server.id, item)
 }
+
+internal fun uniqueVersions(versions: List<Version>): List<Version> = versions.distinctBy { it.key }
 
 /** One server's card in 版本: only servers that have a playable version get one. */
 data class VersionGroup(
@@ -136,7 +155,7 @@ class VersionsState(
     /** The versions to fall back on when [chosen] (null: the default) fails to start. */
     fun alternatesTo(chosen: Version?): List<app.zmby.playback.Alternate> {
         val first = chosen ?: default
-        return ordered.filter { first == null || it.server.id != first.server.id || it.source.id != first.source.id }
+        return ordered.filter { first == null || it.key != first.key }
             .take(MAX_ALTERNATES)
             .map { app.zmby.playback.Alternate(it.server.id, it.item, it.source.id, "${it.server.name} · ${versionTitle(it.source)}") }
     }
@@ -164,7 +183,7 @@ internal fun rememberVersions(
     val app = LocalContext.current.zmby
     val servers by app.registry.servers.collectAsState()
     var found by remember(server, item.id) { mutableStateOf<Map<String, ServerVersions>>(emptyMap()) }
-    var retry by remember(server, item.id) { mutableStateOf(0) }
+    var retry by remember(server, item.id) { mutableIntStateOf(0) }
     val self = servers.firstOrNull { it.id == server }
     // 设置 › 数据来源 › 资源聚合: the servers asked for other versions (the open one is its own card).
     val sourceRows by app.sources.rows.collectAsState()
@@ -238,13 +257,13 @@ internal fun versionCards(
 ): Pair<List<VersionGroup>, List<String>> {
     val groups = mutableListOf<VersionGroup>()
     if (self != null && item.mediaSources.isNotEmpty()) {
-        groups += VersionGroup(self, item.mediaSources.sortedWith(versionOrder).map { Version(self, item, it) }, "当前服务器")
+        groups += VersionGroup(self, uniqueVersions(item.mediaSources.sortedWith(versionOrder).map { Version(self, item, it) }), "当前服务器")
     }
     val unresponsive = mutableListOf<String>()
     fun card(s: ServerStatus, r: ServerVersions.Found) {
         if (r.sources.isEmpty()) return
         val note = r.verdict.reason + if (r.verdict.confidence == Confidence.Possible) " · 可能匹配" else ""
-        groups += VersionGroup(s, r.sources.sortedWith(versionOrder).map { Version(s, r.item, it) }, note)
+        groups += VersionGroup(s, uniqueVersions(r.sources.sortedWith(versionOrder).map { Version(s, r.item, it) }), note)
     }
     for (s in others) {
         when (val r = results[s.id]) {
@@ -279,6 +298,8 @@ internal fun VersionSection(
     onPlay: (Version) -> Unit,
     /** Where Down from the cards goes (the first track row), once the cards below show the selected version again. */
     downTarget: FocusRequester? = null,
+    /** The block's default element (ui-spec §2.14): the selected version's row, else the first shown. */
+    entry: FocusRequester? = null,
 ) {
     val app = LocalContext.current.zmby
     val scope = rememberCoroutineScope()
@@ -288,7 +309,7 @@ internal fun VersionSection(
     if (tier !in tiers && tiers.isNotEmpty()) tier = tiers.first()
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Row(Modifier.padding(horizontal = 80.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RowTitle("版本")
+            RowTitle("版本", trailing = "长按 ↑↓ 切换栏")
             if (tiers.isNotEmpty()) {
                 SegmentedWell(
                     items = tiers.map { t -> Segment(t.label, versions.count { it.tier == t }.toString()) },
@@ -306,9 +327,22 @@ internal fun VersionSection(
         }
         // One card per server, in server order; versions on the same server stack inside it.
         val cards = state.groups.mapNotNull { g -> g.copy(versions = g.versions.filter { it.tier == tier }).takeIf { it.versions.isNotEmpty() } }
+        val selectedGroup = cards.indexOfFirst { g -> g.versions.any { it.key == selected?.key } }.coerceAtLeast(0)
+        val cardScroll = rememberRetained("versionCardsScroll", tier) { LazyListState(selectedGroup) }
+        var cardsFocused by remember { mutableStateOf(false) }
+        val focusMemory = LocalNavEntry.current?.focus
+        LaunchedEffect(cards.map { it.server.id }, selectedGroup) {
+            if (cards.isNotEmpty() && !cardsFocused && focusMemory?.restorePending != true &&
+                cardScroll.layoutInfo.visibleItemsInfo.none { it.index == selectedGroup }) {
+                // A hand-picked version can belong to the last server, outside the composed row.
+                // Compose that card before its entry requester is used by the section handoff.
+                cardScroll.scrollToItem(selectedGroup)
+            }
+        }
         LazyRow(
+            state = cardScroll,
             modifier = Modifier
-                .onFocusChanged { if (!it.hasFocus) onPreview(null) }
+                .onFocusChanged { cardsFocused = it.hasFocus; if (!it.hasFocus) onPreview(null) }
                 .focusProperties {
                     onExit = {
                         when (requestedFocusDirection) {
@@ -332,28 +366,31 @@ internal fun VersionSection(
             horizontalArrangement = Arrangement.spacedBy(24.dp),
             verticalAlignment = Alignment.Top,
         ) {
+            val entryVersion = cards.flatMap { it.versions }.let { shown -> shown.firstOrNull { it.key == selected?.key } ?: shown.firstOrNull() }
             items(cards, key = { it.server.id }, contentType = { "server" }) { group ->
                 ServerVersionCard(
                     group,
-                    isDefault = { it == state.default },
-                    isSelected = { it == selected },
+                    entry = entry?.takeIf { entryVersion != null && entryVersion in group.versions }?.let { r -> { v: Version -> if (v == entryVersion) r else null } },
+                    isDefault = { it.key == state.default?.key },
+                    isSelected = { it.key == selected?.key },
                     onFocusVersion = { v -> onPreview(v) },
-                    onClick = { v -> if (v == selected) onPlay(v) else onSelect(v) },
+                    onClick = { v -> if (v.key == selected?.key) onPlay(v) else onSelect(v) },
                     onLine = { lineId -> app.registry.selectLine(group.server.id, lineId) },
-                    modifier = Modifier.width(CARD_WIDTH),
+                    modifier = Modifier.width(CARD_WIDTH).height(560.dp),
                 )
             }
         }
     }
 }
 
-private val CARD_WIDTH = 570.dp
+private val CARD_WIDTH = 560.dp
 private val CardShape = RoundedCornerShape(28.dp)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ServerVersionCard(
     group: VersionGroup,
+    entry: ((Version) -> FocusRequester?)?,
     isDefault: (Version) -> Boolean,
     isSelected: (Version) -> Boolean,
     onFocusVersion: (Version) -> Unit,
@@ -383,33 +420,52 @@ private fun ServerVersionCard(
             focusKeyPrefix = "line:${server.id}",
             modifier = Modifier.fillMaxWidth(),
         )
-        group.versions.forEach { v ->
-            SelectableRow(
-                onClick = { onClick(v) },
-                tile = true,
-                selected = isSelected(v),
-                padding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
-                onFocus = { onFocusVersion(v) },
-                label = "${server.name} ${versionTitle(v.source)}",
-                focusKey = "version:${server.id}:${v.source.id}",
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(versionTitle(v.source), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                            if (isDefault(v)) Badge("默认", fill = true)
-                            if (isDiscImage(v.source)) Badge("原盘 ISO", fill = true)
-                        }
-                        formatSize(v.source.size)?.let { Text(it, fontSize = 17.sp, color = secondaryText()) }
-                    }
-                    val badges = versionBadges(v.source)
-                    if (badges.isNotEmpty()) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            badges.forEach { Badge(it) }
+        val selectedIndex = group.versions.indexOfFirst(isSelected).coerceAtLeast(0)
+        val rows = rememberRetained("versionRows:${server.id}") { LazyListState(selectedIndex) }
+        var rowsFocused by remember { mutableStateOf(false) }
+        LaunchedEffect(group.versions.map { it.key }, selectedIndex) {
+            if (!rowsFocused && rows.layoutInfo.visibleItemsInfo.none { it.index == selectedIndex }) rows.scrollToItem(selectedIndex)
+        }
+        Box(Modifier.weight(1f).fillMaxWidth().nestedScroll(detailCardScrollBoundary)) {
+            @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides detailCardScrollSpec) {
+                LazyColumn(state = rows, modifier = Modifier.fillMaxSize().padding(end = 12.dp)
+                    .onFocusChanged { rowsFocused = it.hasFocus }
+                    .focusProperties { onExit = { if (requestedFocusDirection == FocusDirection.Down) cancelFocusChange() } }
+                    .focusGroup(), contentPadding = PaddingValues(4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(group.versions, key = { it.key }, contentType = { "version" }) { v ->
+                        SelectableRow(
+                            onClick = { onClick(v) },
+                            modifier = entry?.invoke(v)?.let { Modifier.focusRequester(it) } ?: Modifier,
+                            tile = true,
+                            selected = isSelected(v),
+                            padding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+                            onFocus = { onFocusVersion(v) },
+                            label = "${server.name} ${versionTitle(v.source)}",
+                            focusKey = "version:${v.key}",
+                            animateFocus = true,
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text(versionTitle(v.source), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                                        if (isDefault(v)) Badge("默认", fill = true)
+                                        if (isDiscImage(v.source)) Badge("原盘 ISO", fill = true)
+                                    }
+                                    formatSize(v.source.size)?.let { Text(it, fontSize = 17.sp, color = secondaryText()) }
+                                }
+                                val badges = remember(v.source) { versionBadges(v.source) }
+                                if (badges.isNotEmpty()) {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        badges.forEach { Badge(it) }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+            ListScrollIndicator(rows)
         }
     }
 }
@@ -429,46 +485,81 @@ internal fun ServerCardHead(server: ServerStatus, trailing: String, note: String
     }
 }
 
-/** 音轨与字幕: audio, subtitle and file cards for one version (columns 1 : 1 : 1.2). */
+/** The tracks that will play for a version, and the external subtitles the player cannot show. */
+data class EffectiveTracks(val audio: Int?, val subtitle: Int?, val unusable: Set<Int>)
+
+/**
+ * What will play: the pick, else the language preference, else the server's default for this user,
+ * else the file's default track (the preparer applies the same TrackPreference).
+ */
 @Composable
-internal fun TrackSection(v: Version, chapters: Int, runtimeTicks: Long?, choice: TrackChoice, entry: FocusRequester? = null, onChoice: (TrackChoice) -> Unit) {
+internal fun rememberEffectiveTracks(v: Version, choice: TrackChoice): EffectiveTracks {
     val context = LocalContext.current
     // com.zidoo.player gets an external subtitle as a downloaded file, which works for SRT/ASS/SSA only.
     val player = remember { ZidooIntents.installedPlayer(context) }
-    val unusable = remember(v.source.id, player) {
+    val unusable = remember(v.source, player) {
         v.source.subtitleStreams.filter { it.isExternal && player?.supportsExternal(it.codec) == false }.map { it.index }.toSet()
     }
-    val audio = audioRows(v.source)
-    val subs = subtitleRows(v.source)
-    val probed = isProbed(v.source)
-    // What will play: the pick, else the language preference, else the server's default for this
-    // user, else the file's default track (the preparer applies the same TrackPreference).
-    val settings = LocalContext.current.zmby.settings
+    val settings = context.zmby.settings
     val audioLanguage by settings.audioLanguage.flow.collectAsState()
     val subtitleLanguage by settings.subtitleLanguage.flow.collectAsState()
-    val effective = TrackPreference.choose(v.source, choice, audioLanguage, subtitleLanguage)
+    val audio = remember(v.source) { audioRows(v.source) }
+    val effective = remember(v.source, choice, audioLanguage, subtitleLanguage) {
+        TrackPreference.choose(v.source, choice, audioLanguage, subtitleLanguage)
+    }
     val audioOn = effective.audio ?: v.source.defaultAudioStreamIndex ?: audio.firstOrNull { it.tag == "默认" }?.embyIndex ?: audio.firstOrNull()?.embyIndex
     val subOn = (effective.subtitle ?: v.source.defaultSubtitleStreamIndex?.takeIf { it >= 0 } ?: ZidooTracks.SUBTITLE_OFF)
         .takeIf { idx -> idx !in unusable }
-    val subRows = if (subs.isEmpty()) subs else listOf(TrackRow(0, "关闭", "", null, ZidooTracks.SUBTITLE_OFF)) + subs
+    return EffectiveTracks(audioOn, subOn, unusable)
+}
+
+/** 音轨与字幕: audio, subtitle and file cards for one version (columns 1 : 1 : 1.2). */
+@Composable
+internal fun TrackSection(v: Version, chapters: Int, runtimeTicks: Long?, choice: TrackChoice, entry: FocusRequester? = null, onChoice: (TrackChoice) -> Unit) {
+    val tracks = rememberEffectiveTracks(v, choice)
+    val unusable = tracks.unusable
+    val audio = remember(v.source) { audioRows(v.source) }
+    val subs = remember(v.source) { subtitleRows(v.source) }
+    val probed = isProbed(v.source)
+    val audioOn = tracks.audio
+    val subOn = tracks.subtitle
+    val subRows = remember(subs) { if (subs.isEmpty()) subs else listOf(TrackRow(0, "关闭", "", null, ZidooTracks.SUBTITLE_OFF)) + subs }
+    val file = remember(v.source, chapters, runtimeTicks, v.server.name, v.server.lineName) {
+        fileRows(v.source, chapters, runtimeTicks) + KeyValue("服务器", "${v.server.name} · ${v.server.lineName}")
+    }
     Column(Modifier.padding(horizontal = 80.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        RowTitle("音轨与字幕")
-        Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.Top) {
-            Column(Modifier.weight(1f).groupCard(CardShape).padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                TrackList("音轨", audio, twoLine = true, probed = probed, selected = audioOn, keyPrefix = "audio:${v.source.id}", entry = entry) { r ->
+        RowTitle("音轨与字幕", trailing = "长按 ↓ 下一栏 · 长按 ↑ 上一栏")
+        // Measure the file card once, then give both lazy track lists exactly that height.
+        // Intrinsic sizing cannot be used with lazy lists, and measuring all tracks defeats laziness.
+        Layout(modifier = Modifier.fillMaxWidth(), content = {
+            Column(Modifier.groupCard(CardShape).padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                TrackList("音轨", audio, twoLine = true, probed = probed, selected = audioOn, keyPrefix = "audio:${v.key}", entry = entry) { r ->
                     onChoice(choice.copy(audio = r.embyIndex))
                 }
             }
-            Column(Modifier.weight(1f).groupCard(CardShape).padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                TrackList("字幕", subRows, twoLine = false, probed = probed, selected = subOn, keyPrefix = "sub:${v.source.id}", unusable = unusable, entry = entry.takeIf { audio.isEmpty() }) { r ->
+            Column(Modifier.groupCard(CardShape).padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                TrackList("字幕", subRows, twoLine = false, probed = probed, selected = subOn, keyPrefix = "sub:${v.key}", unusable = unusable, entry = entry.takeIf { audio.isEmpty() }) { r ->
                     onChoice(choice.copy(subtitle = r.embyIndex))
                 }
             }
             FileCard(
                 v,
-                fileRows(v.source, chapters, runtimeTicks) + KeyValue("服务器", "${v.server.name} · ${v.server.lineName}"),
-                Modifier.weight(1.2f).then(if (entry != null && audio.isEmpty() && subRows.isEmpty()) Modifier.focusRequester(entry) else Modifier),
+                file,
+                if (entry != null && audio.isEmpty() && subRows.isEmpty()) Modifier.focusRequester(entry) else Modifier,
             )
+        }) { measurables, constraints ->
+            val gap = 24.dp.roundToPx()
+            val trackWidth = ((constraints.maxWidth - gap * 2) / 3.2f).toInt()
+            val fileWidth = constraints.maxWidth - gap * 2 - trackWidth * 2
+            val fileCard = measurables[2].measure(Constraints.fixedWidth(fileWidth))
+            val trackConstraints = Constraints.fixed(trackWidth, fileCard.height)
+            val audioCard = measurables[0].measure(trackConstraints)
+            val subtitleCard = measurables[1].measure(trackConstraints)
+            layout(constraints.maxWidth, fileCard.height) {
+                audioCard.placeRelative(0, 0)
+                subtitleCard.placeRelative(trackWidth + gap, 0)
+                fileCard.placeRelative((trackWidth + gap) * 2, 0)
+            }
         }
     }
 }
@@ -479,11 +570,11 @@ private fun FileCard(v: Version, rows: List<KeyValue>, modifier: Modifier) {
     Focusable({}, modifier, shape = CardShape, focusedScale = 1f, outline = 3.dp, shadow = 0.dp, label = "文件信息") {
         Column(Modifier.fillMaxWidth().groupCard(CardShape).padding(28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("文件", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            v.source.fileName?.let { Text(it, fontSize = 17.sp, lineHeight = 25.sp, fontFamily = Mono) }
+            v.source.fileName?.let { Text(it, fontSize = 17.sp, lineHeight = 25.sp, fontFamily = Mono, maxLines = 3, overflow = TextOverflow.Ellipsis) }
             rows.forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(row.key, fontSize = 19.sp, color = Z.textTertiary, modifier = Modifier.width(110.dp))
-                    Text(row.value, fontSize = 19.sp, lineHeight = 27.sp)
+                    Text(row.value, fontSize = 19.sp, lineHeight = 27.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -492,7 +583,7 @@ private fun FileCard(v: Version, rows: List<KeyValue>, modifier: Modifier) {
 
 /** Audio or subtitle tracks; picking a row decides what the player starts with (audio_idx / subtitle_idx). */
 @Composable
-private fun TrackList(
+private fun androidx.compose.foundation.layout.ColumnScope.TrackList(
     title: String,
     rows: List<TrackRow>,
     twoLine: Boolean,
@@ -505,32 +596,67 @@ private fun TrackList(
     entry: FocusRequester? = null,
     onPick: (TrackRow) -> Unit,
 ) {
-    Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp))
+    Text("$title · ${rows.count { it.embyIndex != ZidooTracks.SUBTITLE_OFF }}", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp))
     if (rows.isEmpty()) {
         Text(if (probed) "无" else "服务器尚未探测", fontSize = 19.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 16.dp))
     }
-    rows.forEachIndexed { i, r ->
-        val usable = r.embyIndex !in unusable
-        SelectableRow(
-            { if (usable) onPick(r) },
-            modifier = if (i == 0 && entry != null) Modifier.focusRequester(entry) else Modifier,
-            selected = r.embyIndex == selected,
-            dimmed = !usable,
-            padding = PaddingValues(horizontal = 16.dp, vertical = if (twoLine) 12.dp else 10.dp),
-            label = "$title ${r.number} ${r.language}",
-            focusKey = "$keyPrefix:${r.embyIndex}",
-        ) {
-            val tag = if (usable) r.tag else "外挂 · 此格式暂不支持"
-            val format = listOfNotNull(r.format.ifEmpty { null }, tag).joinToString(" · ")
-            if (twoLine) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(r.language, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    if (format.isNotEmpty()) Text(format, fontSize = 17.sp, color = secondaryText(), maxLines = 2)
+    // The block's default element is the current track (ui-spec §2.14), else the first.
+    val lastFocused = rememberRetained("trackFocus:$keyPrefix") { mutableStateOf<Int?>(null) }
+    val entryIndex = rows.indexOfFirst { it.embyIndex == (lastFocused.value ?: selected) }.coerceAtLeast(0)
+    val state = rememberRetained("trackScroll:$keyPrefix") { LazyListState(entryIndex) }
+    Box(Modifier.weight(1f).fillMaxWidth().nestedScroll(detailCardScrollBoundary)) {
+        @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides detailCardScrollSpec) {
+            LazyColumn(state = state, modifier = Modifier.fillMaxSize().padding(end = 12.dp)
+                .focusProperties { onExit = {
+                    if (requestedFocusDirection == FocusDirection.Up || requestedFocusDirection == FocusDirection.Down) cancelFocusChange()
+                } }.focusGroup(), contentPadding = PaddingValues(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(rows, key = { "$keyPrefix:${it.embyIndex}" }, contentType = { if (twoLine) "audio" else "subtitle" }) { r ->
+                    val usable = r.embyIndex !in unusable
+                    SelectableRow(
+                        { if (usable) onPick(r) },
+                        modifier = if (r == rows.getOrNull(entryIndex) && entry != null) Modifier.focusRequester(entry) else Modifier,
+                        onFocus = { lastFocused.value = r.embyIndex },
+                        selected = r.embyIndex == selected,
+                        dimmed = !usable,
+                        padding = PaddingValues(horizontal = 16.dp, vertical = if (twoLine) 12.dp else 10.dp),
+                        label = "$title ${r.number} ${r.language}",
+                        focusKey = "$keyPrefix:${r.embyIndex}",
+                        animateFocus = true,
+                    ) {
+                        val tag = if (usable) r.tag else "外挂 · 此格式暂不支持"
+                        val format = listOfNotNull(r.format.ifEmpty { null }, tag).joinToString(" · ")
+                        if (twoLine) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(r.language, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                if (format.isNotEmpty()) Text(format, fontSize = 17.sp, color = secondaryText(), maxLines = 2)
+                            }
+                        } else {
+                            Text(r.language, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            if (format.isNotEmpty()) Text(format, fontSize = 17.sp, color = secondaryText(), maxLines = 1)
+                        }
+                    }
                 }
-            } else {
-                Text(r.language, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                if (format.isNotEmpty()) Text(format, fontSize = 17.sp, color = secondaryText(), maxLines = 1)
             }
         }
+        ListScrollIndicator(state)
     }
+}
+
+@Composable
+private fun BoxScope.ListScrollIndicator(state: LazyListState) {
+    // Read scroll position during drawing, without recomposing the cards on every scroll frame.
+    Box(Modifier.align(Alignment.CenterEnd).width(4.dp).fillMaxHeight().drawBehind {
+        val info = state.layoutInfo
+        if (!state.canScrollBackward && !state.canScrollForward) return@drawBehind
+        val visible = info.visibleItemsInfo
+        val first = visible.firstOrNull() ?: return@drawBehind
+        val total = info.totalItemsCount.toFloat().coerceAtLeast(1f)
+        val viewport = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
+        val itemSize = (visible.sumOf { it.size } / visible.size.toFloat() + info.mainAxisItemSpacing).coerceAtLeast(1f)
+        val thumb = (size.height * viewport / (total * itemSize)).coerceIn(24.dp.toPx().coerceAtMost(size.height), size.height)
+        val progress = (first.index + (info.viewportStartOffset - first.offset) / itemSize) / (total - viewport / itemSize).coerceAtLeast(1f)
+        drawRoundRect(Color.White.copy(alpha = 0.12f), cornerRadius = CornerRadius(size.width))
+        drawRoundRect(Color.White.copy(alpha = 0.6f), topLeft = Offset(0f, (size.height - thumb) * progress.coerceIn(0f, 1f)), size = Size(size.width, thumb), cornerRadius = CornerRadius(size.width))
+    })
 }

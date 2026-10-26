@@ -55,4 +55,21 @@ class TitlesTest {
         assertNull(fileTitle(null))
         assertNull(fileTitle("/"))
     }
+
+    @Test
+    fun episodeNamesThatOnlyRepeatTheNumberAreDropped() {
+        fun ep(name: String?, n: Int?) = BaseItemDto(id = "1", name = name, type = "Episode", indexNumber = n)
+        // 血谜拼图 on a real server: every episode is named 「第 n 集」.
+        assertNull(episodeName(ep("第 5 集", 5)))
+        assertNull(episodeName(ep("第05话", 5)))
+        assertNull(episodeName(ep("Episode 5", 5)))
+        assertNull(episodeName(ep("E05", 5)))
+        assertNull(episodeName(ep("5", 5)))
+        assertNull(episodeName(ep("  ", 5)))
+        assertEquals("在意外收到拼图后", episodeName(ep("在意外收到拼图后", 5)))
+        // A different number is real information (a recap numbered apart, a misnumbered file).
+        assertEquals("第 6 集", episodeName(ep("第 6 集", 5)))
+        assertEquals("Episode 5", episodeName(ep("Episode 5", null)))
+        assertEquals("Episode 5 Part 2", episodeName(ep("Episode 5 Part 2", 5)))
+    }
 }

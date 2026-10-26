@@ -42,7 +42,7 @@ internal fun CatalogRelated(nav: Nav, entry: CatalogWork?, fallback: ServerItem?
         val related by produceState<CatalogId?>(null, work.ref, aliases) {
             if (aliases && work.genres.any { it in setOf("动画", "動畫", "Animation", "アニメーション", "애니메이션") }) withContext(Dispatchers.IO) {
                 try {
-                    app.catalog.alias(work.item())?.let { row -> AnimeAliases.subject(row) }?.let { value = CatalogId("bangumi", work.ref.kind, it) }
+                    app.catalog.alias(work.item())?.let { value = CatalogId("bangumi", work.ref.kind, it) }
                 } catch (e: CancellationException) { throw e } catch (_: Exception) { }
             }
         }
@@ -139,7 +139,7 @@ fun CatalogRouteScreen(nav: Nav, route: Route.Catalog) {
 internal fun ServerCast(nav: Nav, ref: ServerItem) {
     val app = LocalContext.current.zmby
     val people = remember(ref.item.people) { ref.item.people.filter { it.id != null && !it.name.isNullOrBlank() && it.type in setOf("Actor", "Director", "Writer") }
-        .groupBy { it.id }.values.map { it.first().copy(role = it.mapNotNull { p -> p.role ?: p.type }.distinct().joinToString(" / ")) } }
+        .groupBy { it.id }.values.map { it.first().copy(role = it.mapNotNull { p -> p.role ?: p.type }.distinct().joinToString(" · ")) } }
     if (people.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Text("演职人员", fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 80.dp))

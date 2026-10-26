@@ -45,7 +45,7 @@ import kotlinx.coroutines.withContext
  * The zmby mark (ui-spec §2.7): three rounded tiles stacked diagonally (many servers) ending in the
  * white front tile with a play triangle (one-press play). viewBox 64: tiles 38×38, radius 12,
  * offset 9; opacity 28 % / 55 % / 100 %; triangle M36 33v16l13-8z. [light] is the variant for light
- * backgrounds. Same geometry as res/drawable/ic_zmby_mark.xml.
+ * backgrounds. Shares the launcher mark geometry.
  */
 @Composable
 fun ZmbyMark(size: Dp, light: Boolean = false) {
@@ -64,7 +64,7 @@ fun ZmbyMark(size: Dp, light: Boolean = false) {
 
 /** Mark + `zmby` wordmark (Inter 800, letter spacing −1): 46 + 32 in the top bar. */
 @Composable
-fun ZmbyLogo(markSize: Dp = 46.dp, wordSize: Int = 32, modifier: Modifier = Modifier) {
+fun ZmbyLogo(modifier: Modifier = Modifier, markSize: Dp = 46.dp, wordSize: Int = 32) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(markSize * 14 / 46)) {
         ZmbyMark(markSize)
         Text("zmby", fontSize = wordSize.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp, color = Z.textPrimary)
@@ -84,7 +84,7 @@ fun ZmbyLogo(markSize: Dp = 46.dp, wordSize: Int = 32, modifier: Modifier = Modi
  * come from the server shows the text first.
  */
 @Composable
-fun TitleLogo(logoUrl: String?, title: String, maxWidth: Dp, maxHeight: Dp, modifier: Modifier = Modifier) {
+fun TitleLogo(logoUrl: String?, title: String, maxWidth: Dp, maxHeight: Dp, modifier: Modifier = Modifier, compact: Boolean = false) {
     val context = LocalContext.current
     val loader = context.imageLoader
     val density = LocalDensity.current
@@ -118,7 +118,7 @@ fun TitleLogo(logoUrl: String?, title: String, maxWidth: Dp, maxHeight: Dp, modi
         if (state == LogoState.Decoding) state = LogoState.Loading
     }
     Box(modifier, contentAlignment = Alignment.BottomStart) {
-        if (state == LogoState.None || state == LogoState.Loading) TextTitle(title)
+        if (state == LogoState.None || state == LogoState.Loading) TextTitle(title, compact)
         val box = Modifier.size(maxWidth, maxHeight)
         if (cached != null) {
             Image(remember(cached) { BitmapPainter(cached) }, title, box, Alignment.BottomStart, ContentScale.Fit)
@@ -143,16 +143,17 @@ private const val DECODE_GRACE_MS = 300L
 private enum class LogoState { None, Checking, Decoding, Loading, Loaded }
 
 @Composable
-private fun TextTitle(title: String) {
+private fun TextTitle(title: String, compact: Boolean = false) {
     Text(
         // Never blank (ui-spec §1.3): callers pass titleOf(…); this guards the rest.
         visibleText(title) ?: UNTITLED,
-        fontSize = 60.sp,
-        lineHeight = 67.sp,
-        fontWeight = FontWeight.Black,
+        // The compact detail header (ui-spec §2.14) uses 30/800 on one line.
+        fontSize = if (compact) 30.sp else 60.sp,
+        lineHeight = if (compact) 36.sp else 67.sp,
+        fontWeight = if (compact) FontWeight.ExtraBold else FontWeight.Black,
         letterSpacing = (-1).sp,
         color = Z.textPrimary,
-        maxLines = 2,
+        maxLines = if (compact) 1 else 2,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.widthIn(max = 860.dp),
     )

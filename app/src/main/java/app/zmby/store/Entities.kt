@@ -20,7 +20,7 @@ data class ImageRef(
     val height: Int? = null,
 )
 
-/** One work's merged metadata (MetaMerge), shared by all servers that have it. */
+/** Legacy: one work's merged server metadata. No longer written; kept for the schema (v3 cleared it). */
 @Entity(tableName = "work_meta", indices = [Index("accessed_at")])
 data class WorkMeta(
     @PrimaryKey @ColumnInfo(name = "work_key") val workKey: String,

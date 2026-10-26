@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,6 +36,7 @@ import app.zmby.favorites.WatchlistLogic
 import app.zmby.favorites.WatchlistSort
 import app.zmby.store.WatchlistRow
 import app.zmby.ui.Nav
+import app.zmby.ui.Route
 import app.zmby.ui.components.Health
 import app.zmby.ui.components.PosterCard2x3
 import app.zmby.ui.components.Segment
@@ -49,7 +53,7 @@ import kotlinx.coroutines.launch
  * The menu key on a card takes it off the list.
  */
 @Composable
-internal fun WatchlistGrid(nav: Nav) {
+internal fun WatchlistGrid(nav: Nav, search: FocusRequester, entry: FocusRequester) {
     val app = LocalContext.current.zmby
     val entries by app.watchlist.entries.collectAsStateWithLifecycle()
     val servers by app.registry.servers.collectAsStateWithLifecycle()
@@ -57,16 +61,18 @@ internal fun WatchlistGrid(nav: Nav) {
     val sort = WatchlistSort.entries[sortIndex]
     val shown = remember(entries, sort) { WatchlistLogic.sorted(entries, sort) }
     val scope = rememberCoroutineScope()
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+    PageHeader("待看", entries.size.takeIf { it > 0 }?.let { "$it 部" }, search) { nav.go(Route.Search) }
     if (entries.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("待看是空的", fontSize = 26.sp, color = Z.textSecondary) }
-        return
+        return@Column
     }
     LazyVerticalGrid(
-        columns = GridCells.FixedSize(196.dp),
-        modifier = Modifier.fillMaxSize().padding(top = 120.dp),
-        contentPadding = PaddingValues(start = 80.dp, end = 80.dp, top = 30.dp, bottom = 80.dp),
-        horizontalArrangement = Arrangement.spacedBy(28.dp),
-        verticalArrangement = Arrangement.spacedBy(36.dp),
+        columns = GridCells.FixedSize(240.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 80.dp, end = 80.dp, top = 32.dp, bottom = 80.dp),
+        horizontalArrangement = Arrangement.spacedBy(52.dp),
+        verticalArrangement = Arrangement.spacedBy(40.dp),
     ) {
         item(key = "sort", span = { GridItemSpan(maxLineSpan) }, contentType = "toolbar") {
             SegmentedWell(
@@ -76,10 +82,10 @@ internal fun WatchlistGrid(nav: Nav) {
                 fontSize = 21,
                 horizontalPadding = 24.dp,
                 labelPrefix = "待看排序",
-                modifier = Modifier.padding(bottom = 4.dp),
+                modifier = Modifier.padding(bottom = 4.dp).upToSearch(search),
             )
         }
-        items(shown, key = { it.workKey }, contentType = { "poster" }) { e ->
+        itemsIndexed(shown, key = { _, e -> e.workKey }, contentType = { _, _ -> "poster" }) { i, e ->
             val ref = watchlistRef(e, servers)
             PosterCard2x3(
                 imageUrl = ref?.let { app.library.primaryImage(it) },
@@ -87,10 +93,12 @@ internal fun WatchlistGrid(nav: Nav) {
                 onClick = { if (ref != null) nav.open(ref) },
                 topEnd = if (e.instances.size > 1) "${e.instances.size} 个版本" else null,
                 subtitle = listOfNotNull(if (e.type == "Series") "剧集" else "电影", e.year?.toString()).joinToString(" · "),
+                width = 240.dp,
                 focusKey = "watch:${e.workKey}",
-                modifier = Modifier.onMenuKey { if (ref != null) scope.launch { app.watchlist.toggle(ref) } },
+                modifier = Modifier.then(if (i == 0) Modifier.focusRequester(entry) else Modifier).onMenuKey { if (ref != null) scope.launch { app.watchlist.toggle(ref) } },
             )
         }
+    }
     }
 }
 

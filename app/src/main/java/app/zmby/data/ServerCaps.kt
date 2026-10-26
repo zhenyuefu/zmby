@@ -1,5 +1,6 @@
 package app.zmby.data
 
+import androidx.core.content.edit
 import android.content.Context
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -19,7 +20,7 @@ data class ServerCaps(
     /** The stream URL redirects to another host (302 cloud-drive server); null = not probed. */
     val redirects: Boolean? = null,
     val streamCheckedAt: Long = 0,
-    /** On = play through the local relay, Off = hand the server URL to the player, Auto = decide from [redirects]. */
+    /** On = play through the local relay, Off = hand the server URL to the player, Auto = direct first, with one relay retry after failure. */
     val relay: Override = Override.Auto,
     /** SearchTerm matches pinyin initials (a server-side plugin); null = unknown. */
     val pinyin: Boolean? = null,
@@ -67,7 +68,7 @@ class PrefsCapsStore(context: Context) : ServerCapsStore {
     override fun update(server: String, change: (ServerCaps) -> ServerCaps): ServerCaps {
         val next = change(get(server))
         cache[server] = next
-        Disk.write { prefs.edit().putString(server, json.encodeToString(ServerCaps.serializer(), next)).apply() }
+        Disk.write { prefs.edit { putString(server, json.encodeToString(ServerCaps.serializer(), next)) } }
         return next
     }
 }

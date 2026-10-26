@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import app.zmby.data.InputField
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -162,6 +163,9 @@ private fun Providers(rows: Map<String, DataSourceRow>) {
     }
     // PublicMetaDB needs the user's own key; the agent never types it.
     SettingsGroup("PublicMetaDB") {
+        var phone by remember { mutableStateOf(false) }
+        PhoneInputRow("密钥", if (key.isBlank()) "未设置" else "已设置") { phone = true }
+        if (phone) PhoneInputDialog(InputField.PublicMetaDbKey, onDismiss = { phone = false }, onRemote = { phone = false })
         Column(Modifier.padding(horizontal = 24.dp, vertical = 10.dp)) {
             var draft by remember(key) { mutableStateOf(key) }
             Field("密钥", draft, { draft = it }, KeyboardType.Ascii, placeholder = "未填写", secret = true, last = true, onSubmit = {

@@ -12,11 +12,12 @@ import app.zmby.log.ZLog
 import app.zmby.data.Override
 import app.zmby.data.ServerCapsStore
 import app.zmby.data.ServerCaps
-import app.zmby.emby.UaSetting
 import app.zmby.zidoo.ExternalSubtitle
 import app.zmby.zidoo.ZidooLaunchRequest
 import app.zmby.zidoo.ZidooTracks
 import app.zmby.zidoo.ZidooPlayer.SubtitleDelivery
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import app.zmby.zidoo.ZidooLaunchSpec
 import app.zmby.zidoo.buildZidooLaunch
@@ -82,6 +83,11 @@ data class PreparedPlayback(
     val local: LocalStrmSession? = null,
     /** The languages played, carried over to the next episode or another version. */
     val languages: TrackLanguages? = null,
+    /** Available only on the first automatic direct attempt. Captures this exact source and tracks. */
+    val retryWithRelay: (suspend (Long) -> PreparedPlayback)? = null,
+    val statusPaths: Set<String> = setOf(launch.uri),
+    /** Revokes this attempt's relay URL when the player has returned or launch failed. */
+    val releaseRelay: () -> Unit = {},
 )
 
 /** The user's track picks in Emby stream indexes; null = the server's default for this user. */
@@ -120,55 +126,79 @@ class PlaybackPreparer(
         val runTimeTicks = source.runTimeTicks ?: item.runTimeTicks
         val backdropTag = item.backdropImageTags.firstOrNull()
         val direct = StreamUrls.direct(session.baseUrl, source, session.accessToken)
-        val url = checkedUrl(session, direct ?: client.streamUrl(session, item.id, source, info.playSessionId), source.fileName)
-        val viaIntent = subtitles == SubtitleDelivery.IntentExtras
-        val (audioIdx, subtitleIdx) = ZidooTracks.choose(source, tracks.audio, tracks.subtitle, externalAllowed = viaIntent)
-        val externals = if (viaIntent) externalSubtitles(session, item, source) else emptyList()
-        ZLog.i(
-            TAG,
-            "source ${source.id} via ${if (direct != null) "DirectStreamUrl" else "/Videos/stream"}; " +
-                "tracks emby=$tracks default=(${source.defaultAudioStreamIndex},${source.defaultSubtitleStreamIndex}) -> zidoo audio=$audioIdx sub=$subtitleIdx; external subs=${externals.size}",
-        )
-        // An external subtitle for com.zidoo.player: the video URL (direct or relay, unchanged) goes
-        // into a local .strm next to the downloaded subtitle; subtitlePid replaces subtitle_idx.
-        val localSub = if (subtitles == SubtitleDelivery.LocalStrm && localStrm != null) {
-            ZidooTracks.wantedSubtitle(source, tracks.subtitle)?.let { idx -> source.mediaStreams.firstOrNull { it.index == idx && LocalStrm.supports(it) } }
-        } else null
-        val local = localSub?.let { stream ->
-            val subtitleUrl = StreamUrls.subtitle(session.baseUrl, item.id, source, stream, session.accessToken)
-                ?: throw SubtitlePrepareException("字幕没有下载地址")
-            val key = LocalStrm.sourceKey(session.serverId ?: session.capsKey, item.id, source.id)
-            localStrm!!.prepare(url, key, stream, subtitleUrl).also {
-                ZLog.i(TAG, "external subtitle ${stream.index} (${stream.codec}) -> ${it.subtitle.path}, pid ${it.subtitlePid}")
+        val directUrl = checkedUrl(session, direct ?: client.streamUrl(session, item.id, source, info.playSessionId))
+        val transport = caps.get(session.capsKey).relay
+        val retryUsed = java.util.concurrent.atomic.AtomicBoolean(false)
+        suspend fun build(relayed: Boolean, attemptStartMs: Long = startPositionMs): PreparedPlayback {
+            var relayUrl: String? = null
+            try {
+                if (relayed) withContext(Dispatchers.IO) {
+                    // Capture before returning to the caller so cancellation can still revoke it.
+                    relayUrl = requireNotNull(relay).register(directUrl, source.fileName, client.identity(session).userAgent)
+                }
+                val url = relayUrl ?: directUrl
+                val viaIntent = subtitles == SubtitleDelivery.IntentExtras
+                val (audioIdx, subtitleIdx) = ZidooTracks.choose(source, tracks.audio, tracks.subtitle, externalAllowed = viaIntent)
+                val externals = if (viaIntent) externalSubtitles(session, item, source) else emptyList()
+                ZLog.i(
+                    TAG,
+                    "source ${source.id} via ${if (direct != null) "DirectStreamUrl" else "/Videos/stream"}; " +
+                        "tracks emby=$tracks default=(${source.defaultAudioStreamIndex},${source.defaultSubtitleStreamIndex}) -> zidoo audio=$audioIdx sub=$subtitleIdx; external subs=${externals.size}",
+                )
+                // An external subtitle for com.zidoo.player: the video URL (direct or relay, unchanged) goes
+                // into a local .strm next to the downloaded subtitle; subtitlePid replaces subtitle_idx.
+                val localSub = if (subtitles == SubtitleDelivery.LocalStrm && localStrm != null) {
+                    ZidooTracks.wantedSubtitle(source, tracks.subtitle)?.let { idx -> source.mediaStreams.firstOrNull { it.index == idx && LocalStrm.supports(it) } }
+                } else null
+                val local = localSub?.let { stream ->
+                    val subtitleUrl = StreamUrls.subtitle(session.baseUrl, item.id, source, stream, session.accessToken)
+                        ?: throw SubtitlePrepareException("字幕没有下载地址")
+                    val key = LocalStrm.sourceKey(session.serverId ?: session.capsKey, item.id, source.id)
+                    localStrm!!.prepare(url, key, stream, subtitleUrl).also {
+                        ZLog.i(TAG, "external subtitle ${stream.index} (${stream.codec}) -> ${it.subtitle.path}, pid ${it.subtitlePid}")
+                    }
+                }
+                val launch = buildZidooLaunch(
+                    ZidooLaunchRequest(
+                        url = local?.uri ?: url,
+                        container = source.container,
+                        title = item.displayTitle,
+                        startPositionMs = attemptStartMs,
+                        loadingImageUrl = backdropTag?.let { client.imageUrl(session, item.id, "Backdrop", it, 1080) },
+                        clearLogoUrl = logoUrl(session, item),
+                        subtitleSearchTitle = subtitleSearchTitle(item),
+                        fileName = source.fileName,
+                        userAgent = client.identity(session).userAgent,
+                        audioIdx = audioIdx,
+                        subtitleIdx = subtitleIdx,
+                        externalSubtitles = externals,
+                        subtitlePid = local?.subtitlePid,
+                    ),
+                )
+                val reporter = EmbyPlaybackReporter(client, session, item.id, source.id, info.playSessionId, runTimeTicks)
+                val languages = TrackPreference.carried(source, tracks, audioLanguage, subtitleLanguage)
+                return PreparedPlayback(
+                    launch, reporter, attemptStartMs, runTimeTicks?.let(::ticksToMs), local, languages,
+                    retryWithRelay = if (!relayed && transport == Override.Auto && relay != null) ({ resumeMs ->
+                        check(retryUsed.compareAndSet(false, true)) { "Relay retry already used" }
+                        build(true, resumeMs)
+                    }) else null,
+                    statusPaths = setOfNotNull(url, local?.uri),
+                    releaseRelay = { relayUrl?.let { relay?.unregister(it) } },
+                )
+            } catch (e: Exception) {
+                relayUrl?.let { relay?.unregister(it) }
+                throw e
             }
         }
-        val launch = buildZidooLaunch(
-            ZidooLaunchRequest(
-                url = local?.uri ?: url,
-                container = source.container,
-                title = item.displayTitle,
-                startPositionMs = startPositionMs,
-                loadingImageUrl = backdropTag?.let { client.imageUrl(session, item.id, "Backdrop", it, 1080) },
-                clearLogoUrl = logoUrl(session, item),
-                subtitleSearchTitle = subtitleSearchTitle(item),
-                fileName = source.fileName,
-                userAgent = client.identity(session).userAgent,
-                audioIdx = audioIdx,
-                subtitleIdx = subtitleIdx,
-                externalSubtitles = externals,
-                subtitlePid = local?.subtitlePid,
-            ),
-        )
-        val reporter = EmbyPlaybackReporter(client, session, item.id, source.id, info.playSessionId, runTimeTicks)
-        val languages = TrackPreference.carried(source, tracks, audioLanguage, subtitleLanguage)
-        return PreparedPlayback(launch, reporter, startPositionMs, runTimeTicks?.let(::ticksToMs), local, languages)
+        return build(usesRelay(caps.get(session.capsKey)))
     }
 
     /**
      * Applies what is known about the server's streams, probing once per server (re-checked weekly):
      * the path prefix under which Range works. Only URLs on the server's own host are rewritten.
      */
-    private suspend fun checkedUrl(session: ServerSession, serverUrl: String, fileName: String?): String {
+    private suspend fun checkedUrl(session: ServerSession, serverUrl: String): String {
         var url = serverUrl
         val key = session.capsKey
         var known = caps.get(key)
@@ -185,9 +215,7 @@ class PlaybackPreparer(
         if (prefix != null && url.toHttpUrlOrNull()?.host == session.baseUrl.toHttpUrlOrNull()?.host && StreamUrls.prefixOf(url) != prefix) {
             url = StreamUrls.withPrefix(url, prefix)
         }
-        if (!usesRelay(known, session.ua) || relay == null) return url
-        ZLog.i(TAG, "server $key goes through the local relay (${known.relay}, redirects=${known.redirects}, identity ${session.ua.effective.label})")
-        return relay.register(url, fileName, client.identity(session).userAgent)
+        return url
     }
 
     /** The item's own Logo, or for an episode its series' logo; null when the server has none. */
@@ -212,25 +240,9 @@ class PlaybackPreparer(
         private const val TAG = "Play"
         private const val LOGO_HEIGHT = 360
 
-        /**
-         * Whether a server detected as 302 plays through [StreamRelay] by default. No: on the
-         * Z9X 8K (2026-10-24) com.zidoo.player requests the Emby URL again for every new connection
-         * (start, index read, seek), so it gets a fresh signature after the old one expired, and an
-         * open connection keeps reading past expiry. The relay stays available per server (设置 ›
-         * 取流方式 › 本地转发) for links bound to a User-Agent, which the player cannot send.
-         */
-        const val RELAY_REDIRECTING_SERVERS = false
+        /** Fixed choices are authoritative; automatic playback always starts direct. */
+        fun usesRelay(caps: ServerCaps): Boolean = caps.relay == Override.On
 
-        /**
-         * 取流方式: a fixed choice wins; 自动 relays a server that needs another identity than zmby
-         * (it very likely checks the User-Agent of streams too, and the player always sends
-         * `okhttp/4.11.0`), and a 302 server only if [RELAY_REDIRECTING_SERVERS].
-         */
-        fun usesRelay(caps: ServerCaps, ua: UaSetting): Boolean = when (caps.relay) {
-            Override.On -> true
-            Override.Off -> false
-            Override.Auto -> ua.needsRelay || (caps.redirects == true && RELAY_REDIRECTING_SERVERS)
-        }
     }
 }
 

@@ -57,6 +57,19 @@ fun titleOf(item: BaseItemDto): String =
 fun workTitleOf(item: BaseItemDto): String =
     if (item.type == "Episode" || item.type == "Season") visibleText(item.seriesName) ?: titleOf(item) else titleOf(item)
 
+/** An episode name that is only its number: 「第 5 集」, 「第05话」, "Episode 5", "E05", "5". */
+private val NUMBER_ONLY = Regex("""^(?:第\s*(\d+)\s*[集话話回]|(?:episode|ep|e)\s*\.?\s*(\d+)|(\d+))$""", RegexOption.IGNORE_CASE)
+
+/**
+ * An episode's own name for showing after 「第 n 集」, or null when it has none or the name only
+ * repeats that number (servers without metadata name episodes 「第 5 集」).
+ */
+fun episodeName(item: BaseItemDto): String? {
+    val name = visibleText(item.name) ?: return null
+    val number = NUMBER_ONLY.matchEntire(name)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toIntOrNull()
+    return name.takeUnless { number != null && number == item.indexNumber }
+}
+
 /** The first of [candidates] with something visible, else the item's own title. */
 fun titleOr(item: BaseItemDto, vararg candidates: String?): String =
     candidates.firstNotNullOfOrNull { visibleText(it) } ?: titleOf(item)

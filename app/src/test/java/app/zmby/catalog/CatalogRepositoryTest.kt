@@ -8,7 +8,79 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 
+/** Mimics Android's cursor window: a stored row over 2 MB cannot be read back. */
+class TooBigRowException : RuntimeException("Row too big to fit into CursorWindow")
+
 class CatalogRepositoryTest {
+    private class WindowLimitedCache : CatalogStorage {
+        val rows = mutableMapOf<String, CatalogCache>()
+        override suspend fun get(key: String) = rows[key]?.also { if (it.json.length > 2 * 1024 * 1024) throw TooBigRowException() }
+        override suspend fun put(row: CatalogCache) { rows[row.key] = row }
+        override suspend fun prune(before: Long) = Unit
+    }
+    /** A bangumi-data stand-in over 2 MB: many unrelated items and one real alias. */
+    private fun bigDataset(): String = buildString {
+        append("""{"siteMeta":{},"items":[""")
+        for (i in 1..30_000) append("""{"title":"填充条目$i","titleTranslate":{"zh-Hans":["Filler $i"]},"begin":"2001-01-01","sites":[{"site":"bangumi","id":"${100_000 + i}"}]},""")
+        append("""{"title":"原名","titleTranslate":{"zh-Hans":["长篇番剧"]},"begin":"2020-04-01","sites":[{"site":"bangumi","id":"424242"}]}]}""")
+    }
+    @Test fun `bangumi-data survives a restart from the private index without touching the cache`() = runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("catalog").toFile()
+        try {
+            MockWebServer().use { server ->
+                val data = bigDataset()
+                assertTrue(data.length > 2 * 1024 * 1024)
+                server.enqueue(MockResponse().setBody(data))
+                val dao = WindowLimitedCache()
+                val file = java.io.File(dir, "bangumi-data-index.txt")
+                val first = CatalogHttp(OkHttpClient(), dao, { "" }, animeIndexFile = file, animeEndpoints = listOf(server.url("/data.json").toString()))
+                assertEquals("424242", first.animeIndex().find(listOf("长篇番剧"), 2020))
+                assertTrue("the dataset never goes into the response cache", dao.rows.isEmpty())
+                assertTrue(file.length() < data.length / 2)
+                assertEquals(listOf("bangumi-data-index.txt"), dir.list()!!.toList())
+                // Restart: the CDN is down, the stored index still answers without a request.
+                server.enqueue(MockResponse().setResponseCode(503))
+                val again = CatalogHttp(OkHttpClient(), dao, { "" }, animeIndexFile = file, animeEndpoints = listOf(server.url("/data.json").toString()))
+                assertEquals("424242", again.animeIndex().find(listOf("原名"), null))
+                assertEquals(1, server.requestCount)
+                val repo = CatalogRepository(again, dao, { "zh-CN" }, { "zh-CN" }, { "zh-CN" }, { true })
+                assertEquals(CatalogId("bangumi", "tv", "424242"), repo.resolve(app.zmby.emby.BaseItemDto("x", name = "长篇番剧", type = "Series", productionYear = 2020)))
+            }
+        } finally { dir.deleteRecursively() }
+    }
+    @Test fun `an expired index is fetched again and a failed refresh keeps the stale one`() = runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("catalog").toFile()
+        try {
+            MockWebServer().use { server ->
+                var now = 0L
+                val file = java.io.File(dir, "index.txt")
+                server.enqueue(MockResponse().setBody("""[{"title":"A","sites":[{"site":"bangumi","id":"1"}]}]"""))
+                val api = CatalogHttp(OkHttpClient(), WindowLimitedCache(), { "" }, clock = { now }, animeIndexFile = file, animeEndpoints = listOf(server.url("/d").toString()))
+                assertEquals("1", api.animeIndex().find(listOf("A"), null))
+                now += CatalogHttp.ANIME_TTL
+                server.enqueue(MockResponse().setResponseCode(500))
+                assertEquals("1", api.animeIndex().find(listOf("A"), null))
+                // No second download attempt within the retry window.
+                assertEquals("1", api.animeIndex().find(listOf("A"), null))
+                assertEquals(2, server.requestCount)
+                now += CatalogHttp.ANIME_RETRY_MS
+                server.enqueue(MockResponse().setBody("""[{"title":"A","sites":[{"site":"bangumi","id":"2"}]}]"""))
+                assertEquals("2", api.animeIndex().find(listOf("A"), null))
+            }
+        } finally { dir.deleteRecursively() }
+    }
+    @Test fun `an unreadable cached row is a miss and the request still succeeds`() = runBlocking {
+        MockWebServer().use { server ->
+            val dao = WindowLimitedCache()
+            val api = CatalogHttp(OkHttpClient(), dao, { "test-token" }, server.url("/").toString())
+            val key = server.url("/tv/10").toString()
+            dao.rows[key] = CatalogCache(key, "x".repeat(3 * 1024 * 1024), System.currentTimeMillis())
+            server.enqueue(MockResponse().setBody("""{"id":10}"""))
+            assertEquals("10", api.tmdb("tv/10")["id"].toString())
+            assertEquals(1, server.requestCount)
+        }
+    }
+
     private class MemoryCache : CatalogStorage {
         val rows = mutableMapOf<String, CatalogCache>()
         override suspend fun get(key: String) = rows[key]
@@ -28,7 +100,7 @@ class CatalogRepositoryTest {
             val work = repo.work(ref)
             assertEquals("简体片名", work.title); assertEquals("简体简介", work.overview)
             assertTrue(work.poster!!.endsWith("/cn.jpg")); assertTrue(work.logo!!.endsWith("/logo.png"))
-            assertEquals(2, work.seasons.size); assertEquals(1, work.cast.size); assertEquals("A / B", work.cast.single().role)
+            assertEquals(2, work.seasons.size); assertEquals(1, work.cast.size); assertEquals("A · B", work.cast.single().role)
             assertEquals(work, repo.cached(ref)); repo.work(ref); assertEquals(2, server.requestCount)
             val request = server.takeRequest(); assertEquals("Bearer test-read-token", request.getHeader("Authorization")); assertEquals("zh-CN", request.requestUrl!!.queryParameter("language"))
             val imageRequest = server.takeRequest(); assertEquals("zh-CN,ja,null", imageRequest.requestUrl!!.queryParameter("include_image_language"))

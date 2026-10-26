@@ -146,6 +146,42 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
         fresh
     }
 
+    /**
+     * 主推区 from the servers (ui-spec §2.1): each server's stored suggestions and film
+     * recommendations, as (suggestions, recommendations) by server; changes as the store does.
+     */
+    fun heroLists(servers: List<String>): Flow<Pair<Map<String, List<BaseItemDto>>, Map<String, List<BaseItemDto>>>> =
+        store.listsFlow(servers.flatMap { listOf(suggestionsKey(it), recommendationsKey(it)) }).map { lists ->
+            servers.associateWith { s -> lists[suggestionsKey(s)]?.items.orEmpty().map { it.item } } to
+                servers.associateWith { s -> lists[recommendationsKey(s)]?.items.orEmpty().map { it.item } }
+        }.flowOn(Dispatchers.Default)
+
+    /**
+     * Asks [servers] for their suggestions and film recommendations when older than ten minutes (or
+     * [force]). A server without the endpoints, or one that fails them, stores nothing for that
+     * list, so the hero quietly falls back to the latest additions. Read-only requests.
+     */
+    suspend fun refreshHero(servers: List<String>, force: Boolean = false, now: Long = System.currentTimeMillis()) {
+        val due = servers.filter { force || Freshness.due(Freshness.Kind.Latest, store.list(suggestionsKey(it))?.fetchedAt, now) }
+        if (due.isEmpty()) return
+        suspend fun <T> quietly(what: String, server: String, call: suspend () -> List<T>): List<T> = try {
+            call()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ZLog.d(TAG, "$what of ${library.status(server)?.name}: ${e.message}")
+            emptyList()
+        }
+        fanOut.run(due, FanOut.LIST_TIMEOUT_MS) { s ->
+            quietly("suggestions", s) { library.suggestions(s) } to quietly("movie recommendations", s) { library.movieRecommendations(s) }
+        }.collect { o ->
+            if (o is Outcome.Ok) {
+                store.putList(suggestionsKey(o.server), o.server, o.value.first)
+                store.putList(recommendationsKey(o.server), o.server, o.value.second)
+            }
+        }
+    }
+
     /** [server]'s own home from the store: libraries (home switch on) and their newest items. */
     fun serverHome(server: String): Flow<ServerHome> =
         store.listsFlow(listOf(viewsKey(server))).map { lists -> library.homeLibraries(server, lists[viewsKey(server)]?.items.orEmpty().map { it.item }) }
@@ -224,5 +260,7 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
         fun latestKey(server: String) = "latest:$server"
         fun latestKey(server: String, libraryId: String) = "latest:$server:$libraryId"
         fun viewsKey(server: String) = "views:$server"
+        fun suggestionsKey(server: String) = "hero:suggestions:$server"
+        fun recommendationsKey(server: String) = "hero:recommendations:$server"
     }
 }

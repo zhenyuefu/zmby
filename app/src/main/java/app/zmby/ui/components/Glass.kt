@@ -1,5 +1,6 @@
 package app.zmby.ui.components
 
+import androidx.core.graphics.createBitmap
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.ColorMatrix
@@ -219,7 +220,7 @@ private object BackdropBlur : Transformation {
     override val cacheKey = "zmby-backdrop-blur-v1"
 
     override suspend fun transform(input: Bitmap, size: CoilSize): Bitmap {
-        val out = Bitmap.createBitmap(input.width, input.height, Bitmap.Config.ARGB_8888)
+        val out = createBitmap(input.width, input.height, Bitmap.Config.ARGB_8888)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(1.8f) }) }
         Canvas(out).drawBitmap(input, 0f, 0f, paint)
         BoxBlur.blur(out, 6)
@@ -336,12 +337,34 @@ fun Modifier.groupCard(shape: Shape, fill: Color = Z.card): Modifier = this.draw
 }
 
 /** The white focused / selected fill used by rows, segments and keys (`glassOn` without its shadow). */
-fun Modifier.onFill(shape: Shape): Modifier = this.drawWithCache {
+fun Modifier.onFill(shape: Shape, alpha: () -> Float = { 1f }): Modifier = this.drawWithCache {
     val outline = shape.createOutline(size, layoutDirection, this)
     val brush = Brush.verticalGradient(listOf(Z.onTop, Z.onBottom))
-    onDrawBehind { drawOutline(outline, brush) }
+    onDrawBehind { if (alpha() > 0f) drawOutline(outline, brush, alpha = alpha()) }
 }
 
 /** Shadow for the focused white surfaces that are not glass (rows, segments, keys). */
 fun Modifier.liftShadow(shape: Shape, elevation: Dp = 18.dp): Modifier =
     shadow(elevation, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.45f), spotColor = Color.Black.copy(alpha = 0.5f))
+
+/**
+ * `.panel`: the frosted pop-up surfaces (side bar, 首页来源, filters, 用手机输入): a dark vertical
+ * gradient with a faint top highlight and inner stroke, and a deep drop shadow.
+ */
+fun Modifier.panelSurface(shape: Shape): Modifier = this
+    .shadow(60.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.6f), spotColor = Color.Black.copy(alpha = 0.6f))
+    .drawWithCache {
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val path = Path().apply { addOutline(outline) }
+        val stroke = Stroke(2.dp.toPx())
+        val fill = Brush.verticalGradient(listOf(Color(0xDB2E3038), Color(0xEB14151A)))
+        val edge = (4.dp.toPx() / size.height).coerceIn(0.005f, 0.5f)
+        val rim = Brush.verticalGradient(0f to Color.White.copy(alpha = 0.18f), edge to Color.Transparent)
+        onDrawBehind {
+            clipPath(path) {
+                drawRect(fill)
+                drawOutline(outline, Color.White.copy(alpha = 0.08f), style = stroke)
+                drawOutline(outline, rim, style = stroke)
+            }
+        }
+    }

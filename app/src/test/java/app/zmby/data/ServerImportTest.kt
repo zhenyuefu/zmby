@@ -138,14 +138,36 @@ class ServerImportTest {
     }
 }
 
+/** A registry of two servers; restores record what they were asked. */
+private class FakeBackups : app.zmby.backup.RemoteBackups {
+    val restored = mutableListOf<app.zmby.backup.RestoreMode>()
+    val existing = listOf(ServerConfig("a", "家里", listOf(ServerLine("la", "主线路", "http://a.example")), "la", "u", "t"),
+        ServerConfig("b", "朋友", listOf(ServerLine("lb", "主线路", "http://b.example")), "lb", "u", "t"))
+    override val serverCount get() = existing.size
+    override val serverIds get() = existing.map { it.id }.toSet()
+    override suspend fun export(options: app.zmby.backup.BackupOptions, password: String) =
+        app.zmby.backup.BackupCodec.encode(app.zmby.backup.BackupContent(existing.map { app.zmby.backup.BackupServer(it) }), options, password, "test")
+    override fun decode(text: String, password: String) = app.zmby.backup.BackupCodec.decode(text, password)
+    override fun preview(content: app.zmby.backup.BackupContent) = app.zmby.backup.RestorePlanner.plan(existing, content)
+    override fun removedBy(plan: app.zmby.backup.RestorePlan) = existing.filter { e -> plan.rows.none { it.existingId == e.id } }.map { it.name }
+    override suspend fun restore(content: app.zmby.backup.BackupContent, mode: app.zmby.backup.RestoreMode, replaceConfirmed: Boolean, progress: (Int, Int) -> Unit): app.zmby.backup.RestorePlan {
+        restored += mode
+        val plan = preview(content)
+        plan.rows.indices.forEach { progress(it + 1, plan.rows.size) }
+        return plan
+    }
+    override fun restoredConfig(row: app.zmby.backup.RestoreRow) = row.incoming.config
+}
+
 class ImportSessionTest {
+    private val backups = FakeBackups()
     private val lan = LanServer(ports = listOf(0), bind = InetAddress.getLoopbackAddress())
     private val added = mutableListOf<ImportEntry>()
     private val session = ImportSession(lan, add = { e ->
         added += e
         if (e.url.contains("offline")) error("测试线路不可用")
         ServerConfig("s", e.name ?: "NAS", listOf(ServerLine("l", e.lineName ?: "主线路", e.url)), "l", e.user, "token")
-    }, export = { "[]" })
+    }, backups = backups)
     private val http = OkHttpClient()
     private fun request(path: String = "", body: String? = null): Pair<Int, String> {
         val builder = Request.Builder().url("http://127.0.0.1:${lan.port}/import/${session.code}$path")
@@ -183,21 +205,119 @@ class ImportSessionTest {
         assertTrue(body.contains("\"ok\":true") && body.contains("\"ok\":false"))
         assertEquals(listOf(true, false), session.results.value.map { it.ok })
     }
-    @Test fun `heartbeat renews session and closed codes cannot access any endpoint`() {
+    @Test fun `heartbeat does not extend the session but an accepted request does`() {
+        var now = 1_000L
+        val timed = ImportSession(lan, add = { e -> ServerConfig("s", "NAS", listOf(ServerLine("l", "主线路", e.url)), "l", e.user, "token") }, clock = { now })
+        timed.open()
+        val url = "http://127.0.0.1:${lan.port}/import/${timed.code}"
+        now += 60_000
+        http.newCall(Request.Builder().url("$url/ping").build()).execute().use { assertEquals(200, it.code) }
+        assertEquals(listOf("浏览器"), timed.devices.value)
+        assertEquals(1_000L + ImportSession.SESSION_MS, timed.expiresAt.value)
+        http.newCall(Request.Builder().url("$url/parse").post("https://a.example bob pw".toRequestBody()).build()).execute().use { assertEquals(200, it.code) }
+        assertEquals(now + ImportSession.SESSION_MS, timed.expiresAt.value)
+        timed.close()
+        http.newCall(Request.Builder().url("$url/ping").build()).execute().use { assertEquals(404, it.code) }
+        http.newCall(Request.Builder().url("$url/backup").post("{}".toRequestBody()).build()).execute().use { assertEquals(404, it.code) }
+    }
+
+    @Test fun `wrong codes are limited per source and nothing is served before the code`() {
         session.open()
-        val response = request("/ping")
-        assertEquals(200,response.first)
-        assertEquals(listOf("浏览器"),session.devices.value)
-        assertTrue(session.expiresAt.value > System.currentTimeMillis()+9*60_000)
-        session.close()
-        assertEquals(404,request("/ping").first)
-        assertEquals(404,request("/backup","{}").first)
-        assertEquals(404,request("/restore","{}").first)
+        val wrong = (session.code.toInt() % 900_000 + 100_001).toString()
+        fun attempt(code: String, path: String = "/ping") = http.newCall(Request.Builder().url("http://127.0.0.1:${lan.port}/import/$code$path").build()).execute().use { it.code to it.body!!.string() }
+        repeat(4) { i ->
+            val (status, body) = attempt(wrong)
+            assertEquals(403, status)
+            assertFalse("no server data before the code", body.contains("serverCount") || body.contains("家里"))
+            assertTrue(body.contains("再错 ${4 - i} 次"))
+        }
+        assertEquals(429, attempt(wrong).first)
+        // Locked: even the right code is refused from this source for a while.
+        assertEquals(429, attempt(session.code).first)
+        assertEquals(429, request("/backup", "{}").first)
+    }
+
+    @Test fun `too many wrong codes in total close the page`() {
+        var now = 0L
+        val guard = ImportGuard({ now }, perSource = 5, lockMs = 1_000, total = 6)
+        val guarded = ImportSession(lan, add = { error("no login") }, clock = { now }, guard = guard)
+        guarded.open()
+        fun attempt(code: String) = http.newCall(Request.Builder().url("http://127.0.0.1:${lan.port}/import/$code/ping").build()).execute().use { it.code }
+        val wrong = if (guarded.code == "123456") "654321" else "123456"
+        repeat(5) { assertEquals(if (it < 4) 403 else 429, attempt(wrong)) }
+        now = 2_000
+        assertEquals(410, attempt(wrong))
+        assertTrue(guarded.locked.value)
+        assertEquals(404, attempt(guarded.code))
+        guarded.close()
+    }
+
+    private fun answerWhenAsked(allow: Boolean): Thread = Thread {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (session.pending.value == null && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        session.pending.value?.let { session.answer(it.id, allow) }
+    }.apply { start() }
+
+    @Test fun `a backup download waits for the TV and a refusal sends nothing`() {
+        session.open()
+        val body = """{"options":{"accounts":true,"tokens":true},"password":"backup-pass","confirm":"backup-pass"}"""
+        answerWhenAsked(false)
+        val (refused, text) = request("/backup", body)
+        assertEquals(403, refused)
+        assertFalse(text.contains("zmby-backup"))
+        assertTrue(session.activity.value.last().startsWith("已拒绝"))
+        val asker = answerWhenAsked(true)
+        val (allowed, file) = request("/backup", body)
+        asker.join()
+        assertEquals(200, allowed)
+        assertTrue(file.contains("zmby-backup"))
+        assertNull(session.pending.value)
+    }
+
+    @Test fun `no answer from the TV refuses after the timeout`() {
+        val quick = ImportSession(lan, add = { error("no login") }, backups = backups, approvalMs = 200)
+        quick.open()
+        val response = http.newCall(Request.Builder().url("http://127.0.0.1:${lan.port}/import/${quick.code}/backup")
+            .post("""{"options":{"tokens":false,"accounts":true},"password":"","confirm":""}""".toRequestBody()).build()).execute().use { it.code }
+        assertEquals(403, response)
+        assertNull(quick.pending.value)
+        quick.close()
+    }
+
+    @Test fun `restores need the TV's confirmation, replace names what it deletes`() {
+        session.open()
+        val file = app.zmby.backup.BackupCodec.encode(app.zmby.backup.BackupContent(listOf(app.zmby.backup.BackupServer(backups.existing.first()))),
+            app.zmby.backup.BackupOptions(), "backup-pass", "test")
+        fun body(mode: String, confirmed: Boolean) = kotlinx.serialization.json.buildJsonObject {
+            put("file", kotlinx.serialization.json.JsonPrimitive(file)); put("password", kotlinx.serialization.json.JsonPrimitive("backup-pass"))
+            put("mode", kotlinx.serialization.json.JsonPrimitive(mode)); put("confirmed", kotlinx.serialization.json.JsonPrimitive(confirmed.toString()))
+        }.toString()
+        // Preview needs no confirmation and changes nothing.
+        val (previewed, preview) = request("/restore/preview", body("Replace", false))
+        assertEquals(200, previewed)
+        assertTrue(preview.contains("相同跳过"))
+        assertTrue(backups.restored.isEmpty())
+        answerWhenAsked(false)
+        assertEquals(403, request("/restore", body("Merge", false)).first)
+        assertTrue(backups.restored.isEmpty())
+        // Replace still needs the page's own second confirmation before the TV is asked.
+        assertEquals(400, request("/restore", body("Replace", false)).first)
+        assertNull(session.pending.value)
+        var lines: List<String> = emptyList()
+        val asker = Thread {
+            val deadline = System.currentTimeMillis() + 5_000
+            while (session.pending.value == null && System.currentTimeMillis() < deadline) Thread.sleep(10)
+            session.pending.value?.let { lines = it.lines; session.answer(it.id, true) }
+        }.apply { start() }
+        assertEquals(200, request("/restore", body("Replace", true)).first)
+        asker.join()
+        assertTrue(lines.any { "将删除 1 台：朋友" in it })
+        assertEquals(listOf(app.zmby.backup.RestoreMode.Replace), backups.restored)
     }
 
     @Test fun `expired session rejects both mutation and heartbeat`() {
         var now=0L
-        val expiring=ImportSession(lan,add={error("must not authenticate")},export={"[]"},clock={now})
+        val expiring=ImportSession(lan,add={error("must not authenticate")},clock={now})
         expiring.open();now=ImportSession.SESSION_MS+1
         val url="http://127.0.0.1:${lan.port}/import/${expiring.code}"
         http.newCall(Request.Builder().url("$url/ping").build()).execute().use { assertEquals(410,it.code) }

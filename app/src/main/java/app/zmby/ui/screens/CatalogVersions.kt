@@ -13,7 +13,15 @@ import kotlinx.coroutines.*
 
 /** Resolve sources from already mapped concrete addresses. Never guess the first numbered copy. */
 @Composable
-internal fun rememberCatalogVersions(work: CatalogWork, episode: CatalogEpisode?, resources: List<ServerItem>, refresh: Int, initial: ServerItem? = null): VersionsState {
+internal fun rememberCatalogVersions(
+    work: CatalogWork,
+    episode: CatalogEpisode?,
+    resources: List<ServerItem>,
+    refresh: Int,
+    initial: ServerItem? = null,
+    /** The version picked by hand last time (server, media source id); it comes first, as in [rememberVersions]. */
+    manual: Pair<String, String>? = null,
+): VersionsState {
     val app = LocalContext.current.zmby
     val servers by app.registry.servers.collectAsState()
     val rows by app.sources.rows.collectAsState()
@@ -33,30 +41,35 @@ internal fun rememberCatalogVersions(work: CatalogWork, episode: CatalogEpisode?
                 catch (e: Exception) { if (direct == null) throw e else listOf(direct) }
                 (fetched + listOfNotNull(direct)).filter { ResourceMapping.same(work.item(), it) }.distinctBy { it.id }
             } else resources.filter { it.server == server }.map { it.item }
-            items.flatMap { item ->
+            uniqueVersions(items.flatMap { item ->
                 val full = app.library.resourceItem(server, item.id)
                 require(full.id == item.id && full.type == item.type) { "片源身份发生变化" }
                 val sources = app.library.sources(server, full.id).ifEmpty { full.mediaSources }
                 sources.map { Version(status, full, it) }
-            }
+            })
         }.collect { results = results + (it.server to it) }
     }
     val pattern by app.settings.versionPattern.flow.collectAsState()
     val quality by app.settings.quality.flow.collectAsState()
     val nonDisc by app.settings.preferNonDisc.flow.collectAsState()
     val targets = if (work.ref.kind == "movie") allowed else resources.map { it.server }.distinct()
-    return remember(servers, results, targets, pattern, quality, nonDisc) {
+    return remember(servers, results, targets, pattern, quality, nonDisc, manual) {
         val groups = results.values.filterIsInstance<Outcome.Ok<List<Version>>>().mapNotNull { o ->
             val status = servers.firstOrNull { it.id == o.server } ?: return@mapNotNull null
             if (o.value.isEmpty()) null else VersionGroup(status, o.value, "外部 ID 与季集映射已确认")
         }.sortedBy { it.server.order }
-        val comparator = VersionRanker.comparator(VersionPrefs(pattern = VersionPrefs.pattern(pattern), quality = quality, preferNonDisc = nonDisc))
-        val ordered = groups.flatMap { it.versions }.sortedWith { a,b ->
-            comparator.compare(VersionFacts(a.server.id, a.server.order, a.server.health != Health.Off, a.server.latencyMs, a.source), VersionFacts(b.server.id, b.server.order, b.server.health != Health.Off, b.server.latencyMs, b.source))
-        }
+        val prefs = VersionPrefs(manual = manual, pattern = VersionPrefs.pattern(pattern), quality = quality, preferNonDisc = nonDisc)
+        val ordered = rankCatalogVersions(groups.flatMap { it.versions }, prefs)
         val failed = results.values.filter { it !is Outcome.Ok }.map { it.server }
         VersionsState(groups, targets.count { it !in results }, ordered.firstOrNull(), failed, ordered = ordered, retry = {
             failed.forEach { app.registry.retry(it) }; attempt++
         })
     }
+}
+
+/** Catalog lookups ranked like [rememberVersions] ranks its own: the hand pick first, then [VersionRanker]. */
+internal fun rankCatalogVersions(versions: List<Version>, prefs: VersionPrefs): List<Version> {
+    val comparator = VersionRanker.comparator(prefs)
+    fun facts(v: Version) = VersionFacts(v.server.id, v.server.order, v.server.health != Health.Off, v.server.latencyMs, v.source)
+    return versions.sortedWith { a, b -> comparator.compare(facts(a), facts(b)) }
 }

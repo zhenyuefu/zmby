@@ -3,6 +3,7 @@ package app.zmby.playback
 import app.zmby.log.ZLog
 import app.zmby.zidoo.PlayerStatusSource
 import app.zmby.zidoo.ZidooResult
+import app.zmby.zidoo.ZidooStatus
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.delay
 import app.zmby.segments.SegmentSkipper
@@ -46,6 +47,8 @@ class PlaybackMonitor(
     private val now: () -> Long = System::currentTimeMillis,
     /** 片头片尾跳过: looked up while the player starts; used from the first poll after it is ready. */
     private val skipper: Deferred<SegmentSkipper?>? = null,
+    /** Ignore stale status for a previous file, especially between direct and relay attempts. */
+    private val acceptsStatus: (ZidooStatus) -> Boolean = { true },
 ) {
     /** Seeks zmby made past segments (for the log and tests). */
     var skips = 0
@@ -109,7 +112,7 @@ class PlaybackMonitor(
         val deadline = now() + config.startupTimeoutMs
         while (now() < deadline) {
             val status = player.status()
-            if (status != null) {
+            if (status != null && acceptsStatus(status)) {
                 fileKey = status.fileKey
                 if (status.durationMs > 0) lastDurationMs = status.durationMs
                 var position = status.positionMs
@@ -170,4 +173,19 @@ fun resolveFinalPosition(result: ZidooResult?, lastPolledMs: Long?, runtimeMs: L
         return result.durationMs ?: runtimeMs ?: result.positionMs ?: lastPolledMs
     }
     return result?.positionMs?.takeIf { it > 0 } ?: lastPolledMs
+}
+
+/**
+ * Match an actual path, never the previous video's title or mere API availability. For an http(s)
+ * stream the Zidoo player (Z9X 8K, 2026-10-26) reports only the URL's path, without host or query:
+ * `/videos/12845/original.mkv` for `https://host/videos/12845/original.mkv?…&api_key=…`.
+ */
+fun matchesPlaybackPath(path: String?, uri: String): Boolean {
+    if (path.isNullOrBlank()) return false
+    if (path == uri) return true
+    if (uri.startsWith("file:")) return path.removePrefix("file://") == uri.removePrefix("file://")
+    val parsed = runCatching { java.net.URI(uri) }.getOrNull() ?: return false
+    if (parsed.scheme != "http" && parsed.scheme != "https") return false
+    val rawPath = parsed.rawPath?.takeIf { it.isNotEmpty() } ?: return false
+    return path == rawPath || path == parsed.path
 }

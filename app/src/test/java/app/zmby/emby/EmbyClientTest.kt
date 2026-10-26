@@ -99,22 +99,6 @@ class EmbyClientTest {
     }
 
     @Test
-    fun personLookupUsesExternalIdsAndCastLookupStaysBounded() = runTest {
-        server.enqueue(MockResponse().setBody("""{"Items":[]}"""))
-        client.persons(session, listOf("tmdb.2053219", "imdb.nm9913973"))
-        val request = server.takeRequest().requestUrl!!
-        assertEquals("/emby/Persons", request.encodedPath)
-        assertEquals("tmdb.2053219,imdb.nm9913973", request.queryParameter("AnyProviderIdEquals"))
-        assertEquals("20", request.queryParameter("Limit"))
-        server.enqueue(MockResponse().setBody("""{"Items":[]}"""))
-        client.peopleByIds(session, listOf("p1", "p2"))
-        val cast = server.takeRequest().requestUrl!!
-        assertEquals("p1,p2", cast.queryParameter("Ids"))
-        assertEquals("Person", cast.queryParameter("IncludeItemTypes"))
-        assertEquals("2", cast.queryParameter("Limit"))
-    }
-
-    @Test
     fun episodesPageAndStartAtAnEpisode() = runTest {
         server.enqueue(MockResponse().setBody("""{"Items":[{"Id":"e7"},{"Id":"e8"}],"TotalRecordCount":12}"""))
         val page = client.episodes(session, "s1", startItemId = "e7", limit = 2)

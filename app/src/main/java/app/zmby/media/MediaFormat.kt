@@ -143,11 +143,6 @@ fun defaultAudio(source: MediaSourceInfo): MediaStream? {
     return audio.firstOrNull { it.index == source.defaultAudioStreamIndex } ?: audio.firstOrNull { it.isDefault } ?: audio.firstOrNull()
 }
 
-/** Badges under a version row: HDR format, then the default audio track; just the container when unprobed. */
-fun versionBadges(source: MediaSourceInfo): List<String> {
-    if (!isProbed(source)) return listOfNotNull(source.container?.substringBefore(',')?.uppercase(Locale.ROOT))
-    return listOfNotNull(hdrBadge(source.videoStream), defaultAudio(source)?.let(::audioFormat))
-}
 
 /** Badges next to the title on the hero (4K / DOLBY VISION / ATMOS). */
 fun heroBadges(source: MediaSourceInfo?): List<String> {

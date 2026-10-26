@@ -1,5 +1,6 @@
 package app.zmby
 
+import androidx.core.content.edit
 import android.app.Application
 import android.content.Context
 import android.os.Build
@@ -201,13 +202,19 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         zidooStatus = ZidooStatusApi(local)
         registry = ServerRegistry(PrefsRegistryStore(this), persist = Disk::write)
         store = LocalStore(ZmbyDatabase.open(this), emby.json)
-        store.canonicalMetadataOnly = true
         catalogCache = app.zmby.catalog.LimitedCatalogCache(store.db, { settings.metadataCacheMb.value * app.zmby.data.CacheLimits.MIB })
-        val catalogHttp = app.zmby.catalog.CatalogHttp(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(30, TimeUnit.SECONDS).build(), catalogCache, { settings.tmdbToken.value })
+        val catalogHttp = app.zmby.catalog.CatalogHttp(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build(),
+            catalogCache, { settings.tmdbToken.value },
+            tmdbBase = debugUrl("debug.zmby.tmdb_base") ?: "https://api.themoviedb.org/3/",
+            bgmBase = debugUrl("debug.zmby.bgm_base") ?: "https://api.bgm.tv/v0/",
+            animeIndexFile = noBackupFilesDir.resolve("catalog").resolve("bangumi-data-index.txt"),
+            animeEndpoints = listOfNotNull(debugUrl("debug.zmby.bangumi_data")) + app.zmby.catalog.CatalogHttp.ANIME_ENDPOINTS,
+            userAgent = "zmby/${BuildConfig.VERSION_NAME} (https://github.com/zhenyuefu/zmby)")
         catalog = app.zmby.catalog.CatalogRepository(catalogHttp, catalogCache,
             { settings.metadataLanguage.value }, { settings.posterLanguage.value }, { settings.logoLanguage.value }, { settings.animeAliases.value })
         ZLog.secret(settings.tmdbToken.value)
         catalogCache.prune(System.currentTimeMillis() - 30 * app.zmby.catalog.CatalogHttp.DAY)
+        runCatching { catalogCache.dropLegacyRows() }.onSuccess { if (it > 0) ZLog.i(TAG, "dropped $it whole bangumi-data cache row(s)") }
         appScope.launch(Dispatchers.IO) {
             settings.metadataCacheMb.flow.collect {
                 try { catalogCache.trimToLimit() }
@@ -344,7 +351,11 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     }
 }
 
-class ActivePlayback(val monitor: PlaybackMonitor, val watchJob: Job, val local: LocalStrmSession? = null)
+class ActivePlayback(
+    val monitor: PlaybackMonitor, val watchJob: Job, val local: LocalStrmSession?,
+    val prepared: app.zmby.playback.PreparedPlayback, val server: String,
+    val item: app.zmby.emby.BaseItemDto, val launchedAt: Long,
+)
 
 /**
  * The P0/P1 single login in app-private preferences. Since P2 the servers live in [ServerRegistry];
@@ -355,7 +366,7 @@ class SessionStore(context: Context) {
 
     val deviceId: String =
         prefs.getString(KEY_DEVICE_ID, null) ?: UUID.randomUUID().toString().also {
-            prefs.edit().putString(KEY_DEVICE_ID, it).apply()
+            prefs.edit { putString(KEY_DEVICE_ID, it) }
         }
 
     fun load(): ServerSession? {
@@ -367,17 +378,17 @@ class SessionStore(context: Context) {
     }
 
     fun save(s: ServerSession) {
-        prefs.edit()
-            .putString(KEY_URL, s.baseUrl)
-            .putString(KEY_USER, s.userId)
-            .putString(KEY_TOKEN, s.accessToken)
-            .putString(KEY_SERVER_ID, s.serverId)
-            .putString(KEY_SERVER_NAME, s.serverName)
-            .apply()
+        prefs.edit {
+            putString(KEY_URL, s.baseUrl)
+            putString(KEY_USER, s.userId)
+            putString(KEY_TOKEN, s.accessToken)
+            putString(KEY_SERVER_ID, s.serverId)
+            putString(KEY_SERVER_NAME, s.serverName)
+        }
     }
 
     fun clear() {
-        prefs.edit().remove(KEY_URL).remove(KEY_USER).remove(KEY_TOKEN).remove(KEY_SERVER_ID).remove(KEY_SERVER_NAME).apply()
+        prefs.edit { remove(KEY_URL).remove(KEY_USER).remove(KEY_TOKEN).remove(KEY_SERVER_ID).remove(KEY_SERVER_NAME) }
     }
 
     private companion object {
@@ -389,6 +400,22 @@ class SessionStore(context: Context) {
         const val KEY_SERVER_NAME = "server_name"
     }
 }
+
+/**
+ * Debug builds only, for emulator tests without the CDN or Bangumi: `adb shell setprop
+ * debug.zmby.bangumi_data <url>` tries a local bangumi-data copy first, `debug.zmby.bgm_base <url>`
+ * replaces the Bangumi API base and `debug.zmby.tmdb_base <url>` the TMDB one (all served by
+ * tools/mock_emby.py, which accepts any token for its TMDB). Release builds ignore them.
+ */
+private fun debugUrl(property: String): String? = if (!BuildConfig.DEBUG) null else runCatching {
+    // getprop is the platform command also used by adb; avoid the hidden SystemProperties API.
+    val process = ProcessBuilder("/system/bin/getprop", property).start()
+    try {
+        process.inputStream.bufferedReader().use { it.readLine().orEmpty() }
+    } finally {
+        process.destroy()
+    }
+}.getOrNull()?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
 
 private object BuildConfigCompat {
     fun versionName(context: Context): String =

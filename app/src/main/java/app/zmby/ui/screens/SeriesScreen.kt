@@ -27,8 +27,13 @@ import app.zmby.playback.TrackChoice
 import app.zmby.ui.*
 import app.zmby.ui.components.*
 import app.zmby.ui.theme.Z
+import app.zmby.ui.theme.detailPageScrollSpec
+import app.zmby.ui.theme.defaultScrollSpec
+import app.zmby.ui.theme.Mono
 import app.zmby.zmby
 import kotlinx.coroutines.*
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 
 private val SERIES_SCRIMS = Scrims(listOf(0f to 0.96f, 0.4f to 0.75f, 0.75f to 0.15f), bottomFrom = 300f / 1080f, bottomSolid = 0.55f)
 
@@ -73,7 +78,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         if (server == "catalog") return@LaunchedEffect
         anchor = episodeId?.let { app.store.detail(server, it)?.item }
         if (seasonNumber < 0) anchor?.parentIndexNumber?.let { seasonNumber = it }
-        if (resourceWork == null) try {
+        // Without a TMDB token a known external ID gives no catalogue directory: list the server's own seasons.
+        if (resourceWork == null || !app.catalog.configured) try {
             serverSeasons = app.library.seasons(server, seriesId)
             if (seasonNumber < 0) seasonNumber = serverSeasons.firstOrNull { (it.indexNumber ?: 0) > 0 }?.indexNumber ?: 0
             if (anchor == null) anchor = app.library.nextUp(server, seriesId)
@@ -155,10 +161,10 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         else -> VersionsState(emptyList(), 0, null)
     }
     var picked by remember(shown?.key) { mutableStateOf<Version?>(null) }
-    val selected = picked?.takeIf { p -> versions.all.any { it.ref.key == p.ref.key && it.source.id == p.source.id } } ?: versions.default
+    val selected = picked?.let { p -> versions.all.firstOrNull { it.key == p.key } } ?: versions.default
     var preview by remember(shown?.key) { mutableStateOf<Version?>(null) }
     var picks by rememberRetained("picks", seriesId) { mutableStateOf<Map<String, TrackChoice>>(emptyMap()) }
-    fun trackKey(v: Version) = "${v.server.id}:${v.source.id}"
+    fun trackKey(v: Version) = v.key
     fun tracks(v: Version) = picks[trackKey(v)] ?: TrackChoice()
     val scroll = rememberScrollState()
     val rowState = rememberLazyListState()
@@ -168,12 +174,12 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     var headerFocused by remember { mutableStateOf(false) }
     val trackEntry = remember { FocusRequester() }
     var marking by remember { mutableStateOf<ServerItem?>(null) }
-    var extrasExpanded by rememberSaveable { mutableStateOf(false) }
+    var unsorted by rememberSaveable { mutableStateOf(false) }
     if (s == null || canonical == null && !fallbackReady) {
         LoadState(error, onRetry = { vm.refresh(replace = true); resourceRetry++ }, onServers = { nav.go(Route.Servers) }); return
     }
     val ref = fallback ?: ServerItem("catalog", s)
-    val display = canonical?.display() ?: app.display(ref, null)
+    val display = canonical?.display() ?: app.display(ref)
     val availability = when {
         pending > 0 || versions.searching > 0 -> "正在查找资源…"
         failed.isNotEmpty() || versions.unresponsive.isNotEmpty() -> "资源状态待确认 · 重试"
@@ -194,65 +200,237 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         val index = episodes.indexOfFirst { it.key == currentKey }
         if (index > 0 && rowState.firstVisibleItemIndex == 0) rowState.scrollToItem((index - 1).coerceAtLeast(0))
     }
+    val accordion = rememberAccordion(SECTION_EPISODES)
+    val memory = LocalNavEntry.current?.focus
+    val density = LocalDensity.current.density
+    val cast = remember(canonical?.cast, ref.key, ref.item.people) {
+        canonical?.let { catalogCastCards(nav, it.cast) } ?: serverCastCards(app, nav, ref)
+    }
+    // 未归类 (SeriesUnsorted): server entries of this series that no catalogue episode took.
+    val unknown = remember(mapped.unmatched, seasonNumber, seasons) {
+        mapped.unmatched.filter { r -> r.item.parentIndexNumber == seasonNumber || seasons.none { it.number == r.item.parentIndexNumber } }
+    }
+    if (unsorted && unknown.isEmpty()) unsorted = false
+    // 为你推荐 of the series itself, not of the focused episode (ui-spec §2.14).
+    val tmdbId = (resourceWork?.ref ?: s.tmdb()?.let { id -> CatalogId("tmdb", "tv", id) })?.takeIf { r -> r.source == "tmdb" }
+    val recKey = tmdbId?.let { r -> "series:tmdb:${r.id}" } ?: Keys.work(ref.server, ref.item)
+    val recCopies = remember(fallback?.key, batches) {
+        (listOfNotNull(fallback) + batches.flatMap { b ->
+            b.episodes.filter { b.verified }.mapNotNull { e -> e.item.seriesId }.distinct().map { id -> ServerItem(b.server, BaseItemDto(id = id, type = "Series")) }
+        }).distinctBy { c -> c.server }
+    }
+    val recs = rememberRecommendations(recKey, recCopies, tmdbId, tick).orEmpty()
+    val hasVersions = !unsorted && (versions.all.isNotEmpty() || versions.searching > 0 || versions.unresponsive.isNotEmpty())
+    val trackVersion = (preview ?: selected).takeIf { !unsorted }
+    accordion.order = listOfNotNull(
+        SECTION_EPISODES,
+        SECTION_VERSIONS.takeIf { hasVersions },
+        SECTION_TRACKS.takeIf { trackVersion != null },
+        SECTION_CAST.takeIf { cast.isNotEmpty() },
+        SECTION_RECS.takeIf { recs.isNotEmpty() },
+    )
+    if (accordion.active !in accordion.order) accordion.active = SECTION_EPISODES
+    accordion.header = playButton
+    val today = remember { java.time.LocalDate.now().toString() }
     BackdropProvider(display.backdrop, SERIES_SCRIMS) {
       Box(Modifier.fillMaxSize()) {
+        // Section changes align the context row; inner card focus must not move the whole page.
+        @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides detailPageScrollSpec) {
         Box(Modifier.fillMaxSize().verticalScroll(scroll)) {
+          @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+          androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides defaultScrollSpec) {
             BackdropLayer(Modifier.fillMaxWidth().height(1080.dp))
             Column(Modifier.fillMaxWidth()) {
                 SeriesHeader(ref, display, seasons.size, episodes.size, shown?.item, selected,
                     onPlay = { _, v, start -> v?.let { play(context, it.ref, start, it.source.id, tracks(it), versions.alternatesTo(it)) } },
-                    currentCard = currentCard.takeIf { shown != null }, playButton = playButton,
-                    initialFocusKey = seriesId, onFocusChanged = { headerFocused = it; if (it && scroll.value > 0) scope.launch { scroll.scrollToTopFirmly() } },
+                    playButton = playButton,
+                    initialFocusKey = seriesId, onFocusChanged = { headerFocused = it; if (it) accordion.showHeader(scope, scroll) },
                     onMarks = { selected?.let { marking = it.ref } }, availability = availability,
-                    onRetry = { versions.retry(); failed.forEach(app.registry::retry); resourceRetry++ })
-                Column(Modifier.padding(top = 56.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
-                    if (seasons.size > 1) SegmentedWell(seasons.map { Segment(it.title) }, seasons.indexOfFirst { it.number == seasonNumber }.coerceAtLeast(0),
-                        { anchorApplied = true; seasonNumber = seasons[it].number; currentKey = null }, Modifier.padding(start = 80.dp), labelPrefix = "季")
+                    onRetry = { versions.retry(); failed.forEach(app.registry::retry); resourceRetry++ },
+                    onDown = { accordion.open(SECTION_EPISODES, scope, memory, scroll, density) })
+                Spacer(Modifier.height(44.dp))
+                val watched = episodes.count { it.item.userData?.played == true }
+                CollapsibleSection(accordion, SECTION_EPISODES, "剧集", if (episodes.isEmpty()) null else "${episodes.size} 集 · 已看 $watched 集", scope, scroll, summary = {
+                    SummaryText(shown?.let { row ->
+                        listOfNotNull(
+                            seasons.firstOrNull { it.number == seasonNumber }?.title,
+                            listOfNotNull("第 ${row.item.indexNumber ?: "?"} 集", episodeName(row.item)).joinToString(" "),
+                            row.resources.firstOrNull()?.item?.let(::remainingLabel),
+                        ).joinToString(" · ")
+                    } ?: "还没有剧集目录")
+                }) {
+                  Column(Modifier.padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+                    val segments = seasons.map { Segment(it.title) } + listOfNotNull(if (unknown.isNotEmpty()) Segment("未归类", unknown.size.toString()) else null)
+                    if (segments.size > 1) SegmentedWell(segments, if (unsorted) seasons.size else seasons.indexOfFirst { it.number == seasonNumber }.coerceAtLeast(0),
+                        { i ->
+                            anchorApplied = true
+                            if (i >= seasons.size) unsorted = true else { unsorted = false; seasonNumber = seasons[i].number; currentKey = null }
+                        }, Modifier.padding(start = 80.dp), labelPrefix = "季")
                     episodeError?.let { Text(it, color = Z.warn, modifier = Modifier.padding(horizontal = 80.dp)); GlassButton("重试目录", { resourceRetry++ }, Modifier.padding(start = 80.dp)) }
-                    LazyRow(modifier = Modifier.horizontalRow(up = playButton.takeIf { seasons.size <= 1 }, enter = currentCard.takeIf { shown != null }), state = rowState,
+                    if (episodes.isEmpty() && !unsorted && episodeError == null) {
+                        val loading = if (canonical != null) catalogEpisodes == null else serverEpisodes.isEmpty() && serverSeasons.isEmpty()
+                        Text(if (loading) "正在加载剧集目录…" else "这一季还没有剧集", fontSize = 21.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 80.dp))
+                    }
+                    if (unsorted) {
+                        UnsortedRow(nav, unknown, mapped.reasons, accordion.entry(SECTION_EPISODES))
+                    } else {
+                    LazyRow(modifier = Modifier.horizontalRow(enter = currentCard.takeIf { shown != null }), state = rowState,
                         contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 30.dp), horizontalArrangement = Arrangement.spacedBy(30.dp)) {
                         items(episodes, key = { it.key }, contentType = { "episode" }) { row ->
+                            val status = episodeStatus(row.resources, row.canonical?.date, today, searching = pending > 0, failed = failed.isNotEmpty())
                             MediaCard16x9(row.image, onClick = {
                                     currentKey = row.key
                                     if(row.key == shown?.key && selected != null) play(context,selected.ref,selected.item.resumeMs,selected.source.id,tracks(selected),versions.alternatesTo(selected))
                                     else row.resources.firstOrNull()?.let { play(context,it,it.item.resumeMs) }
                                 }, width = 340.dp,
-                                topEnd = if (row.resources.isNotEmpty()) "${row.resources.map { it.server }.distinct().size} 台有资源" else if (pending > 0) "查询中" else if (failed.isNotEmpty()) "待确认" else "暂无资源",
+                                topEnd = status.label,
                                 watched = row.item.userData?.played == true, progress = progressFraction(row.item), onFocus = { currentKey = row.key },
-                                focusKey = "episode:${row.key}", modifier = if (row.key == shown?.key) Modifier.focusRequester(currentCard) else Modifier) {
-                                Column { Text("第 ${row.item.indexNumber ?: "?"} 集", fontSize = 18.sp); Text(titleOf(row.item), fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                focusKey = "episode:${row.key}",
+                                modifier = Modifier.graphicsLayer { alpha = if (status.dim) 0.4f else 1f }
+                                    .then(if (row.key == shown?.key) Modifier.focusRequester(currentCard).focusRequester(accordion.entry(SECTION_EPISODES)) else Modifier)) {
+                                val number = "第 ${row.item.indexNumber ?: "?"} 集"
+                                val name = episodeName(row.item)
+                                // Without a name of its own the number takes the title line; the line above stays for alignment.
+                                Column { Text(if (name != null) number else "", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Z.textSecondary); Text(name ?: number, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             }
                         }
                     }
-                }
-                shown?.let { row ->
-                    Column(Modifier.padding(start = 80.dp, top = 26.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("第 ${row.item.indexNumber ?: "?"} 集 · ${titleOf(row.item)}", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold)
-                        row.item.overview?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 21.sp, color = Z.textSecondary, maxLines = 3, modifier = Modifier.width(1100.dp)) }
+                    shown?.let { row ->
+                        Column(Modifier.padding(start = 80.dp, end = 80.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(listOfNotNull("第 ${row.item.indexNumber ?: "?"} 集", episodeName(row.item)).joinToString(" · "), fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
+                            row.item.overview?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 21.sp, lineHeight = 32.sp, color = Z.textSecondary, maxLines = 3, modifier = Modifier.width(1100.dp)) }
+                        }
                     }
+                    }
+                  }
                 }
-                if (versions.all.isNotEmpty() || versions.searching > 0 || versions.unresponsive.isNotEmpty()) {
-                    Spacer(Modifier.height(48.dp))
-                    VersionSection(versions, selected, { picked = it }, { preview = it }, { play(context, it.ref, it.item.resumeMs, it.source.id, tracks(it), versions.alternatesTo(it)) }, downTarget = trackEntry)
-                }
-                (preview ?: selected)?.let { v -> Spacer(Modifier.height(56.dp)); TrackSection(v, v.item.chapters.size, v.item.runTimeTicks, tracks(v), trackEntry) { picks = picks + (trackKey(v) to it) } }
-                val unknown = mapped.unmatched.filter { r -> r.item.parentIndexNumber == seasonNumber || seasons.none { it.number == r.item.parentIndexNumber } }
-                if (unknown.isNotEmpty()) {
-                    GlassButton("未匹配条目（${unknown.size}） · ${if (extrasExpanded) "收起" else "展开"}", { extrasExpanded = !extrasExpanded }, Modifier.padding(80.dp, 30.dp))
-                    if (extrasExpanded) LazyRow(contentPadding = PaddingValues(horizontal = 80.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        items(unknown, key = { it.key }, contentType = { "unmapped" }) { r ->
-                            MediaCard16x9(app.library.landscapeImage(r), { nav.go(Route.Detail(r.server, r.item.id, resourceOnly = true)) }, width = 340.dp, topEnd = app.registry.get(r.server)?.name) { Text(titleOf(r.item), maxLines = 2) }
+                if (hasVersions) {
+                    CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), scope, scroll, summary = {
+                        SummaryText(selected?.let(::versionSummary) ?: if (versions.searching > 0) "正在查找资源…" else "这一集暂无可播放的版本")
+                    }) {
+                        Box(Modifier.padding(vertical = 20.dp)) {
+                            VersionSection(versions, selected, { picked = it }, { preview = it }, { play(context, it.ref, it.item.resumeMs, it.source.id, tracks(it), versions.alternatesTo(it)) }, entry = accordion.entry(SECTION_VERSIONS))
                         }
                     }
                 }
-                if (canonical != null) CanonicalCast(nav, canonical!!.cast) else ServerCast(nav, ref)
+                trackVersion?.let { v ->
+                    CollapsibleSection(accordion, SECTION_TRACKS, "音轨与字幕", "${v.source.subtitleStreams.size} 条字幕", scope, scroll, barHeight = 112.dp, summary = { TrackSummary(v, tracks(v)) }) {
+                        Box(Modifier.padding(vertical = 20.dp)) {
+                            TrackSection(v, v.item.chapters.size, v.item.runTimeTicks, tracks(v), accordion.entry(SECTION_TRACKS)) { picks = picks + (trackKey(v) to it) }
+                        }
+                    }
+                }
+                if (cast.isNotEmpty()) {
+                    CollapsibleSection(accordion, SECTION_CAST, "演职人员", "共 ${cast.size} 人", scope, scroll, retainContent = true) { expanded ->
+                        CastBlock(cast, accordion.entry(SECTION_CAST), showDetails = expanded)
+                    }
+                }
+                if (recs.isNotEmpty()) {
+                    CollapsibleSection(accordion, SECTION_RECS, "为你推荐", "${recs.size} 部", scope, scroll, retainContent = true) { _ ->
+                        RecommendationsBlock(nav, recs, accordion.entry(SECTION_RECS))
+                    }
+                }
                 CatalogRelated(nav, canonical, fallback)
-                Spacer(Modifier.height(80.dp))
+                Spacer(Modifier.height(600.dp))
             }
+          }
         }
+        }
+        val compact by remember { derivedStateOf { scroll.value > 300 * density } }
+        val playItem = selected?.item
+        val resumeMs = playItem?.let { resumeMsOf(it) } ?: 0L
+        CompactHeader(
+            compact,
+            display,
+            listOfNotNull(display.year?.toString(), display.genres.take(2).joinToString(" · ").ifEmpty { null }, if (seasons.isNotEmpty()) "${seasons.count { it.number > 0 }.coerceAtLeast(1)} 季" else null).joinToString(" · "),
+            if (shown != null && playItem != null) seriesPlayLabel(episodeCode(shown.item), resumeMs, remainingLabel(playItem)) else null,
+        )
         marking?.let { SegmentMarksPanel(it.server, it.item, onDismiss = { marking = null }) }
       }
     }
+}
+
+/** An episode card's corner and whether it is dimmed (ui-spec §2.3 资源状态). */
+internal data class EpisodeStatus(val label: String, val dim: Boolean)
+
+/**
+ * 「n 个版本」 when servers have it; while the lookup runs 「查找中」; a catalogue episode that has not
+ * aired yet 「11 月 2 日播出」; otherwise 「无资源」 (「待确认」 when some server did not answer).
+ * Without resources the card is dimmed to 40 % but stays focusable.
+ */
+internal fun episodeStatus(resources: List<ServerItem>, airDate: String?, today: String, searching: Boolean, failed: Boolean): EpisodeStatus {
+    if (resources.isNotEmpty()) {
+        val versions = resources.sumOf { it.item.mediaSources.size.coerceAtLeast(1) }
+        return EpisodeStatus("$versions 个版本", false)
+    }
+    val date = airDate?.takeIf { it.length >= 10 }
+    if (date != null && date > today) {
+        val month = date.substring(5, 7).toIntOrNull()
+        val day = date.substring(8, 10).toIntOrNull()
+        if (month != null && day != null) return EpisodeStatus("$month 月 $day 日播出", true)
+    }
+    return when {
+        searching -> EpisodeStatus("查找中", false)
+        failed -> EpisodeStatus("待确认", true)
+        else -> EpisodeStatus("无资源", true)
+    }
+}
+
+/**
+ * 未归类 (SeriesUnsorted.dc.html): 16:9 cards with the server name, the server's numbering or the
+ * reason, and the entry's name; under the focused one an information card with 播放 and 详情.
+ */
+@Composable
+private fun UnsortedRow(nav: Nav, items: List<ServerItem>, reasons: Map<String, String>, entry: FocusRequester) {
+    val context = LocalContext.current
+    val app = context.zmby
+    var focusedKey by remember { mutableStateOf(items.firstOrNull()?.key) }
+    val focused = items.firstOrNull { it.key == focusedKey } ?: items.firstOrNull()
+    Column(verticalArrangement = Arrangement.spacedBy(28.dp)) {
+        LazyRow(Modifier.horizontalRow(), contentPadding = PaddingValues(start = 80.dp, end = 120.dp), horizontalArrangement = Arrangement.spacedBy(30.dp)) {
+            items(items, key = { it.key }, contentType = { "unsorted" }) { r ->
+                val code = unsortedCode(r.item) ?: reasons[r.key] ?: "没有季集编号"
+                MediaCard16x9(app.library.landscapeImage(r), { nav.go(Route.Detail(r.server, r.item.id, resourceOnly = true)) }, width = 340.dp,
+                    topStart = app.registry.get(r.server)?.name, onFocus = { focusedKey = r.key }, focusKey = "unsorted:${r.key}",
+                    modifier = if (r == items.first()) Modifier.focusRequester(entry) else Modifier) {
+                    Column {
+                        Text(code, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Z.textSecondary, maxLines = 1)
+                        Text(titleOf(r.item), fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        focused?.let { r ->
+            val server = app.registry.get(r.server)
+            val source = r.item.mediaSources.firstOrNull()
+            Column(Modifier.padding(start = 80.dp).width(1180.dp).groupCard(androidx.compose.foundation.shape.RoundedCornerShape(28.dp)).padding(horizontal = 34.dp, vertical = 30.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Text(titleOf(r.item), fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2)
+                @Composable
+                fun line(k: String, v: String?, mono: Boolean = false) {
+                    if (v.isNullOrBlank()) return
+                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        Text(k, fontSize = 20.sp, color = Z.textTertiary, modifier = Modifier.width(170.dp))
+                        Text(v, fontSize = if (mono) 17.sp else 20.sp, fontFamily = if (mono) Mono else null, lineHeight = 29.sp)
+                    }
+                }
+                line("服务器", listOfNotNull(server?.name, server?.lineName).joinToString(" · "))
+                line("服务器上的编号", listOfNotNull(unsortedCode(r.item) ?: "没有季集编号", formatDuration(r.item.runtimeMs)).joinToString(" · "))
+                line("文件", (source?.path ?: r.item.path)?.replace('\\', '/')?.substringAfterLast('/'), mono = true)
+                line("未归入原因", reasons[r.key])
+                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    GlassButton("播放", { play(context, r, r.item.resumeMs) }, glyph = Glyph.Play, label = "播放未归类 ${r.key}")
+                    GlassButton("详情", { nav.go(Route.Detail(r.server, r.item.id, resourceOnly = true)) }, label = "未归类详情 ${r.key}")
+                }
+            }
+        }
+    }
+}
+
+/** 「第 1 季 第 1 集」 from the server's numbers, or null when it has none. */
+internal fun unsortedCode(item: BaseItemDto): String? {
+    val e = item.indexNumber ?: return null
+    return item.parentIndexNumber?.let { "第 $it 季 第 $e 集" } ?: "第 $e 集"
 }
 
 @Composable
@@ -266,13 +444,13 @@ private fun SeriesHeader(
     /** Its selected version; null until the version list knows it (then the server's own copy plays). */
     selected: Version?,
     onPlay: (episode: BaseItemDto, version: Version?, startMs: Long) -> Unit,
-    currentCard: FocusRequester?,
     playButton: FocusRequester,
     initialFocusKey: String?,
     onFocusChanged: (Boolean) -> Unit,
     onMarks: (BaseItemDto) -> Unit = {},
     availability: String? = null,
     onRetry: () -> Unit = {},
+    onDown: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = context.zmby
@@ -286,6 +464,7 @@ private fun SeriesHeader(
             .padding(start = 80.dp, top = 140.dp)
             .width(860.dp)
             .onFocusChanged { onFocusChanged(it.hasFocus) }
+            .headerDown(onDown)
             .focusGroup(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
@@ -305,8 +484,7 @@ private fun SeriesHeader(
             val resumeMs = playItem?.let { resumeMsOf(it) } ?: 0L
             val label = if(current != null && playItem != null) seriesPlayLabel(episodeCode(current),resumeMs,remainingLabel(playItem)) else availability ?: "暂无资源"
             GlassButton(label, { if(current != null && selected != null) onPlay(current,selected,resumeMs) else onRetry() },
-                Modifier.focusRequester(playButton).focusRequester(rememberInitialFocus(initialFocusKey ?: s.id))
-                    .focusProperties { if(currentCard != null) down = currentCard }, glyph = Glyph.Play, label = "seriesPlay:$initialFocusKey")
+                Modifier.focusRequester(playButton).focusRequester(rememberInitialFocus(initialFocusKey ?: s.id)), glyph = Glyph.Play, label = "seriesPlay:$initialFocusKey")
             if(current != null && selected != null && resumeMs > 0) GlassButton("从头播放", { onPlay(current,selected,0) })
             if (ref.server != "catalog") GlassIconButton(
                 if (favorite) Glyph.Check else Glyph.Plus,

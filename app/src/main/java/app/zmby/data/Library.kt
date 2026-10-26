@@ -1,5 +1,6 @@
 package app.zmby.data
 
+import androidx.core.content.edit
 import android.content.Context
 import app.zmby.SessionStore
 import app.zmby.aggregate.SearchSource
@@ -45,7 +46,7 @@ class Library(
     legacy: SessionStore,
     private val caps: ServerCapsStore,
     private val store: app.zmby.store.LocalStore? = null,
-) : VersionSource, SearchSource, app.zmby.aggregate.MetadataSource {
+) : VersionSource, SearchSource {
     private val prefs = context.getSharedPreferences("libraries", Context.MODE_PRIVATE)
     private val historyPrefs = context.getSharedPreferences("search_history", Context.MODE_PRIVATE)
     private val versionPrefs = context.getSharedPreferences("picked_versions", Context.MODE_PRIVATE)
@@ -81,15 +82,15 @@ class Library(
         if (old != null) {
             val config = registry.add(ServerRegistry.fromLegacy(old))
             caps.update(config.id) { caps.get(old.baseUrl) }
-            val edit = prefs.edit()
-            for (key in listOf(KEY_HOME_OFF, KEY_SEARCH_OFF)) {
-                val ids = prefs.getStringSet(key, emptySet())!!
-                edit.putStringSet("${key}_v2", ids.map { "${config.id}|$it" }.toSet())
+            prefs.edit {
+                for (key in listOf(KEY_HOME_OFF, KEY_SEARCH_OFF)) {
+                    val ids = prefs.getStringSet(key, emptySet())!!
+                    putStringSet("${key}_v2", ids.map { "${config.id}|$it" }.toSet())
+                }
             }
-            edit.apply()
             ZLog.i(TAG, "moved the single login (${config.name}) into the server registry as ${config.id}")
         }
-        prefs.edit().putBoolean(KEY_MIGRATED, true).apply()
+        prefs.edit { putBoolean(KEY_MIGRATED, true) }
     }
 
     val servers: StateFlow<List<ServerStatus>> get() = registry.servers
@@ -202,7 +203,7 @@ class Library(
         val next = synchronized(switchSets) {
             offSet(key).toMutableSet().apply { if (add) add(id) else remove(id) }.toSet().also { switchSets[key] = it }
         }
-        Disk.write { prefs.edit().putStringSet(key, next).apply() }
+        Disk.write { prefs.edit { putStringSet(key, next) } }
     }
 
     // ---- one server
@@ -254,15 +255,8 @@ class Library(
         return emby.browse(session(server), types, false, start = 0, limit = 0, parentId = parentId, query = query + ("NameLessThan" to letter)).totalRecordCount
     }
 
-    /** A person on [server] by name (人物页: person ids never cross servers). */
-    override suspend fun person(server: String, name: String): BaseItemDto = emby.person(session(server), name)
-
-    override suspend fun persons(server: String, ids: List<String>): List<BaseItemDto> = emby.persons(session(server), ids).items
-
-    override suspend fun peopleByIds(server: String, ids: List<String>): List<BaseItemDto> = emby.peopleByIds(session(server), ids).items
-
     /** Films and series with [server]'s person [personId], with People for the person's part. */
-    override suspend fun worksOf(server: String, personId: String): List<BaseItemDto> =
+    suspend fun worksOf(server: String, personId: String): List<BaseItemDto> =
         emby.itemsWithPerson(session(server), personId).items.filter { it.type == "Movie" || it.type == "Series" }
 
     suspend fun genres(server: String, parentId: String?, types: String): List<String> =
@@ -283,6 +277,16 @@ class Library(
     }
 
     suspend fun resourceItem(server: String, id: String): BaseItemDto = emby.resourceItem(session(server),id)
+
+    /** Emby's suggestions on [server] (首页主推区). */
+    suspend fun suggestions(server: String, limit: Int = 12): List<BaseItemDto> = emby.suggestions(session(server), limit).items
+
+    /** [server]'s film recommendations, categories flattened one title each in turn. */
+    suspend fun movieRecommendations(server: String): List<BaseItemDto> =
+        app.zmby.aggregate.HeroMerge.flatten(emby.movieRecommendations(session(server)).map { it.items })
+
+    /** [server]'s titles like its item [id] (为你推荐). */
+    suspend fun similar(server: String, id: String, limit: Int = 12): List<BaseItemDto> = emby.similar(session(server), id, limit).items
 
     override suspend fun item(server: String, id: String): BaseItemDto = emby.item(session(server), id)
 
@@ -314,7 +318,7 @@ class Library(
 
     fun rememberVersion(workKey: String, server: String, sourceId: String) {
         picked[workKey] = "$server|$sourceId"
-        Disk.write { versionPrefs.edit().putString(workKey, "$server|$sourceId").apply() }
+        Disk.write { versionPrefs.edit { putString(workKey, "$server|$sourceId") } }
     }
 
     /** Every episode of a season, page by page: a long anime season has hundreds. */
@@ -399,7 +403,6 @@ class Library(
         return emby.imageUrl(s, ref.item, type, ref.tag, maxHeight)
     }
 
-    override suspend fun images(server: String, itemId: String) = emby.images(session(server), itemId)
 
     fun itemJson(item: BaseItemDto): String = emby.json.encodeToString(BaseItemDto.serializer(), item)
 
@@ -435,7 +438,7 @@ class Library(
         if (t.isEmpty() || !Pinyin.hasHan(t)) return
         val list = (listOf(t) + searchHistory().filter { it != t }).take(MAX_HISTORY)
         history = list
-        Disk.write { historyPrefs.edit().putString(KEY_HISTORY, list.joinToString("\n")).apply() }
+        Disk.write { historyPrefs.edit { putString(KEY_HISTORY, list.joinToString("\n")) } }
     }
 
     fun capsOf(server: String): ServerCaps = caps.get(session(server).capsKey)

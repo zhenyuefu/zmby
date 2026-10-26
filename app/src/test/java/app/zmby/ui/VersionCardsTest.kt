@@ -8,11 +8,23 @@ import app.zmby.data.ServerLine
 import app.zmby.data.ServerStatus
 import app.zmby.emby.BaseItemDto
 import app.zmby.emby.MediaSourceInfo
+import app.zmby.aggregate.VersionPrefs
+import app.zmby.ui.screens.Version
+import app.zmby.ui.screens.rankCatalogVersions
 import app.zmby.ui.screens.versionCards
+import app.zmby.ui.screens.uniqueVersions
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class VersionCardsTest {
+    @Test fun `media source ids reused by different items stay distinct while exact copies collapse`() {
+        val s = server("mock", 0)
+        val a = Version(s, film.copy(id = "movie-a"), MediaSourceInfo("shared-source"))
+        val b = Version(s, film.copy(id = "movie-b"), MediaSourceInfo("shared-source"))
+        assertEquals(2, setOf(a.key, b.key).size)
+        assertEquals(listOf(a, b), uniqueVersions(listOf(a, b, a.copy())))
+    }
+
     private fun server(id: String, order: Int) = ServerStatus(ServerConfig(id, id, listOf(ServerLine("l", "主线路", "http://$id")), "l", "u", "t"), order)
     private val film = BaseItemDto(id = "m", name = "沙丘2", type = "Movie", mediaSources = listOf(MediaSourceInfo("s1")))
 
@@ -48,5 +60,15 @@ class VersionCardsTest {
     @Test fun `the open server without sources gets no card either`() {
         val (cards, _) = versionCards(server("home", 0), film.copy(mediaSources = emptyList()), emptyList(), emptyMap())
         assertEquals(emptyList<String>(), cards.map { it.server.id })
+    }
+
+    @Test fun `a catalog lookup keeps the version picked by hand`() {
+        // Z9X 8K, 无瑕修女: Synology's REMUX picked by hand, the page reopened on AlphaTV-PRO's copy.
+        val alpha = Version(server("alpha", 0), film.copy(id = "a"), MediaSourceInfo("bluray"))
+        val synology = Version(server("synology", 1), film.copy(id = "s"), MediaSourceInfo("remux"))
+        assertEquals(listOf(alpha, synology), rankCatalogVersions(listOf(synology, alpha), VersionPrefs()))
+        assertEquals(listOf(synology, alpha), rankCatalogVersions(listOf(alpha, synology), VersionPrefs(manual = "synology" to "remux")))
+        // A pick that no longer exists changes nothing.
+        assertEquals(listOf(alpha, synology), rankCatalogVersions(listOf(synology, alpha), VersionPrefs(manual = "synology" to "gone")))
     }
 }

@@ -1,5 +1,6 @@
 package app.zmby.ui.components
 
+import androidx.core.graphics.createBitmap
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -74,7 +75,7 @@ object LogoContrast : Transformation {
             LogoTone.Blank -> throw IllegalStateException("the Logo has no visible pixels")
             LogoTone.Light -> input
             LogoTone.Dark -> {
-                val out = Bitmap.createBitmap(input.width, input.height, Bitmap.Config.ARGB_8888)
+                val out = createBitmap(input.width, input.height, Bitmap.Config.ARGB_8888)
                 val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(GREY_NEGATIVE) }
                 Canvas(out).drawBitmap(input, 0f, 0f, paint)
                 out

@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -38,6 +39,24 @@ class PlaybackMonitorTest {
 
     private fun TestScope.monitor(player: FakePlayer, reporter: Recorder, start: Long = 0, runtime: Long? = 9_000_000, percent: Int = 90) =
         PlaybackMonitor(player, reporter, start, runtime, percent, now = { testScheduler.currentTime })
+
+    @Test fun ignoresOldVideoWhileWaitingForThisAttempt() = runTest {
+        val player = FakePlayer().apply { status = playing(80_000, "old.mkv") }
+        val reporter = Recorder()
+        val monitor = PlaybackMonitor(player, reporter, 123_000, 9_000_000,
+            now = { testScheduler.currentTime }, acceptsStatus = { matchesPlaybackPath(it.path, "new.mkv") })
+        val job = launch { monitor.watch() }
+        advanceTimeBy(1_000)
+        assertTrue(reporter.events.isEmpty())
+        assertTrue(player.seeks.isEmpty())
+        player.status = playing(123_000, "new.mkv")
+        advanceTimeBy(1_000)
+        assertEquals(listOf("start@123000"), reporter.events)
+        job.cancel()
+        monitor.finish(ZidooResult(null, null, "user"))
+        monitor.finish(ZidooResult(null, null, "user"))
+        assertEquals(listOf("start@123000", "stopped@123000"), reporter.events)
+    }
 
     @Test
     fun reportsStartThenProgressEveryTenSeconds() = runTest {
@@ -185,5 +204,23 @@ class PlaybackMonitorTest {
         val outcome = m.finish(ZidooResult(positionMs = 590_000, durationMs = 600_000, endBy = "user"))
         assertEquals(true, outcome?.watched)
         assertEquals("played", reporter.events.last())
+    }
+
+    @Test
+    fun zidooReportsOnlyThePathOfAnHttpStream() {
+        // Z9X 8K, real server, direct play: getPlayStatus path for the URL zmby handed over.
+        val direct = "https://emby.example.com/videos/12845/original.mkv?DeviceId=d&MediaSourceId=mediasource_12845&PlaySessionId=p&api_key=k"
+        assertTrue(matchesPlaybackPath("/videos/12845/original.mkv", direct))
+        assertTrue(matchesPlaybackPath(direct, direct))
+        assertFalse(matchesPlaybackPath("/videos/999/original.mkv", direct))
+        assertFalse(matchesPlaybackPath("/videos/12845/original.mkv", "https://emby.example.com/"))
+        // Relay URLs carry a per-session id and may hold an encoded file name.
+        val relay = "http://127.0.0.1:41234/r/abc123/%E6%97%A0%E7%91%95%E4%BF%AE%E5%A5%B3.mkv"
+        assertTrue(matchesPlaybackPath("/r/abc123/%E6%97%A0%E7%91%95%E4%BF%AE%E5%A5%B3.mkv", relay))
+        assertTrue(matchesPlaybackPath("/r/abc123/无瑕修女.mkv", relay))
+        assertFalse(matchesPlaybackPath("/r/old999/无瑕修女.mkv", relay))
+        // Local STRM files keep the file rule; a bare path never matches a non-http URI.
+        assertTrue(matchesPlaybackPath("/storage/emulated/0/zmby/a.strm", "file:///storage/emulated/0/zmby/a.strm"))
+        assertFalse(matchesPlaybackPath("/a.strm", "content://x/a.strm"))
     }
 }

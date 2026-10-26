@@ -32,7 +32,7 @@ fun SlidingChoice(first: String, second: String, selected: Int, onSelect: (Int) 
         shape = shape, focusedScale = 1.02f, outline = 3.dp, shadow = 0.dp, focusKey = focusKey, label = "方式") {
         BoxWithConstraints(Modifier.width(360.dp).height(60.dp).well(shape).padding(5.dp)) {
             val segment = maxWidth / 2
-            Box(Modifier.offset(x = segment * position).width(segment).fillMaxHeight().background(Z.focusFill,shape))
+            Box(Modifier.offset { androidx.compose.ui.unit.IntOffset((segment * position).roundToPx(), 0) }.width(segment).fillMaxHeight().background(Z.focusFill,shape))
             Row(Modifier.fillMaxSize()) {
                 listOf(first,second).forEachIndexed { index,text ->
                     Box(Modifier.weight(1f).fillMaxHeight(),contentAlignment = Alignment.Center) {

@@ -3,8 +3,13 @@ package app.zmby.emby
 import app.zmby.media.fileTitle
 import app.zmby.media.visibleText
 import app.zmby.media.titleOf
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.nullable
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 
 /** Emby counts time in ticks of 100 ns. */
 const val TICKS_PER_MS = 10_000L
@@ -53,7 +58,7 @@ data class BaseItemDto(
     @SerialName("SeasonId") val seasonId: String? = null,
     @SerialName("ParentIndexNumber") val parentIndexNumber: Int? = null,
     @SerialName("IndexNumber") val indexNumber: Int? = null,
-    @SerialName("ProductionYear") val productionYear: Int? = null,
+    @SerialName("ProductionYear") @Serializable(with = KnownYear::class) val productionYear: Int? = null,
     @SerialName("RunTimeTicks") val runTimeTicks: Long? = null,
     @SerialName("ChildCount") val childCount: Int? = null,
     @SerialName("IsFolder") val isFolder: Boolean = false,
@@ -76,7 +81,7 @@ data class BaseItemDto(
     @SerialName("OriginalTitle") val originalTitle: String? = null,
     @SerialName("SortName") val sortName: String? = null,
     /** First air or release date (ISO); a person's birth date. */
-    @SerialName("PremiereDate") val premiereDate: String? = null,
+    @SerialName("PremiereDate") @Serializable(with = KnownDate::class) val premiereDate: String? = null,
     /** Cast and crew; only the single-item endpoint (or Fields=People) carries it. */
     @SerialName("People") val people: List<PersonDto> = emptyList(),
     /** A person's birthplace. */
@@ -194,6 +199,8 @@ data class MediaStream(
     @SerialName("IsDefault") val isDefault: Boolean = false,
     @SerialName("IsForced") val isForced: Boolean = false,
     @SerialName("DeliveryUrl") val deliveryUrl: String? = null,
+    /** An external subtitle's file (its name carries tags like 「chs&eng」 or 「特效」). */
+    @SerialName("Path") val path: String? = null,
     @SerialName("Width") val width: Int? = null,
     @SerialName("Height") val height: Int? = null,
     @SerialName("BitRate") val bitRate: Long? = null,
@@ -228,3 +235,32 @@ data class PlaybackReport(
     @SerialName("EventName") val eventName: String? = null,
     @SerialName("RunTimeTicks") val runTimeTicks: Long? = null,
 )
+
+/** One category of `GET /Movies/Recommendations`: 「因为你看过 X」 and its films. */
+@Serializable
+data class RecommendationDto(
+    @SerialName("Items") val items: List<BaseItemDto> = emptyList(),
+    @SerialName("RecommendationType") val type: String? = null,
+    @SerialName("BaselineItemName") val baselineItemName: String? = null,
+    @SerialName("CategoryId") val categoryId: Long? = null,
+)
+
+/** Years before this are Emby's placeholders for "unknown" (it writes 1 and 0001-01-01). */
+private const val FIRST_KNOWN_YEAR = 1800
+
+/** `ProductionYear`, with Emby's "unknown" (1, 0) read as null. */
+internal object KnownYear : KSerializer<Int?> {
+    private val inner = Int.serializer().nullable
+    override val descriptor = inner.descriptor
+    override fun deserialize(decoder: Decoder): Int? = inner.deserialize(decoder)?.takeIf { it >= FIRST_KNOWN_YEAR }
+    override fun serialize(encoder: Encoder, value: Int?) = inner.serialize(encoder, value)
+}
+
+/** `PremiereDate`, with Emby's "unknown" (0001-01-01T00:00:00Z) read as null. */
+internal object KnownDate : KSerializer<String?> {
+    private val inner = String.serializer().nullable
+    override val descriptor = inner.descriptor
+    override fun deserialize(decoder: Decoder): String? =
+        inner.deserialize(decoder)?.takeIf { d -> d.take(4).toIntOrNull()?.let { it >= FIRST_KNOWN_YEAR } != false }
+    override fun serialize(encoder: Encoder, value: String?) = inner.serialize(encoder, value)
+}

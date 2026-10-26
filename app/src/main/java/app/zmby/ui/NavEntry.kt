@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.currentCompositeKeyHash
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -40,11 +41,14 @@ class FocusMemory {
 
     /** Set when the user returns to the screen; cleared once [lastKey] has focus again or restore gave up. */
     var restorePending by mutableStateOf(false)
+    var restoreRequest by mutableIntStateOf(0)
+        private set
     var restored = false
 
     fun beginRestore() {
         restored = false
         restorePending = lastKey != null
+        restoreRequest++
     }
 }
 

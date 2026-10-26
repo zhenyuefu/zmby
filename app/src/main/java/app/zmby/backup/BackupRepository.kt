@@ -7,15 +7,29 @@ import app.zmby.log.ZLog
 import app.zmby.store.DataSourceRow
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.*
 
+/** What the LAN import page needs for remote backup and restore. */
+interface RemoteBackups {
+    val serverCount: Int
+    val serverIds: Set<String>
+    suspend fun export(options: BackupOptions, password: String): String
+    fun decode(text: String, password: String): BackupContent
+    fun preview(content: BackupContent): RestorePlan
+    fun removedBy(plan: RestorePlan): List<String>
+    suspend fun restore(content: BackupContent, mode: RestoreMode, replaceConfirmed: Boolean = false, progress: (Int, Int) -> Unit = { _, _ -> }): RestorePlan
+    fun restoredConfig(row: RestoreRow): ServerConfig?
+}
+
 /** File decoding and token verification finish before publishing one new registry snapshot. */
-class BackupRepository(private val app: ZmbyApp) {
+class BackupRepository(private val app: ZmbyApp) : RemoteBackups {
     private val lock = Mutex()
-    val serverCount get() = app.registry.all.size
-    val serverIds get() = app.registry.all.map { it.id }.toSet()
-    fun restoredConfig(row: RestoreRow): ServerConfig? = app.registry.all.map { it.config }.firstOrNull { c ->
+    override val serverCount get() = app.registry.all.size
+    override val serverIds get() = app.registry.all.map { it.id }.toSet()
+    override fun restoredConfig(row: RestoreRow): ServerConfig? = app.registry.all.map { it.config }.firstOrNull { c ->
         c.id == row.existingId || c.id == row.incoming.config.id ||
             row.incoming.config.embyServerId?.let { it == c.embyServerId && c.userId == row.incoming.config.userId } == true
     }
@@ -25,11 +39,11 @@ class BackupRepository(private val app: ZmbyApp) {
         BackupServer(status.config, home, search, caps.relay.name, caps.pinyinOverride.name, SourceFeature.entries.filter { !it.ordered }.associate { it.key to app.sources.enabled(it,status.id) })
     }, app.settings.backupValues(), providers = app.sources.providers().map { BackupProvider(it.provider.key,it.enabled,it.order) })
 
-    suspend fun export(options: BackupOptions, password: String): String = withContext(Dispatchers.IO) {
+    override suspend fun export(options: BackupOptions, password: String): String = withContext(Dispatchers.IO) {
         BackupCodec.encode(snapshot(), options, password, Build.MODEL)
     }
 
-    fun decode(text: String, password: String): BackupContent {
+    override fun decode(text: String, password: String): BackupContent {
         if (!text.trimStart().startsWith("[")) return BackupCodec.decode(text, password)
         val rows = ServerImport.parse(text).groupBy { it.name to it.user }.map { (_,lines) ->
             val first = lines.first()
@@ -40,33 +54,50 @@ class BackupRepository(private val app: ZmbyApp) {
         return BackupContent(rows, options = BackupOptions(tokens = false, serverSettings = false))
     }
 
-    fun preview(content: BackupContent): RestorePlan = RestorePlanner.plan(app.registry.all.map { it.config }, content)
+    override fun preview(content: BackupContent): RestorePlan = RestorePlanner.plan(app.registry.all.map { it.config }, content)
 
-    suspend fun restore(content: BackupContent, mode: RestoreMode, replaceConfirmed: Boolean = false): RestorePlan = withContext(Dispatchers.IO) {
+    /** Names of the current servers a full replace with [plan] would delete. */
+    override fun removedBy(plan: RestorePlan): List<String> {
+        val kept = plan.rows.mapNotNull { it.existingId }.toSet()
+        return app.registry.all.map { it.config }.filter { it.id !in kept }.map { it.name }
+    }
+
+    /**
+     * Restores [content]; logins are verified [VERIFY_PARALLEL] servers at a time and [progress]
+     * reports (verified, total) as each finishes.
+     */
+    override suspend fun restore(content: BackupContent, mode: RestoreMode, replaceConfirmed: Boolean,
+        progress: (Int, Int) -> Unit): RestorePlan = withContext(Dispatchers.IO) {
         require(mode != RestoreMode.Replace || replaceConfirmed) { "请再次确认全部替换" }
         lock.withLock {
             val existing = app.registry.all.map { it.config }
             val plan = RestorePlanner.plan(existing, content)
             val usedIds = existing.map { it.id }.toMutableSet()
-            val output = mutableListOf<ServerConfig>()
-            for (row in plan.rows) {
+            val drafts = plan.rows.map { row ->
                 val incoming = row.incoming.config
                 val old = existing.firstOrNull { it.id == row.existingId }
-                var config = if (old == null) {
-                    incoming.copy(id = incoming.id.takeUnless { it in usedIds } ?: ServerRegistry.newId())
-                } else {
-                    RestorePlanner.merge(old,incoming,content.options.serverSettings)
-                }
-                // An existing valid token wins. An incoming token is only tried if it did not work.
-                var valid = verify(config)
-                if (!valid && incoming.token.isNotBlank() && incoming.userId.isNotBlank() && (incoming.token != config.token || incoming.userId != config.userId)) {
-                    val replacement = config.copy(token = incoming.token, userId = incoming.userId)
-                    if (verify(replacement)) { config = replacement; valid = true }
-                }
-                config = config.copy(needsLogin = !valid)
-                ZLog.secret(config.token)
+                val config = if (old == null) incoming.copy(id = incoming.id.takeUnless { it in usedIds } ?: ServerRegistry.newId())
+                    else RestorePlanner.merge(old,incoming,content.options.serverSettings)
                 usedIds += config.id
-                output += config
+                config
+            }
+            val done = java.util.concurrent.atomic.AtomicInteger()
+            val gate = Semaphore(VERIFY_PARALLEL)
+            progress(0, drafts.size)
+            val output = coroutineScope {
+                drafts.zip(plan.rows).map { (draft, row) -> async { gate.withPermit {
+                    val incoming = row.incoming.config
+                    var config = draft
+                    // An existing valid token wins. An incoming token is only tried if it did not work.
+                    var valid = verify(config)
+                    if (!valid && incoming.token.isNotBlank() && incoming.userId.isNotBlank() && (incoming.token != config.token || incoming.userId != config.userId)) {
+                        val replacement = config.copy(token = incoming.token, userId = incoming.userId)
+                        if (verify(replacement)) { config = replacement; valid = true }
+                    }
+                    ZLog.secret(config.token)
+                    progress(done.incrementAndGet(), drafts.size)
+                    config.copy(needsLogin = !valid)
+                } } }.awaitAll()
             }
             val restored = if (mode == RestoreMode.Replace) output else existing.map { old -> output.firstOrNull { it.id == old.id } ?: old } + output.filter { row -> existing.none { it.id == row.id } }
             app.registry.restore(restored)
@@ -93,6 +124,8 @@ class BackupRepository(private val app: ZmbyApp) {
             plan
         }
     }
+
+    private companion object { const val VERIFY_PARALLEL = 4 }
 
     private suspend fun verify(config: ServerConfig): Boolean {
         if (config.token.isBlank() || config.userId.isBlank()) return false

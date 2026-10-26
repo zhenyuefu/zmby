@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,11 +60,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextOverflow
+import app.zmby.data.ServerStatus
+import app.zmby.emby.BaseItemDto
+import app.zmby.ui.components.GlassSurface
+import app.zmby.ui.components.GlassToggle
+import app.zmby.ui.components.HealthDot
+import app.zmby.ui.components.Icon
+import app.zmby.ui.components.liftShadow
+import app.zmby.ui.components.onFill
+import app.zmby.ui.components.panelSurface
 import app.zmby.data.BrowseQuery
 import app.zmby.data.BrowseSort
 import app.zmby.data.LetterRail
 import app.zmby.data.WatchFilter
 import app.zmby.ui.Nav
+import app.zmby.ui.Route
 import app.zmby.ui.components.Focusable
 import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.Glyph
@@ -88,15 +105,19 @@ import kotlinx.coroutines.launch
 
 private const val COLUMNS = 6
 private val POSTER = 240.dp
+/** Browse.dc.html: 6 × 240 posters with 52 between them, from x 80; the scrollbar sits at x 1830. */
+private val GRID_WIDTH = 80.dp + POSTER * COLUMNS + 52.dp * (COLUMNS - 1) + 30.dp
 
 /**
- * 电影 / 剧集 (ui-spec §2.8): a toolbar (server, library, sort with its direction, filters and their
- * chips), a six-column poster grid with a slot for every item, a scrollbar with 「第 n 部 · 共 m 部」,
- * a letter rail when sorted by title, and fast jumps (fast-forward / rewind, or holding up / down).
+ * 电影 / 剧集 (ui-spec §2.8, Browse · BrowseSeries): the page name with the library's count and the
+ * search pill; a two-row toolbar (server and library segments, then sort, direction, 筛选 with its
+ * count, the condition chips, 清除 and 「符合 n 部」); a six-column poster grid with a slot for every
+ * item; a scrollbar with 「第 n 部 · 共 m 部」, replaced by the letter rail when sorted by title; fast
+ * jumps (fast-forward / rewind, or holding up / down).
  */
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
-internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTargetUsed: () -> Unit) {
+internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, search: FocusRequester, entry: FocusRequester, onTargetUsed: () -> Unit) {
     val app = LocalContext.current.zmby
     val vm = screenModel("browse:$types") { BrowseViewModel(app, types) }
     val st by vm.state.collectAsStateWithLifecycle()
@@ -117,10 +138,16 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTarg
     // Closing a panel puts focus back on the button that opened it.
     val sortButton = remember { FocusRequester() }
     val filterButton = remember { FocusRequester() }
+    val moreButton = remember { FocusRequester() }
+    val firstRow = remember { FocusRequester() }
     fun closePanel() {
-        val back = if (panel == "filter") filterButton else sortButton
+        val back = when (panel) {
+            "filter" -> filterButton
+            "servers" -> moreButton
+            else -> sortButton
+        }
         panel = null
-        scope.launch { awaitFrame(); runCatching { back.requestFocus() } }
+        scope.launch { back.requestWhenReady() }
     }
     // The slot the remote is on, and where a jump wants focus to land.
     var focused by remember { mutableIntStateOf(0) }
@@ -156,20 +183,27 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTarg
         focusTarget = index
     }
 
-    Column(Modifier.fillMaxSize().padding(top = 120.dp)) {
+    val focusedRef = pages[focused / BrowseViewModel.PAGE]?.getOrNull(focused % BrowseViewModel.PAGE)
+    Column(Modifier.fillMaxSize()) {
+        PageHeader(if (types == "Series") "剧集" else "电影", st.libraryTotal?.let { "$it 部" }, search, down = if (enabled.size > 1 || st.libraries.size > 1) firstRow else sortButton) { nav.go(Route.Search) }
         Toolbar(
             st = st,
-            servers = enabled.map { Segment(it.name, dim = it.health == Health.Off) },
-            serverIndex = enabled.indexOfFirst { it.id == st.server }.coerceAtLeast(0),
-            onServer = { i -> vm.select(enabled[i].id, null) },
+            servers = enabled,
+            onServer = { id -> vm.select(id, null) },
+            onMore = { panel = "servers" },
             onLibrary = { i -> vm.select(st.server, st.libraries.getOrNull(i - 1)?.id) },
             onQuery = vm::setQuery,
             onPanel = { panel = it },
             sortButton = sortButton,
             filterButton = filterButton,
+            moreButton = moreButton,
+            filterOpen = panel == "filter",
+            search = search,
+            firstRow = firstRow,
+            entry = entry.takeIf { st.total == 0 },
         )
         Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
+            Box(Modifier.width(GRID_WIDTH).fillMaxHeight()) {
                 if (st.loaded && st.total == 0) {
                     Text(if (st.query.filtered) "没有符合筛选的内容" else "没有内容", fontSize = 26.sp, color = Z.textSecondary, modifier = Modifier.padding(start = 80.dp, top = 40.dp))
                 }
@@ -180,11 +214,13 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTarg
                         GlassButton("重试", vm::retry, glyph = Glyph.Refresh, height = 64.dp)
                     }
                 }
+                val dim by animateFloatAsState(if (panel == "filter") 0.45f else 1f, tween(200), label = "gridDim")
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(COLUMNS),
                     state = grid,
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer { alpha = dim }
                         .onPreviewKeyEvent { e ->
                             when {
                                 e.type == KeyEventType.KeyUp && (e.key == Key.DirectionDown || e.key == Key.DirectionUp) -> { held = false; false }
@@ -199,9 +235,9 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTarg
                                 else -> false
                             }
                         },
-                    contentPadding = PaddingValues(start = 80.dp, end = 24.dp, top = 24.dp, bottom = 80.dp),
-                    horizontalArrangement = Arrangement.spacedBy(28.dp),
-                    verticalArrangement = Arrangement.spacedBy(36.dp),
+                    contentPadding = PaddingValues(start = 80.dp, end = 30.dp, top = 40.dp, bottom = 80.dp),
+                    horizontalArrangement = Arrangement.spacedBy(52.dp),
+                    verticalArrangement = Arrangement.spacedBy(40.dp),
                 ) {
                     items(st.total, key = { "${st.generation}:$it" }, contentType = { "poster" }) { i ->
                         val ref = pages[i / BrowseViewModel.PAGE]?.getOrNull(i % BrowseViewModel.PAGE)
@@ -213,13 +249,15 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTarg
                                 focusTarget = null
                             }
                         }
-                        Box(Modifier.focusRequester(requester)) {
+                        Box(Modifier.focusRequester(requester).then(if (i == 0) Modifier.focusRequester(entry) else Modifier)) {
+                            val item = ref?.item
                             PosterCard2x3(
                                 imageUrl = ref?.let { app.library.primaryImage(it) },
-                                title = ref?.item?.let(::titleOf).orEmpty(),
+                                title = item?.let(::titleOf).orEmpty(),
                                 onClick = { if (ref != null) nav.open(ref) },
                                 width = POSTER,
-                                subtitle = ref?.item?.productionYear?.toString() ?: " ",
+                                topEnd = item?.let(::unwatchedBadge),
+                                subtitle = item?.let(::browseCaption) ?: " ",
                                 focusKey = ref?.let { "grid:${it.key}" } ?: "slot:$i",
                                 onFocus = { focused = i; lastMove = System.currentTimeMillis() },
                                 modifier = Modifier.onMenuKey { if (ref != null) app.toggleWatchlist(scope, ref) },
@@ -228,77 +266,182 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, onTarg
                     }
                 }
             }
-            if (st.query.sort == BrowseSort.Title && st.total > 0) {
-                LetterRailColumn(onLetter = { letter -> scope.launch { vm.indexOf(letter)?.let { jumpTo(it) } } })
+            Box(Modifier.fillMaxHeight().weight(1f)) {
+                if (st.query.sort == BrowseSort.Title && st.total > 0) {
+                    LetterRailColumn(current = focusedRef?.item?.let(::letterOf), onLetter = { letter -> scope.launch { vm.indexOf(letter)?.let { jumpTo(it) } } })
+                } else {
+                    val viewport by remember(grid) {
+                        derivedStateOf { grid.firstVisibleItemIndex to grid.layoutInfo.visibleItemsInfo.size }
+                    }
+                    Scrollbar(position = focused, first = viewport.first, visible = viewport.second, total = st.total, lastMove = lastMove)
+                }
             }
-            Scrollbar(position = focused, first = grid.firstVisibleItemIndex, visible = grid.layoutInfo.visibleItemsInfo.size, total = st.total, lastMove = lastMove)
         }
     }
     when (panel) {
         "sort" -> SortPanel(st.query, onPick = { vm.setQuery(st.query.sortedBy(it)); closePanel() }, onDismiss = ::closePanel)
-        "filter" -> FilterPanel(st.query, st.genres, onChange = vm::setQuery, onDismiss = ::closePanel)
+        "filter" -> FilterPanel(st.query, st.genres, st.total, onChange = vm::setQuery, onDismiss = ::closePanel)
+        "servers" -> ServerPanel(enabled, st.server, onPick = { id -> vm.select(id, null); closePanel() }, onDismiss = ::closePanel)
     }
 }
+
+/** 「2024 · 8.1」 for a film, 「2014 · 6 季」 for a series. */
+internal fun browseCaption(item: BaseItemDto): String = listOfNotNull(
+    item.productionYear?.toString(),
+    if (item.type == "Series") item.childCount?.takeIf { it > 0 }?.let { "$it 季" } else item.communityRating?.takeIf { it > 0 }?.let { "%.1f".format(java.util.Locale.ROOT, it) },
+).joinToString(" · ").ifEmpty { " " }
+
+/** A series poster's corner: 「5 集未看」 or 「全部看完」 (BrowseSeries.dc.html); nothing for films. */
+internal fun unwatchedBadge(item: BaseItemDto): String? {
+    if (item.type != "Series") return null
+    val data = item.userData ?: return null
+    val unplayed = data.unplayedItemCount
+    return when {
+        unplayed != null && unplayed > 0 -> "$unplayed 集未看"
+        data.played || unplayed == 0 -> "全部看完"
+        else -> null
+    }
+}
+
+/** The rail letter a title files under: its sort name's first letter, a Chinese title's pinyin initial, else #. */
+internal fun letterOf(item: BaseItemDto): String {
+    val name = (item.sortName ?: item.name).orEmpty().trim()
+    val c = name.firstOrNull() ?: return "#"
+    if (c.uppercaseChar() in 'A'..'Z') return c.uppercaseChar().toString()
+    if (app.zmby.search.Pinyin.isHan(c)) {
+        val initial = app.zmby.search.Pinyin.initials(c.toString()).firstOrNull()?.uppercaseChar()
+        if (initial != null && initial in 'A'..'Z') return initial.toString()
+    }
+    return "#"
+}
+
+/** Servers shown as segments; the rest go behind 「更多 n 台」 (the chosen one always shows). */
+internal fun visibleServers(servers: List<ServerStatus>, chosen: String?, max: Int = 3): List<ServerStatus> {
+    if (servers.size <= max + 1) return servers
+    val first = servers.take(max)
+    val pick = servers.firstOrNull { it.id == chosen }
+    return if (pick == null || pick in first) first else first.dropLast(1) + pick
+}
+
+private val Pill = RoundedCornerShape(percent = 50)
 
 @Composable
 private fun Toolbar(
     st: BrowseState,
-    servers: List<Segment>,
-    serverIndex: Int,
-    onServer: (Int) -> Unit,
+    servers: List<ServerStatus>,
+    onServer: (String) -> Unit,
+    onMore: () -> Unit,
     onLibrary: (Int) -> Unit,
     onQuery: (BrowseQuery) -> Unit,
     onPanel: (String) -> Unit,
     sortButton: FocusRequester,
     filterButton: FocusRequester,
+    moreButton: FocusRequester,
+    filterOpen: Boolean,
+    search: FocusRequester,
+    firstRow: FocusRequester,
+    entry: FocusRequester?,
 ) {
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 80.dp, end = 80.dp, top = 30.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(18.dp),
-    ) {
-        if (servers.size > 1) {
-            // OK confirms: passing over a segment on the way to the sort button must not reload the grid.
-            SegmentedWell(servers, serverIndex, onServer, fontSize = 20, horizontalPadding = 22.dp, labelPrefix = "服务器", segHeight = 50.dp, selectOnFocus = false)
+    Column(Modifier.fillMaxWidth().padding(start = 80.dp, end = 80.dp, top = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(Modifier.upToSearch(search).focusRequester(firstRow).focusGroup(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (servers.size > 1) {
+                val shown = visibleServers(servers, st.server)
+                val hidden = servers.size - shown.size
+                // OK confirms: passing over a segment on the way to the sort button must not reload the grid.
+                SegmentedWell(
+                    shown.map { Segment(it.name, dim = it.health == Health.Off, health = it.health) } + listOfNotNull(if (hidden > 0) Segment("更多 $hidden 台") else null),
+                    shown.indexOfFirst { it.id == st.server }.coerceAtLeast(0),
+                    { i -> if (i < shown.size) onServer(shown[i].id) else onMore() },
+                    fontSize = 19, horizontalPadding = 22.dp, labelPrefix = "服务器", segHeight = 50.dp, selectOnFocus = false,
+                    modifier = Modifier.focusRequester(moreButton),
+                )
+            }
+            if (st.libraries.size > 1) {
+                SegmentedWell(
+                    items = listOf(Segment("全部")) + st.libraries.map { Segment(it.name) },
+                    selected = st.libraries.indexOfFirst { it.id == st.libraryId } + 1,
+                    onSelect = onLibrary,
+                    selectOnFocus = false,
+                    fontSize = 19,
+                    horizontalPadding = 22.dp,
+                    labelPrefix = "库",
+                    segHeight = 50.dp,
+                )
+            }
         }
-        if (st.libraries.size > 1) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            ToolbarPill(
+                "排序 · ${st.query.sort.label}",
+                { onPanel("sort") },
+                Modifier.focusRequester(sortButton).then(if (entry != null) Modifier.focusRequester(entry) else Modifier),
+                trailing = { Icon(Glyph.Down, size = 20.dp, strokeWidth = 2.4f) },
+            )
             SegmentedWell(
-                items = listOf(Segment("全部")) + st.libraries.map { Segment(it.name) },
-                selected = st.libraries.indexOfFirst { it.id == st.libraryId } + 1,
-                onSelect = onLibrary,
+                items = listOf(Segment("降序"), Segment("升序")),
+                selected = if (st.query.descending) 0 else 1,
+                onSelect = { onQuery(st.query.copy(descending = it == 0)) },
                 selectOnFocus = false,
-                fontSize = 20,
+                fontSize = 19,
                 horizontalPadding = 22.dp,
-                labelPrefix = "库",
+                labelPrefix = "顺序",
                 segHeight = 50.dp,
             )
+            val count = st.query.chips().size
+            ToolbarPill("筛选", { onPanel("filter") }, Modifier.focusRequester(filterButton), on = filterOpen, label = "筛选", trailing = {
+                if (count > 0) CountBadge(count, inverted = filterOpen)
+                if (filterOpen) Icon(Glyph.Up, size = 20.dp, strokeWidth = 2.4f)
+            })
+            // Each chip removes its filter; 清除 removes them all.
+            st.query.chips().forEach { (label, without) -> ConditionChip(label, onClick = { onQuery(without) }) }
+            if (st.query.filtered) ConditionChip("清除", plain = true, onClick = { onQuery(st.query.cleared()) })
+            Spacer(Modifier.weight(1f))
+            if (st.sortUnsupported) Text("这台服务器不支持该排序", fontSize = 19.sp, color = Z.warn, maxLines = 1)
+            if (st.loaded) Text("符合 ${st.total} 部", fontSize = 19.sp, color = Z.textSecondary, maxLines = 1)
         }
-        GlassButton("${st.query.sort.label} ›", { onPanel("sort") }, Modifier.focusRequester(sortButton), glyph = Glyph.Sort, height = 56.dp, horizontalPadding = 26.dp, fontSize = 20, label = "排序 ${st.query.sort.label}")
-        SegmentedWell(
-            items = listOf(Segment("降序"), Segment("升序")),
-            selected = if (st.query.descending) 0 else 1,
-            onSelect = { onQuery(st.query.copy(descending = it == 0)) },
-            selectOnFocus = false,
-            fontSize = 20,
-            horizontalPadding = 20.dp,
-            labelPrefix = "顺序",
-            segHeight = 50.dp,
-        )
-        val count = st.query.chips().size
-        GlassButton(if (count > 0) "筛选 · $count ›" else "筛选 ›", { onPanel("filter") }, Modifier.focusRequester(filterButton), glyph = Glyph.Filter, height = 56.dp, horizontalPadding = 26.dp, fontSize = 20, label = "筛选")
-        // Each chip removes its filter; 清除 removes them all.
-        st.query.chips().forEach { (label, without) ->
-            GlassButton(label, { onQuery(without) }, height = 48.dp, horizontalPadding = 20.dp, fontSize = 18, label = "移除筛选 $label")
+    }
+}
+
+/** `.lg.pill` in the toolbar: 64 high, 21/600, with an optional trailing glyph or count. */
+@Composable
+private fun ToolbarPill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, on: Boolean = false, label: String = text, trailing: @Composable () -> Unit = {}) {
+    GlassSurface(onClick, modifier, label = label, on = on) {
+        Row(Modifier.height(64.dp).padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            trailing()
         }
-        if (st.query.filtered) GlassButton("清除", { onQuery(st.query.cleared()) }, height = 48.dp, horizontalPadding = 20.dp, fontSize = 18)
-        if (st.total > 0) Text("${st.total} 部", fontSize = 20.sp, color = Z.textTertiary)
-        if (st.sortUnsupported) Text("这台服务器不支持该排序", fontSize = 20.sp, color = Z.warn)
+    }
+}
+
+/** `.cnt`: the white count bubble on 筛选 (dark on the lit button). */
+@Composable
+private fun CountBadge(n: Int, inverted: Boolean) {
+    Box(
+        Modifier.height(26.dp).widthIn(min = 26.dp).background(if (inverted) Z.onFocus else Color.White, Pill).padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) { Text("$n", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = if (inverted) Color.White else Z.onFocus) }
+}
+
+/** `.chip`: a chosen condition with ✕ (OK removes it), or the plain 清除. */
+@Composable
+private fun ConditionChip(text: String, plain: Boolean = false, onClick: () -> Unit) {
+    Focusable(onClick, shape = Pill, focusedScale = 1.06f, outline = 0.dp, shadow = 0.dp, label = if (plain) text else "移除筛选 $text") { f ->
+        Row(
+            Modifier.height(48.dp)
+                .then(if (f) Modifier.liftShadow(Pill).onFill(Pill) else if (!plain) Modifier.background(Color.White.copy(alpha = 0.10f), Pill) else Modifier)
+                .padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            val fg = if (f) Z.onFocus else if (plain) Z.textPrimary.copy(alpha = 0.75f) else Z.textPrimary
+            Text(text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = fg)
+            if (!plain) Icon(Glyph.Close, size = 16.dp, color = fg, strokeWidth = 2.4f)
+        }
     }
 }
 
 /**
- * The thin glass track on the right: the thumb's length and place follow the grid against the
- * server's total; 「第 n 部 · 共 m 部」 floats by it while moving and fades a second after.
+ * The thin track at x 1830: the thumb's length and place follow the grid against the server's total;
+ * 「第 n 部 · 共 m 部」 floats in a small glass pill left of the thumb while moving and fades a second after.
  */
 @Composable
 private fun Scrollbar(position: Int, first: Int, visible: Int, total: Int, lastMove: Long) {
@@ -310,45 +453,43 @@ private fun Scrollbar(position: Int, first: Int, visible: Int, total: Int, lastM
         shown = false
     }
     val alpha by animateFloatAsState(if (shown) 1f else 0f, tween(300), label = "position")
-    BoxWithConstraints(Modifier.width(56.dp).fillMaxHeight().padding(top = 24.dp, bottom = 80.dp, end = 32.dp)) {
+    BoxWithConstraints(Modifier.padding(start = 20.dp, top = 40.dp).width(6.dp).height(720.dp)) {
         if (total <= 0) return@BoxWithConstraints
         val trackHeight = maxHeight
         val fraction = (visible.toFloat() / total).coerceIn(0.06f, 1f)
         val offset = (first.toFloat() / total).coerceIn(0f, 1f - fraction)
-        Box(Modifier.align(Alignment.TopEnd).width(8.dp).fillMaxHeight().clip(RoundedCornerShape(4.dp)).background(Z.textPrimary.copy(alpha = 0.12f)))
-        Box(
-            Modifier.align(Alignment.TopEnd).offset(y = trackHeight * offset).width(8.dp).height(trackHeight * fraction)
-                .clip(RoundedCornerShape(4.dp)).background(Z.textPrimary.copy(alpha = 0.7f)),
-        )
+        Box(Modifier.fillMaxSize().clip(Pill).background(Z.textPrimary.copy(alpha = 0.12f)))
+        Box(Modifier.offset(y = trackHeight * offset).fillMaxWidth().height(trackHeight * fraction).clip(Pill).background(Z.textPrimary))
         if (alpha > 0f) {
             // Left of the track, over the grid's last column: measured without the track's narrow width.
             Box(
-                Modifier.align(Alignment.TopEnd).offset(x = (-22).dp, y = trackHeight * offset)
+                Modifier.align(Alignment.TopEnd).offset(x = (-18).dp, y = trackHeight * offset)
                     .wrapContentWidth(Alignment.End, unbounded = true).alpha(alpha),
             ) {
                 Text(
                     "第 ${position + 1} 部 · 共 $total 部",
-                    fontSize = 20.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.glass(RoundedCornerShape(percent = 50), shadow = false).padding(horizontal = 18.dp, vertical = 8.dp),
+                    modifier = Modifier.glass(Pill, shadow = false).padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
         }
     }
 }
 
-/** 字母轨 (# A–Z) beside the grid when sorted by title; OK jumps to the first title with that letter. */
+/** 字母轨 (# A–Z, x 1832) in place of the scrollbar when sorted by title; the focused title's letter is a white pill. */
 @Composable
-private fun LetterRailColumn(onLetter: (String) -> Unit) {
+private fun LetterRailColumn(current: String?, onLetter: (String) -> Unit) {
     Column(
-        Modifier.width(44.dp).fillMaxHeight().padding(top = 24.dp, bottom = 60.dp).verticalScroll(rememberScrollState()).focusGroup(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        Modifier.padding(start = 22.dp, top = 24.dp).width(40.dp).focusGroup(),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         LetterRail.LETTERS.forEach { letter ->
-            Focusable({ onLetter(letter) }, shape = RoundedCornerShape(percent = 50), focusedScale = 1.3f, outline = 0.dp, shadow = 0.dp, label = "字母 $letter", focusKey = "letter:$letter") { f ->
-                Box(Modifier.size(30.dp).then(if (f) Modifier.background(Z.focusFill, RoundedCornerShape(percent = 50)) else Modifier), contentAlignment = Alignment.Center) {
-                    Text(letter, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (f) Z.onFocus else Z.textSecondary)
+            Focusable({ onLetter(letter) }, shape = Pill, focusedScale = 1.3f, outline = 0.dp, shadow = 0.dp, label = "字母 $letter", focusKey = "letter:$letter") { f ->
+                val lit = f || letter == current
+                Box(Modifier.size(30.dp, 25.dp).then(if (lit) Modifier.background(Z.focusFill, Pill) else Modifier), contentAlignment = Alignment.Center) {
+                    Text(letter, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (lit) Z.onFocus else Z.textTertiary)
                 }
             }
         }
@@ -371,50 +512,113 @@ private fun SortPanel(query: BrowseQuery, onPick: (BrowseSort) -> Unit, onDismis
     }
 }
 
-/** 筛选: genres of this library, decades, watch state, favourites and 4K; every change applies at once. */
-@OptIn(ExperimentalLayoutApi::class)
+/** 更多 n 台: every enabled server, in priority order, with its health. */
 @Composable
-private fun FilterPanel(query: BrowseQuery, genres: List<String>, onChange: (BrowseQuery) -> Unit, onDismiss: () -> Unit) {
-    OverlayPanel(onDismiss, width = 980.dp) { first ->
-        @Composable
-        fun Title(text: String) = Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Z.textTertiary, modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 4.dp))
-        Title("观看状态")
-        SegmentedWell(
-            items = WatchFilter.entries.map { Segment(it.label) },
-            selected = query.watched.ordinal,
-            onSelect = { onChange(query.copy(watched = WatchFilter.entries[it])) },
-            selectOnFocus = false,
-            fontSize = 20,
-            labelPrefix = "观看状态",
-            modifier = Modifier.focusRequester(first),
-        )
-        Title("收藏与画质")
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ToggleChip("只看收藏", query.favorite) { onChange(query.copy(favorite = !query.favorite)) }
-            ToggleChip("4K", query.uhd) { onChange(query.copy(uhd = !query.uhd)) }
-        }
-        Title("年代")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            BrowseQuery.DECADES.forEach { d ->
-                ToggleChip("$d 年代", d in query.decades) { onChange(query.copy(decades = if (d in query.decades) query.decades - d else query.decades + d)) }
-            }
-        }
-        if (genres.isNotEmpty()) {
-            Title("类型")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                genres.forEach { g -> ToggleChip(g, g in query.genres) { onChange(query.copy(genres = if (g in query.genres) query.genres - g else query.genres + g)) } }
+private fun ServerPanel(servers: List<ServerStatus>, current: String?, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    OverlayPanel(onDismiss, width = 600.dp) { first ->
+        servers.forEach { s ->
+            SelectableRow(
+                onClick = { onPick(s.id) },
+                modifier = if (s.id == current) Modifier.focusRequester(first) else Modifier,
+                selected = s.id == current,
+                dimmed = s.health == Health.Off,
+                radius = 20.dp,
+                label = "服务器 ${s.name}",
+            ) {
+                HealthDot(s.health)
+                Text(s.name, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text(latencyLabel(s), fontSize = 18.sp, color = app.zmby.ui.components.secondaryText())
             }
         }
     }
 }
 
+/**
+ * 筛选 (BrowseSeries.dc.html): a 820-wide panel under the button over the dimmed grid: 观看状态,
+ * 只看收藏 and 4K switches, 年代 and 类型 chips (chosen = bright with an outline), then 清除 and
+ * 「完成 · 符合 n 部」, which follows every change. Back is 完成.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ToggleChip(label: String, on: Boolean, onToggle: () -> Unit) {
-    app.zmby.ui.components.GlassSurface(onToggle, on = on, label = "$label ${if (on) "已选" else "未选"}") {
-        Row(Modifier.height(52.dp).padding(horizontal = 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (on) app.zmby.ui.components.Icon(Glyph.Check, size = 20.dp, strokeWidth = 2.6f)
-            Text(label, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+private fun FilterPanel(query: BrowseQuery, genres: List<String>, total: Int, onChange: (BrowseQuery) -> Unit, onDismiss: () -> Unit) {
+    BackHandler(onBack = onDismiss)
+    BlockSideNav()
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) { first.requestWhenReady() }
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .padding(start = 520.dp, top = 290.dp)
+                .width(820.dp)
+                .heightIn(max = 760.dp)
+                .panelSurface(RoundedCornerShape(36.dp))
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 34.dp, vertical = 30.dp)
+                .focusProperties { onExit = { cancelFocusChange() } }
+                .focusGroup(),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            @Composable
+            fun Title(text: String) = Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Z.textTertiary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { Title("观看状态") }
+                SegmentedWell(
+                    items = WatchFilter.entries.map { Segment(it.label) },
+                    selected = query.watched.ordinal,
+                    onSelect = { onChange(query.copy(watched = WatchFilter.entries[it])) },
+                    selectOnFocus = false,
+                    fontSize = 19,
+                    labelPrefix = "观看状态",
+                    modifier = Modifier.focusRequester(first),
+                )
+            }
+            SwitchRow("只看收藏", query.favorite) { onChange(query.copy(favorite = !query.favorite)) }
+            SwitchRow("4K", query.uhd) { onChange(query.copy(uhd = !query.uhd)) }
+            Title("年代")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                BrowseQuery.DECADES.forEach { d ->
+                    FilterChip("$d 年代", d in query.decades) { onChange(query.copy(decades = if (d in query.decades) query.decades - d else query.decades + d)) }
+                }
+            }
+            if (genres.isNotEmpty()) {
+                Title("类型")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    genres.forEach { g -> FilterChip(g, g in query.genres) { onChange(query.copy(genres = if (g in query.genres) query.genres - g else query.genres + g)) } }
+                }
+            }
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                ToolbarPill("清除", { onChange(query.cleared()) })
+                ToolbarPill("完成 · 符合 $total 部", onDismiss, label = "完成")
+            }
         }
+    }
+}
+
+/** `.trow`: a 60-high row with its label and a switch; OK toggles it. */
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onToggle: () -> Unit) {
+    SelectableRow(onToggle, showCheck = false, radius = 18.dp, padding = PaddingValues(horizontal = 14.dp, vertical = 7.dp), label = "$label ${if (checked) "开" else "关"}") {
+        Text(label, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        GlassToggle(checked)
+    }
+}
+
+/** `.chip` in the filter panel: chosen = 22 % white with an outline; focus = white and 1.06. */
+@Composable
+private fun FilterChip(label: String, on: Boolean, onToggle: () -> Unit) {
+    Focusable(onToggle, shape = Pill, focusedScale = 1.06f, outline = 0.dp, shadow = 0.dp, label = "$label ${if (on) "已选" else "未选"}") { f ->
+        Box(
+            Modifier.height(50.dp)
+                .then(
+                    when {
+                        f -> Modifier.liftShadow(Pill).onFill(Pill)
+                        on -> Modifier.background(Color.White.copy(alpha = 0.22f), Pill).border(1.5.dp, Color.White.copy(alpha = 0.6f), Pill)
+                        else -> Modifier.background(Color.White.copy(alpha = 0.08f), Pill)
+                    },
+                )
+                .padding(horizontal = 20.dp),
+            contentAlignment = Alignment.Center,
+        ) { Text(label, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = if (f) Z.onFocus else Z.textPrimary) }
     }
 }
 
@@ -422,6 +626,7 @@ private fun ToggleChip(label: String, on: Boolean, onToggle: () -> Unit) {
 @Composable
 internal fun OverlayPanel(onDismiss: () -> Unit, width: androidx.compose.ui.unit.Dp, content: @Composable (first: FocusRequester) -> Unit) {
     BackHandler(onBack = onDismiss)
+    BlockSideNav()
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
     Box(Modifier.fillMaxSize().background(Z.bg.copy(alpha = 0.78f)), contentAlignment = Alignment.Center) {

@@ -81,18 +81,28 @@ object ArtworkLanguage {
 }
 
 /** Bangumi-data supplies aliases and subject IDs; it does not prove season/episode offsets. */
-object AnimeAliases {
-    fun dataset(data: JsonElement): JsonArray? = data as? JsonArray ?: data.obj()["items"] as? JsonArray
-    fun names(row: JsonObject): List<String> = listOfNotNull(row.str("title")) + row.child("titleTranslate").values
-        .flatMap { (it as? JsonArray).orEmpty().mapNotNull { v -> (v as? JsonPrimitive)?.contentOrNull } }
-    fun normalize(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
-    fun find(data: JsonArray, names: List<String>, year: Int?): JsonObject? {
-        val keys = names.filter { it.isNotBlank() }.map(::normalize).toSet()
-        return data.map { it.obj() }.filter { row ->
-            names(row).any { normalize(it) in keys } && (year == null || row.str("begin")?.take(4)?.toIntOrNull() == year)
-        }.distinctBy { subject(it) ?: it.str("title") }.singleOrNull()
+/**
+ * TMDB's `region` takes an ISO 3166-1 country, not a script: zh-Hans charts come from mainland
+ * China, zh-Hant from Taiwan, and a bare language uses its main country.
+ */
+object CatalogRegion {
+    private val defaults = mapOf("zh" to "CN", "ja" to "JP", "ko" to "KR", "en" to "US", "fr" to "FR", "de" to "DE",
+        "es" to "ES", "it" to "IT", "pt" to "BR", "ru" to "RU", "th" to "TH", "vi" to "VN")
+
+    fun of(language: String): String {
+        val parts = language.trim().replace('_', '-').split('-').filter { it.isNotEmpty() }
+        parts.drop(1).firstOrNull { it.length == 2 && it.all(Char::isLetter) }?.let { return it.uppercase() }
+        when (parts.drop(1).firstOrNull { it.length == 4 }?.lowercase()) {
+            "hans" -> return "CN"
+            "hant" -> return "TW"
+        }
+        return defaults[parts.firstOrNull()?.lowercase()] ?: "US"
     }
-    fun subject(row: JsonObject) = row.rows("sites").firstOrNull { it.str("site") == "bangumi" }?.str("id")
+}
+
+object AnimeAliases {
+    /** Titles compare by letters and digits only, case-insensitively. */
+    fun normalize(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
 }
 
 /** Presentation-only card: navigation intercepts it before any server or playback operation. */

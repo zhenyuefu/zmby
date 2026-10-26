@@ -6,7 +6,12 @@ import app.zmby.emby.BaseItemDto
 
 /** Stable resource addresses remain server + item; catalogue addresses can never be played. */
 data class ResourceBatch(val server: String, val episodes: List<ServerItem>, val verified: Boolean)
-data class EpisodeResources(val matched: Map<String, List<ServerItem>>, val unmatched: List<ServerItem>)
+data class EpisodeResources(
+    val matched: Map<String, List<ServerItem>>,
+    val unmatched: List<ServerItem>,
+    /** Why each unmatched entry (by [ServerItem.key]) is not under an episode: 「没有季集编号」 and the like. */
+    val reasons: Map<String, String> = emptyMap(),
+)
 object ResourceMapping {
     fun sharesId(a: BaseItemDto, b: BaseItemDto): Boolean = a.type == b.type && listOf("tmdb", "imdb", "tvdb", "bangumi").any { key ->
         a.providerId(key)?.let { id -> b.providerId(key)?.equals(id, true) } == true
@@ -20,6 +25,7 @@ object ResourceMapping {
     fun episodes(work: CatalogWork, catalog: List<CatalogEpisode>, batches: List<ResourceBatch>): EpisodeResources {
         val map = mutableMapOf<String, MutableList<ServerItem>>()
         val extra = mutableListOf<ServerItem>()
+        val reasons = mutableMapOf<String, String>()
         for (batch in batches) for (ref in batch.episodes) {
             val ep = ref.item
             val external = ep.providerId(work.ref.source)
@@ -33,9 +39,19 @@ object ResourceMapping {
                 it.item.seriesId == ep.seriesId && it.item.parentIndexNumber == ep.parentIndexNumber && it.item.indexNumber == ep.indexNumber
             } > 1
             val target = exact ?: numbered?.takeUnless { ambiguousNumber }
-            if (target == null) extra += ref else map.getOrPut(target.id) { mutableListOf() }.add(ref)
+            if (target == null) {
+                extra += ref
+                reasons[ref.key] = when {
+                    !batch.verified -> "剧集身份未确认"
+                    external != null -> "外部 ID 对不上目录"
+                    ep.parentIndexNumber == null || ep.indexNumber == null -> "没有季集编号"
+                    work.ref.source != "tmdb" -> "编号与番剧目录不对应"
+                    ambiguousNumber -> "同一集有多条"
+                    else -> "目录里没有这一集"
+                }
+            } else map.getOrPut(target.id) { mutableListOf() }.add(ref)
         }
-        return EpisodeResources(map.mapValues { it.value.distinctBy { ref -> ref.key } }, extra.distinctBy { it.key })
+        return EpisodeResources(map.mapValues { it.value.distinctBy { ref -> ref.key } }, extra.distinctBy { it.key }, reasons)
     }
 }
 

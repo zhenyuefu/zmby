@@ -20,6 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import app.zmby.data.InputField
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -285,6 +286,9 @@ private fun OptionsCard(s: ServerStatus, onRemoved: () -> Unit) {
             scope.launch { library.measure(s.id) }
         }, sub = uaLabel(ua, if (s.measured) s.latencyMs != null else null))
         if (ua.mode == UaMode.Custom) {
+            var phone by remember(s.id) { mutableStateOf(false) }
+            PhoneInputRow("自定义 User-Agent", if (ua.custom.isNullOrBlank()) "未设置" else "已设置") { phone = true }
+            if (phone) PhoneInputDialog(InputField.UserAgent, server = s.id, onDismiss = { phone = false; scope.launch { library.measure(s.id) } }, onRemote = { phone = false })
             Box(Modifier.padding(horizontal = 24.dp, vertical = 8.dp)) {
                 var text by remember(s.id) { mutableStateOf(ua.custom.orEmpty()) }
                 Field("自定义 User-Agent", text, { text = it }, KeyboardType.Text, placeholder = "Mozilla 5.0 …", last = true, onSubmit = {
@@ -297,7 +301,7 @@ private fun OptionsCard(s: ServerStatus, onRemoved: () -> Unit) {
             true -> "检测：302 跳转到网盘直链"
             false -> "检测：直接返回文件"
             null -> "检测：尚未播放过"
-        }.let { if (caps.relay == Override.Auto && ua.needsRelay) "自动：走本地转发，播放器发不出${ua.effective.label} 身份" else it }
+        }.let { if (caps.relay == Override.Auto) "自动：先直连，播放失败后尝试一次本地转发；$it" else it }
         ChoiceSetting("取流方式", listOf("自动", "本地转发", "直连"), caps.relay.ordinal, { i ->
             library.setRelayOverride(s.id, Override.entries[i])
             caps = library.capsOf(s.id)

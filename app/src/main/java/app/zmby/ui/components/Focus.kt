@@ -71,9 +71,11 @@ fun Focusable(
     val memory = LocalNavEntry.current?.focus
     val restore = remember { FocusRequester() }
     if (memory != null && focusKey != null) {
-        LaunchedEffect(memory.restorePending) {
+        LaunchedEffect(memory.restorePending, memory.restoreRequest) {
             if (memory.restorePending && memory.lastKey == focusKey) {
+                val request = memory.restoreRequest
                 awaitFrame()
+                if (!memory.restorePending || memory.restoreRequest != request || memory.lastKey != focusKey) return@LaunchedEffect
                 if (runCatching { restore.requestFocus() }.getOrDefault(false)) {
                     memory.restored = true
                     memory.restorePending = false
@@ -90,7 +92,6 @@ fun Focusable(
     LaunchedEffect(focused) {
         if (focused) {
             ZLog.d("Focus", label ?: focusKey ?: "(unnamed)")
-            if (memory != null && focusKey != null) memory.lastKey = focusKey
             onFocus?.invoke()
         }
     }
@@ -105,7 +106,10 @@ fun Focusable(
             .then(if (focused && shadow > 0.dp) Modifier.shadow(shadow, shape, clip = false, ambientColor = Color.Black, spotColor = Color.Black) else Modifier)
             .then(if (focused && outline > 0.dp) Modifier.border(outline, Z.focusFill, shape) else Modifier)
             .focusRequester(restore)
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused && memory != null && focusKey != null) memory.lastKey = focusKey
+            }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         propagateMinConstraints = propagateMinConstraints,
     ) {

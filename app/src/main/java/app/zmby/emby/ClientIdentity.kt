@@ -40,12 +40,7 @@ data class UaSetting(
     /** Only Auto switches identity by itself; a fixed choice is the user's. */
     val canFallBack: Boolean get() = mode == UaMode.Auto
 
-    /**
-     * The server wants something other than zmby, so it very likely checks the User-Agent of streams
-     * too; the Zidoo player always sends `okhttp/4.11.0` and cannot be told otherwise, so playback goes
-     * through the local relay, which sends this identity (streaming decision, 取流方式 自动).
-     */
-    val needsRelay: Boolean get() = effective != UaMode.Zmby
+
 }
 
 /** What goes into User-Agent and the X-Emby-Authorization client fields. */

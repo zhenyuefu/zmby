@@ -35,11 +35,22 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Observe remote input through the public Window callback, then keep normal dispatch intact.
+        val callback = window.callback
+        window.callback = object : android.view.Window.Callback by callback {
+            override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+                if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                    RemoteInput.lastKeyAt = event.eventTime
+                    if (event.repeatCount == 0) ZLog.v("Key", android.view.KeyEvent.keyCodeToString(event.keyCode))
+                }
+                return callback.dispatchKeyEvent(event)
+            }
+        }
         setContent {
             ZmbyTheme {
                 // Preferences are read on a background thread at startup; until then an empty frame.
                 val ready by zmby.ready.collectAsState()
-                if (ready) App()
+                if (ready) App(this)
             }
         }
         jank = Diagnostics.track(this)
@@ -55,17 +66,10 @@ class MainActivity : ComponentActivity() {
         jank?.isTrackingEnabled = false
     }
 
-    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
-            RemoteInput.lastKeyAt = event.eventTime
-            if (event.repeatCount == 0) ZLog.v("Key", android.view.KeyEvent.keyCodeToString(event.keyCode))
-        }
-        return super.dispatchKeyEvent(event)
-    }
 }
 
 @Composable
-private fun App() {
+private fun App(activity: android.app.Activity) {
     val library = androidx.compose.ui.platform.LocalContext.current.zmby.library
     val servers by library.servers.collectAsState()
     val stack = remember { mutableStateListOf(NavEntry(0, if (servers.isEmpty()) Route.AddServer else Route.Home)) }
@@ -100,14 +104,13 @@ private fun App() {
     }
     BackHandler(enabled = stack.size > 1) { nav.back() }
     val entry = stack.last()
-    val activity = androidx.compose.ui.platform.LocalContext.current as android.app.Activity
     androidx.compose.runtime.LaunchedEffect(entry.id) { Diagnostics.screen(activity, entry.route.javaClass.simpleName) }
     key(entry.id) {
         // Each back-stack entry owns its screen's ViewModels; they are cleared when it is popped.
         CompositionLocalProvider(LocalNavEntry provides entry, androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner provides entry) {
             states.SaveableStateProvider(entry.id) {
                 when (val route = entry.route) {
-                    Route.Home -> HomeScreen(nav, homeTab) { homeTab = it }
+                    Route.Home -> HomeScreen(nav, homeTab, onExit = activity::finish) { homeTab = it }
                     is Route.Detail -> DetailScreen(nav, route.server, route.itemId, route.resourceOnly)
                     is Route.Series -> SeriesScreen(nav, route.server, route.seriesId, route.episodeId)
                     is Route.Catalog -> app.zmby.ui.screens.CatalogRouteScreen(nav, route)
@@ -116,9 +119,8 @@ private fun App() {
                     Route.Servers -> ServersScreen(nav)
                     Route.AddServer -> LoginScreen(onDone = { if(stack.size == 1) nav.replaceAll(Route.Home) else nav.back() }, onImport = { nav.go(Route.Import) })
                     Route.Import -> ImportScreen(onDone = nav::back, onBackup = { nav.go(Route.Backup) })
-                    Route.BackupImport -> ImportScreen(onDone = nav::back, onBackup = { nav.go(Route.Backup) }, backupTab = true)
-                    Route.Backup -> app.zmby.ui.screens.BackupScreen(nav)
-                    is Route.Restore -> app.zmby.ui.screens.RestoreScreen(nav,route.uri,route.source)
+                    // Backup and restore run only on the phone, tablet or computer page (no file picker on the box).
+                    Route.Backup -> ImportScreen(onDone = nav::back, backupTab = true)
                     Route.Settings -> SettingsScreen(nav)
                     is Route.Person -> app.zmby.ui.screens.PersonScreen(nav, route.personKey, route.server, route.personId)
                     is Route.DataSource -> app.zmby.ui.screens.DataSourceScreen(nav, route.feature)

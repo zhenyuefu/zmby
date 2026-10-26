@@ -1,5 +1,7 @@
 package app.zmby.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
@@ -21,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -33,6 +36,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -149,6 +153,8 @@ data class Segment(
     /** Unavailable (timed-out line): 45 % text, still focusable. */
     val dim: Boolean = false,
     val selectOnFocus: Boolean = true,
+    /** A health dot before the label (servers in the browse toolbar). */
+    val health: Health? = null,
 )
 
 /**
@@ -223,6 +229,7 @@ fun SegmentedWell(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
             ) {
+                if (item.health != null) HealthDot(item.health, size = 10.dp)
                 if (item.glyph != null) Icon(item.glyph, size = 26.dp, color = fg)
                 if (item.label.isNotEmpty()) Text(item.label, fontSize = fontSize.sp, fontWeight = FontWeight.SemiBold, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (item.count != null) Text(item.count, fontSize = fontSize.sp, fontWeight = FontWeight.SemiBold, color = fg.copy(alpha = fg.alpha * 0.6f))
@@ -297,15 +304,19 @@ fun SelectableRow(
     onFocus: (() -> Unit)? = null,
     label: String? = null,
     focusKey: String? = label,
+    animateFocus: Boolean = false,
     content: @Composable RowScope.(focused: Boolean) -> Unit,
 ) {
     val shape = RoundedCornerShape(radius)
     Focusable(onClick, modifier, shape = shape, focusedScale = 1.02f, outline = 0.dp, shadow = 0.dp, dimmed = dimmed, onFocus = onFocus, label = label, focusKey = focusKey, propagateMinConstraints = true) { focused ->
-        CompositionLocalProvider(LocalContentColor provides if (focused) Z.onFocus else Z.textPrimary, LocalInverted provides focused) {
+        val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(if (animateFocus) 150 else 0), label = "row-focus")
+        CompositionLocalProvider(LocalContentColor provides lerp(Z.textPrimary, Z.onFocus, focusAlpha), LocalInverted provides (focusAlpha > 0.5f)) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .then(if (focused) Modifier.liftShadow(shape).onFill(shape) else Modifier.background(if (selected) Z.sel else if (tile) Z.tile else Color.Transparent, shape))
+                    .background(if (selected) Z.sel else if (tile) Z.tile else Color.Transparent, shape)
+                    .then(if (focused) Modifier.liftShadow(shape) else Modifier)
+                    .onFill(shape) { focusAlpha }
                     .padding(padding),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),

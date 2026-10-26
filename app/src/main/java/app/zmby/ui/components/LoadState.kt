@@ -24,7 +24,7 @@ import app.zmby.ui.theme.Z
  * where the remote can only go back. [onServers] adds 「服务器状态」 when the cause may be the server.
  */
 @Composable
-fun LoadState(message: String?, onRetry: () -> Unit, title: String? = null, onServers: (() -> Unit)? = null, modifier: Modifier = Modifier) {
+fun LoadState(message: String?, onRetry: () -> Unit, modifier: Modifier = Modifier, title: String? = null, onServers: (() -> Unit)? = null) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (message == null) {
             Text("正在加载…", fontSize = 24.sp, color = Z.textSecondary)

@@ -1,5 +1,6 @@
 package app.zmby.data
 
+import androidx.core.content.edit
 import android.content.Context
 import app.zmby.aggregate.FailureTracker
 import app.zmby.aggregate.HealthBook
@@ -103,7 +104,7 @@ class PrefsRegistryStore(context: Context) : RegistryStore {
             .orEmpty()
 
     override fun save(servers: List<ServerConfig>) {
-        prefs.edit().putString(KEY, json.encodeToString(serializer, servers)).apply()
+        prefs.edit { putString(KEY, json.encodeToString(serializer, servers)) }
     }
 
     private companion object { const val KEY = "list" }

@@ -179,18 +179,17 @@ class ClientIdentityTest {
     @Test
     fun effectiveIdentityAndRelay() {
         assertEquals(UaMode.Zmby, UaSetting().effective)
-        assertFalse(UaSetting().needsRelay)
         assertEquals(UaMode.Official, UaSetting(detected = UaMode.Official).effective)
-        assertTrue(UaSetting(detected = UaMode.Official).needsRelay)
         assertEquals(UaMode.Zmby, UaSetting(mode = UaMode.Custom, custom = " ").effective)
         assertEquals(UaMode.Zmby, UaSetting(mode = UaMode.Zmby, detected = UaMode.Official).effective)
         assertFalse(UaSetting(mode = UaMode.Official).canFallBack)
 
-        val official = UaSetting(detected = UaMode.Official)
-        assertTrue(PlaybackPreparer.usesRelay(ServerCaps(), official))
-        assertFalse(PlaybackPreparer.usesRelay(ServerCaps(relay = Override.Off), official))
-        assertFalse(PlaybackPreparer.usesRelay(ServerCaps(redirects = true), UaSetting()))
-        assertTrue(PlaybackPreparer.usesRelay(ServerCaps(relay = Override.On), UaSetting()))
+        // Identity and redirects never preselect relay, including fixed official/custom identity.
+        for (redirect in listOf(null, false, true)) {
+            assertFalse(PlaybackPreparer.usesRelay(ServerCaps(redirects = redirect)))
+            assertFalse(PlaybackPreparer.usesRelay(ServerCaps(relay = Override.Off, redirects = redirect)))
+            assertTrue(PlaybackPreparer.usesRelay(ServerCaps(relay = Override.On, redirects = redirect)))
+        }
     }
 
     @Test

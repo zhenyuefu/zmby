@@ -17,16 +17,9 @@ data class Alternate(
  * tried in the default-version order of the detail page (VersionRanker), each at most once.
  */
 object Failover {
-    /** A player that gives up within this long, without the status API ever seeing a video, did not start. */
-    const val START_WINDOW_MS = 20_000L
-
-    /**
-     * The player came back [elapsedMs] after launch: a failed start if the status API never saw the
-     * video open, it did not complete and handed back no position. A user who backs out of a video
-     * that did open (the API saw it) is not a failure.
-     */
-    fun failedToStart(elapsedMs: Long, sawVideo: Boolean, result: ZidooResult?): Boolean =
-        !sawVideo && elapsedMs < START_WINDOW_MS && result?.completed != true && (result?.positionMs ?: 0) <= 0
+    /** Only an explicit playback error proves failure. Missing results and `user` mean no retry. */
+    fun failedToStart(sawVideo: Boolean, result: ZidooResult?): Boolean =
+        !sawVideo && result?.failed == true && (result.positionMs ?: 0) <= 0
 
     /** The next version not tried yet. */
     fun next(alternates: List<Alternate>, tried: Set<String>): Alternate? =
@@ -34,4 +27,14 @@ object Failover {
 
     fun key(a: Alternate) = key(a.server, a.mediaSourceId)
     fun key(server: String, sourceId: String?) = "$server|${sourceId.orEmpty()}"
+}
+
+/** Decisions after the external player returns; no timeout or activity result code proves failure. */
+enum class RelayReturnAction { Retry, OfferRetry, Finish }
+
+fun relayReturnAction(canRetry: Boolean, sawVideo: Boolean, result: ZidooResult?): RelayReturnAction = when {
+    !canRetry -> RelayReturnAction.Finish
+    result?.failed == true -> RelayReturnAction.Retry
+    !sawVideo && result?.endBy == null && (result?.positionMs ?: 0) <= 0 -> RelayReturnAction.OfferRetry
+    else -> RelayReturnAction.Finish
 }

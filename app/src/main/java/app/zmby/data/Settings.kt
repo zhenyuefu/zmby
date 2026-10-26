@@ -1,5 +1,6 @@
 package app.zmby.data
 
+import androidx.core.content.edit
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
@@ -37,7 +38,7 @@ class Pref<T>(private val prefs: SharedPreferences, val key: String, private val
     fun set(v: T) {
         val clean = normalize(v)
         state.value = clean
-        Disk.write { prefs.edit().apply { write(key, clean) }.apply() }
+        Disk.write { prefs.edit { write(key, clean) } }
     }
 }
 
@@ -50,7 +51,7 @@ class Settings(context: Context) {
     init {
         // The old skip_intro switch controlled both kinds. Copy it once before they become independent.
         if (!prefs.contains("skip_recap")) {
-            prefs.edit().putBoolean("skip_recap", prefs.getBoolean("skip_intro", true)).apply()
+            prefs.edit { putBoolean("skip_recap", prefs.getBoolean("skip_intro", true)) }
         }
     }
 
@@ -74,7 +75,7 @@ class Settings(context: Context) {
     fun setWatchedPercent(percent: Int) {
         val p = WatchThreshold.clamp(percent)
         _watchedPercent.value = p
-        Disk.write { prefs.edit().putInt(KEY_WATCHED, p).apply() }
+        Disk.write { prefs.edit { putInt(KEY_WATCHED, p) } }
     }
 
     /** After an episode is watched, offer the next one (播放 › 播放器). */
@@ -119,6 +120,8 @@ class Settings(context: Context) {
     val animeAliases = bool("anime_aliases", true)
     val tmdbSearch = bool("tmdb_search", true)
     val tmdbChart = string("tmdb_chart", "Trending")
+    /** 主推区 source: "Tmdb" (the chart, when a token is set) or "Server" (Emby suggestions, recommendations, latest). */
+    val heroSource = string("hero_source", "Tmdb")
 
     private fun cacheLimit(key: String, default: Int, choices: List<Int>) = registered(Pref(prefs, key, default,
         { k, d -> getInt(k, d).takeIf { it in choices } ?: d },

@@ -22,6 +22,8 @@ class LanServer(
     private val routes = ConcurrentHashMap<String, (HttpExchange) -> Unit>()
     /** Paths that also take POST (the server import page). */
     private val posts = ConcurrentHashMap.newKeySet<String>()
+    /** Handlers for every path under a prefix (the import page checks its own code and attempts). */
+    private val prefixes = ConcurrentHashMap<String, Pair<Boolean, (HttpExchange) -> Unit>>()
     private val streams = AtomicInteger()
     private var http: MiniHttpServer? = null
 
@@ -46,6 +48,13 @@ class LanServer(
         posts -= path
     }
 
+    /** Serves every path starting with [prefix] that has no exact route. */
+    fun routePrefix(prefix: String, allowPost: Boolean = false, handler: (HttpExchange) -> Unit) {
+        prefixes[prefix] = allowPost to handler
+    }
+
+    fun unroutePrefix(prefix: String) { prefixes.remove(prefix) }
+
     val port: Int get() = http?.port ?: -1
 
     @Synchronized
@@ -53,10 +62,12 @@ class LanServer(
         http?.let { if (it.running) return it.port }
         val server = MiniHttpServer("lan", bind, ports, accept) { ex ->
             val path = ex.request.path.trimEnd('/').ifEmpty { "/" }
-            val handler = routes[path]
+            val prefixed = if (routes.containsKey(path)) null
+                else prefixes.entries.filter { path.startsWith(it.key) }.maxByOrNull { it.key.length }?.value
+            val handler = routes[path] ?: prefixed?.second
             when {
                 handler == null -> ex.sendText(404, "not found\n")
-                ex.request.method == "POST" && path in posts -> handler(ex)
+                ex.request.method == "POST" && (path in posts || prefixed?.first == true) -> handler(ex)
                 ex.request.method != "GET" && ex.request.method != "HEAD" -> ex.sendText(405, "GET only\n")
                 else -> handler(ex)
             }

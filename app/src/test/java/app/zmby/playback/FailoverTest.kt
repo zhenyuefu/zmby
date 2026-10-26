@@ -12,15 +12,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FailoverTest {
-    @Test fun `a quick exit without the video ever opening is a failed start`() {
-        assertTrue(Failover.failedToStart(4_000, sawVideo = false, result = null))
-        assertTrue(Failover.failedToStart(4_000, sawVideo = false, result = ZidooResult(0, null, "user")))
+    @Test fun `only an explicit start error allows automatic failover`() {
+        assertFalse(Failover.failedToStart(sawVideo = false, result = null))
+        assertFalse(Failover.failedToStart(sawVideo = false, result = ZidooResult(0, null, "user")))
+        assertTrue(Failover.failedToStart(sawVideo = false, result = ZidooResult(0, null, "playback_error")))
         // The video opened: the user backed out, whatever the time.
-        assertFalse(Failover.failedToStart(4_000, sawVideo = true, result = ZidooResult(null, null, "user")))
+        assertFalse(Failover.failedToStart(sawVideo = true, result = ZidooResult(null, null, "user")))
         // Too late to be a start, or it played somewhere.
-        assertFalse(Failover.failedToStart(Failover.START_WINDOW_MS, sawVideo = false, result = null))
-        assertFalse(Failover.failedToStart(4_000, sawVideo = false, result = ZidooResult(30_000, null, "user")))
-        assertFalse(Failover.failedToStart(4_000, sawVideo = false, result = ZidooResult(null, 100, "playback_completion")))
+        assertFalse(Failover.failedToStart(sawVideo = false, result = null))
+        assertFalse(Failover.failedToStart(sawVideo = false, result = ZidooResult(30_000, null, "user")))
+        assertFalse(Failover.failedToStart(sawVideo = false, result = ZidooResult(null, 100, "playback_completion")))
+    }
+
+    @Test fun `relay return policy never retries a user exit completion or missing status automatically`() {
+        for (sawVideo in listOf(false, true)) {
+            for (end in listOf("user", "playback_completion", "unknown")) {
+                assertEquals(RelayReturnAction.Finish, relayReturnAction(true, sawVideo, ZidooResult(0, null, end)))
+            }
+            assertEquals(RelayReturnAction.Retry, relayReturnAction(true, sawVideo, ZidooResult(50_000, null, "playback_error")))
+            assertEquals(RelayReturnAction.Finish, relayReturnAction(false, sawVideo, ZidooResult(0, null, "playback_error")))
+        }
+        assertEquals(RelayReturnAction.OfferRetry, relayReturnAction(true, false, null))
+        assertEquals(RelayReturnAction.Finish, relayReturnAction(true, true, null))
+        assertEquals(RelayReturnAction.Finish, relayReturnAction(true, false, ZidooResult(1, null, null)))
     }
 
     @Test fun `versions are tried in order, each once`() {

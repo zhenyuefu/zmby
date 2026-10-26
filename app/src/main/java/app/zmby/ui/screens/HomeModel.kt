@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.zmby.ZmbyApp
 import app.zmby.aggregate.HomeRows
+import app.zmby.aggregate.HeroMerge
+import app.zmby.aggregate.HeroPick
 import app.zmby.aggregate.HomeServers
 import app.zmby.data.ServerItem
 import app.zmby.emby.BaseItemDto
@@ -21,6 +23,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -59,6 +62,23 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
         .flatMapLatest { id -> if (id.isEmpty()) flowOf(null) else app.home.serverHome(id) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    /** The servers the hero asks: every enabled one for 全部 (priority order), else the chosen one. */
+    private val heroServers = kotlinx.coroutines.flow.combine(source, servers) { src, s ->
+        if (src.isEmpty()) s.latest.sortedBy { s.order[it] ?: Int.MAX_VALUE } else listOf(src)
+    }.distinctUntilChanged()
+
+    /**
+     * 主推区 when it shows the servers (媒体库推荐): suggestions, then film recommendations, then the
+     * latest additions (merged across servers for 全部, the server's own for one server).
+     */
+    val heroPicks: StateFlow<List<HeroPick>> = kotlinx.coroutines.flow.combine(
+        heroServers.flatMapLatest { ids -> app.home.heroLists(ids).map { ids to it } },
+        rows,
+        serverHome,
+    ) { (ids, lists), r, own ->
+        HeroMerge.pick(ids, lists.first, lists.second, own?.recent ?: r.latest)
+    }.flowOn(kotlinx.coroutines.Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     fun setSource(id: String) {
         app.settings.homeSource.set(id)
         ZLog.i("Home", "home source ${app.registry.get(id)?.name ?: "全部"}")
@@ -83,6 +103,10 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
             ZLog.d("Home", "refresh: watch ${s.watch.size}, latest ${s.latest.size} servers${if (force) ", forced" else ""}")
             val own = source.value
             if (own.isNotEmpty()) launch { runCatching { app.home.refreshServer(own, force) } }
+            launch {
+                runCatching { app.home.refreshHero(heroServers.first(), force) }
+                    .onFailure { if (it !is CancellationException) ZLog.w("Home", "hero refresh failed", it) }
+            }
             val fresh = runCatching { app.home.refresh(s, force) }
                 .onFailure { if (it !is CancellationException) ZLog.w("Home", "refresh failed", it) }
                 .getOrNull().orEmpty()

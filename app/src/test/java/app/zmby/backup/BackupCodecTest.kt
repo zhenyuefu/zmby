@@ -54,9 +54,9 @@ class BackupCodecTest {
         val same = server.copy(id="new-id",lines=listOf(line,ServerLine("l2","备用","https://backup.example.com")))
         val fresh = server.copy(id="fresh",embyServerId="different",lines=listOf(ServerLine("new-line","主线","https://new.example.com")),lineId="new-line")
         val plan = RestorePlanner.plan(listOf(other,server),BackupContent(listOf(BackupServer(fresh),BackupServer(same))))
-        assertEquals(listOf("新增","更新线路"),plan.rows.map { it.action }); assertEquals("s",plan.rows.last().existingId)
+        assertEquals(listOf(RestoreAction.Add,RestoreAction.UpdateLines),plan.rows.map { it.action }); assertEquals("s",plan.rows.last().existingId)
         assertEquals(1,plan.added);assertEquals(1,plan.updated);assertEquals(0,plan.skipped)
-        assertEquals("新增",RestorePlanner.plan(listOf(other),content).rows.single().action)
+        assertEquals(RestoreAction.Add,RestorePlanner.plan(listOf(other),content).rows.single().action)
     }
 
     @Test fun `merge retains current line token and IDs but unions addresses and optional settings`() {

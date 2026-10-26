@@ -50,6 +50,7 @@ fun Artwork(url: String?, modifier: Modifier = Modifier) {
 fun MediaCard16x9(
     imageUrl: String?,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     width: Dp = 400.dp,
     title: String? = null,
     topStart: String? = null,
@@ -58,7 +59,6 @@ fun MediaCard16x9(
     progress: Float = 0f,
     onFocus: (() -> Unit)? = null,
     focusKey: String? = null,
-    modifier: Modifier = Modifier,
     caption: @Composable () -> Unit = {},
 ) {
     CardFrame(onClick, width, width * 9 / 16, onFocus, caption, label = title ?: topStart, focusKey = focusKey, modifier = modifier) {
@@ -95,9 +95,9 @@ private fun CardFrame(
     height: Dp,
     onFocus: (() -> Unit)?,
     caption: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
     label: String? = null,
     focusKey: String? = null,
-    modifier: Modifier = Modifier,
     art: @Composable BoxScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(22.dp)
@@ -133,12 +133,12 @@ fun PosterCard2x3(
     imageUrl: String?,
     title: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     width: Dp = 196.dp,
     topEnd: String? = null,
     subtitle: String? = null,
     onFocus: (() -> Unit)? = null,
     focusKey: String? = null,
-    modifier: Modifier = Modifier,
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
     CardFrame(onClick, width, width * 3 / 2, onFocus, label = title, focusKey = focusKey, modifier = modifier, caption = {

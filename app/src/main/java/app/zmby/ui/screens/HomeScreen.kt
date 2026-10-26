@@ -54,6 +54,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import app.zmby.Diagnostics
 import app.zmby.data.Library
+import app.zmby.data.InputField
 import app.zmby.data.LibraryView
 import app.zmby.data.ServerItem
 import app.zmby.data.ServerStatus
@@ -97,21 +98,20 @@ import app.zmby.ui.theme.Z
 import app.zmby.ui.userMessage
 import app.zmby.zmby
 import kotlinx.coroutines.launch
-
-/** The search glyph opens the search screen instead of switching tabs. */
-private const val SEARCH_TAB = 5
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
+import app.zmby.ui.LocalNavEntry
 
 /** Top of the focusable content, just under the top bar (which ends at 110 on the design grid). */
 private val CONTENT_TOP = 120.dp
-
-private val TABS = listOf(
-    Segment("首页"),
-    Segment("电影"),
-    Segment("剧集"),
-    Segment("收藏"),
-    Segment("待看"),
-    Segment("", glyph = Glyph.Search, selectOnFocus = false),
-)
 
 /** Main.dc.html: left→right 0.96 → 0.78 (34 %) → 0.1 (70 %); bottom 560 of 1080, solid for its lower 30 %. */
 private val HOME_SCRIMS = Scrims(listOf(0f to 0.96f, 0.34f to 0.78f, 0.70f to 0.1f), bottomFrom = 520f / 1080f, bottomSolid = 0.3f)
@@ -119,9 +119,15 @@ private val HOME_SCRIMS = Scrims(listOf(0f to 0.96f, 0.34f to 0.78f, 0.70f to 0.
 /** A library picked on a server's own home: the browse tab opens on it. */
 data class BrowseTarget(val server: String, val libraryId: String, val types: String)
 
+/**
+ * The home tabs (首页, 电影, 剧集, 收藏, 待看) under one screen, switched from the side bar (ui-spec
+ * §2.1, 2026-10-26): Left at a row's start opens the bar; Menu also opens it on 首页.
+ * Back closes the bar, and two consecutive Back presses on 首页 confirm exit.
+ */
 @Composable
-fun HomeScreen(nav: Nav, tab: Int, onTab: (Int) -> Unit) {
-    val app = LocalContext.current.zmby
+fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
+    val context = LocalContext.current
+    val app = context.zmby
     val library = app.library
     val servers by library.servers.collectAsState()
     LaunchedEffect(Unit) { library.measure() }
@@ -135,130 +141,154 @@ fun HomeScreen(nav: Nav, tab: Int, onTab: (Int) -> Unit) {
     val vm = screenModel("home") { HomeViewModel(app) }
     val source by vm.source.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf(false) }
+    var tokenInput by remember { mutableStateOf(false) }
     var browseTarget by rememberRetained("browseTarget") { mutableStateOf<BrowseTarget?>(null) }
+    var sideOpen by remember { mutableStateOf(false) }
+    val sideBlock = remember { mutableIntStateOf(0) }
+    val search = remember { FocusRequester() }
+    // The element a tab takes focus on when the side bar switches to it.
+    val entry = remember { FocusRequester() }
+    var enterPage by remember { mutableIntStateOf(0) }
+    LaunchedEffect(enterPage) { if (enterPage > 0) entry.requestWhenReady() }
+    val memory = LocalNavEntry.current?.focus
+    val focusManager = LocalFocusManager.current
 
+    fun closeSide() {
+        sideOpen = false
+        // Focus goes back to what had it before; the side bar's rows carry no focus key.
+        if (memory?.lastKey != null) memory.beginRestore() else enterPage++
+    }
+    // 首页来源 and its token input are removed at once; focus goes back to the source button.
+    fun closePanel() {
+        picking = false
+        tokenInput = false
+        memory?.beginRestore()
+    }
+    fun pick(item: SideNavItem) {
+        val target = item.tab
+        if (target == null) {
+            sideOpen = false
+            nav.go(
+                when (item) {
+                    SideNavItem.Search -> Route.Search
+                    SideNavItem.Stats -> Route.Stats
+                    SideNavItem.Servers -> Route.Servers
+                    else -> Route.Settings
+                },
+            )
+        } else if (target == tab) {
+            closeSide()
+        } else {
+            sideOpen = false
+            memory?.lastKey = null
+            onTab(target)
+            enterPage++
+        }
+    }
+    val exitConfirmation = remember(tab, sideOpen, picking, tokenInput) { HomeExitConfirmation() }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
+        exitConfirmation.reset()
+    }
+    // Child panels register later BackHandlers and dismiss before this handler can confirm exit.
+    androidx.activity.compose.BackHandler {
+        when {
+            sideOpen -> closeSide()
+            tab != 0 -> sideOpen = true
+            exitConfirmation.onBack(android.os.SystemClock.elapsedRealtime()) -> onExit()
+            else -> android.widget.Toast.makeText(context, "再按一次返回键退出", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    CompositionLocalProvider(LocalSideNavBlock provides sideBlock) {
     BackdropScreen(
         heroBackdrop,
         HOME_SCRIMS,
+        modifier = Modifier.onPreviewKeyEvent { e ->
+            if (e.type == KeyEventType.KeyDown && e.key != Key.Back) exitConfirmation.reset()
+            // Capture Menu before the home cards' watchlist shortcuts, including its key-up/repeats.
+            if (tab == 0 && sideBlock.intValue == 0 && e.key == Key.Menu) {
+                if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) sideOpen = true
+                true
+            } else false
+        }.onKeyEvent { e ->
+            // Left that finds nothing further left (the start of a row) opens the side bar.
+            if (sideOpen || sideBlock.intValue > 0 || e.key != Key.DirectionLeft || e.type != KeyEventType.KeyDown) return@onKeyEvent false
+            if (!focusManager.moveFocus(FocusDirection.Left) && e.nativeKeyEvent.repeatCount == 0) sideOpen = true
+            true
+        },
         visible = backdropVisible,
         shift = backdropShift,
         layer = if (tab == 0) ({ HeroBackdrop(carousel, HOME_SCRIMS) }) else null,
     ) {
+        val openSearch = { nav.go(Route.Search) }
         when (tab) {
-            0 -> HomeFeed(nav, shownAt, carousel, onLibrary = { lib ->
+            0 -> HomeFeed(nav, shownAt, carousel, search, entry, onLibrary = { lib ->
                 val series = lib.item.collectionType == "tvshows"
                 browseTarget = BrowseTarget(lib.server, lib.item.id, if (series) "Series" else "Movie")
                 onTab(if (series) 2 else 1)
             })
-            1 -> BrowseScreen(nav, "Movie", browseTarget?.takeIf { it.types == "Movie" }) { browseTarget = null }
-            2 -> BrowseScreen(nav, "Series", browseTarget?.takeIf { it.types == "Series" }) { browseTarget = null }
-            3 -> FavoritesGrid(nav)
-            4 -> WatchlistGrid(nav)
+            1 -> BrowseScreen(nav, "Movie", browseTarget?.takeIf { it.types == "Movie" }, search, entry) { browseTarget = null }
+            2 -> BrowseScreen(nav, "Series", browseTarget?.takeIf { it.types == "Series" }, search, entry) { browseTarget = null }
+            3 -> FavoritesGrid(nav, search, entry)
+            4 -> WatchlistGrid(nav, search, entry)
         }
-        TopBar(
-            tab = tab,
-            servers = servers,
-            sourceLabel = servers.firstOrNull { it.id == source }?.name ?: "全部",
-            onSource = { picking = true },
-            onTab = { i -> if (i == SEARCH_TAB) nav.go(Route.Search) else onTab(i) },
-            onServers = { nav.go(Route.Servers) },
-            onSettings = { nav.go(Route.Settings) },
-        )
+        if (tab == 0) {
+            HomeTopBar(
+                servers = servers,
+                source = source,
+                search = search,
+                onSearch = openSearch,
+                onSource = { picking = true },
+            )
+        }
         if (picking) {
-            SourcePicker(servers.filter { it.enabled }, source, onPick = { id -> picking = false; vm.setSource(id) }, onDismiss = { picking = false })
+            SourcePanel(
+                servers,
+                source,
+                onSource = { id -> closePanel(); vm.setSource(id) },
+                onServers = { picking = false; nav.go(Route.Servers) },
+                onToken = { picking = false; tokenInput = true },
+                onDismiss = ::closePanel,
+            )
         }
+        if (tokenInput) PhoneInputDialog(InputField.TmdbToken, onDismiss = ::closePanel, onRemote = { tokenInput = false; nav.go(Route.Settings) })
+        if (!sideOpen) SideNavHint()
+        SideNav(sideOpen, tab, onPick = ::pick, onDismiss = ::closeSide)
     }
-}
-
-/**
- * 首页来源 (ui-spec §2.1): 「全部」 and the servers in priority order with their health; picking one
- * shows that server's own home. Back closes it.
- */
-@Composable
-private fun SourcePicker(servers: List<ServerStatus>, current: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
-    androidx.activity.compose.BackHandler(onBack = onDismiss)
-    val first = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
-    Box(Modifier.fillMaxSize().background(Z.bg.copy(alpha = 0.72f))) {
-        Column(
-            Modifier.padding(start = 560.dp, top = 120.dp).width(520.dp).groupCard(androidx.compose.foundation.shape.RoundedCornerShape(28.dp)).padding(12.dp)
-                .focusProperties { onExit = { cancelFocusChange() } }.focusGroup(),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            val options = listOf<Pair<String, ServerStatus?>>("" to null) + servers.map { it.id to it }
-            options.forEachIndexed { i, (id, s) ->
-                SelectableRow(
-                    onClick = { onPick(id) },
-                    modifier = if (id == current || (i == 0 && options.none { it.first == current })) Modifier.focusRequester(first) else Modifier,
-                    selected = id == current,
-                    radius = 20.dp,
-                    label = "首页来源 ${s?.name ?: "全部"}",
-                ) {
-                    if (s != null) HealthDot(s.health)
-                    Text(s?.name ?: "全部", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                }
-            }
-        }
     }
 }
 
 /** The home page with nothing to show: a title, a line of advice, 重试 (focused) and 服务器状态. */
 @Composable
-private fun HomeEmpty(title: String, advice: String, focus: FocusRequester, onRetry: () -> Unit, onServers: () -> Unit) {
+private fun HomeEmpty(title: String, advice: String, focus: FocusRequester, onRetry: () -> Unit, onServers: () -> Unit, modifier: Modifier = Modifier, entry: FocusRequester? = null) {
     Column(Modifier.padding(top = 80.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Text(title, fontSize = 48.sp, fontWeight = FontWeight.ExtraBold)
         Text(advice, fontSize = 23.sp, color = Z.textSecondary, modifier = Modifier.width(820.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            GlassButton("重试", onRetry, Modifier.focusRequester(focus), glyph = Glyph.Refresh)
+        Row(modifier, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            GlassButton("重试", onRetry, Modifier.focusRequester(focus).then(if (entry != null) Modifier.focusRequester(entry) else Modifier), glyph = Glyph.Refresh)
             GlassButton("服务器状态", onServers)
         }
     }
 }
 
+/** Main.dc.html top bar: the zmby Logo, the search pill beside it, and the source button on the right. */
 @Composable
-private fun TopBar(tab: Int, servers: List<ServerStatus>, sourceLabel: String, onSource: () -> Unit, onTab: (Int) -> Unit, onServers: () -> Unit, onSettings: () -> Unit) {
+private fun HomeTopBar(servers: List<ServerStatus>, source: String, search: FocusRequester, onSearch: () -> Unit, onSource: () -> Unit) {
     Row(
         // Cached like the rows; the bottom padding keeps the buttons' shadows inside the layer.
         Modifier.fillMaxWidth().cachedLayer().padding(start = 80.dp, end = 80.dp, top = 44.dp, bottom = 40.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        Box(Modifier.weight(1f)) { ZmbyLogo() }
-        // 首页来源: 「全部」 or one server's own home, left of the navigation capsule.
-        GlassSurface(onSource, label = "首页来源", modifier = Modifier.padding(end = 14.dp)) {
-            Row(Modifier.height(64.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(sourceLabel, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
-                Icon(Glyph.Down, size = 20.dp, strokeWidth = 2.4f)
-            }
-        }
-        SegmentedWell(TABS, tab, onTab, glassTrack = true, segHeight = 52.dp, fontSize = 22, horizontalPadding = 28.dp, labelPrefix = "tab")
-        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-            GlassSurface(onServers, label = "服务器状态") {
-                Row(
-                    Modifier.height(64.dp).padding(horizontal = 24.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    val enabled = servers.filter { it.enabled }
-                    val online = enabled.count { it.health != Health.Off }
-                    HealthDot(
-                        when {
-                            online == 0 -> Health.Off
-                            online < enabled.size || enabled.any { it.health == Health.Warn } -> Health.Warn
-                            else -> Health.Ok
-                        },
-                    )
-                    Text("$online 台在线", fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
-                }
-            }
-            GlassSurface(onSettings, shape = CircleShape, label = "设置") {
-                Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) { Icon(Glyph.Gear, size = 26.dp, strokeWidth = 2f) }
-            }
-        }
+        ZmbyLogo()
+        SearchPill(onSearch, Modifier.focusRequester(search))
+        Spacer(Modifier.weight(1f))
+        SourceButton(servers, source, onSource)
     }
 }
 
 @Composable
-private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, onLibrary: (ServerItem) -> Unit) {
+private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: FocusRequester, entry: FocusRequester, onLibrary: (ServerItem) -> Unit) {
     val context = LocalContext.current
     val app = context.zmby
     val library = app.library
@@ -282,7 +312,11 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, onLibrary:
     val logoLanguage by settings.logoLanguage.flow.collectAsStateWithLifecycle()
     val token by settings.tmdbToken.flow.collectAsStateWithLifecycle()
     var chartError by remember(chart, token) { mutableStateOf<String?>(null) }
-    val featured by produceState<List<ServerItem>>(emptyList(), chart, listOf(language, posterLanguage, logoLanguage, token), tick) {
+    // 主推区 source (ui-spec §2.1): the TMDB chart needs a token; without one the servers' own titles show.
+    val heroSetting by settings.heroSource.flow.collectAsStateWithLifecycle()
+    val useChart = HeroSource.of(heroSetting) == HeroSource.Tmdb && token.isNotBlank()
+    val chartTitles by produceState<List<ServerItem>>(emptyList(), useChart, chart, listOf(language, posterLanguage, logoLanguage, token), tick) {
+        if (!useChart) { value = emptyList(); return@produceState }
         withContext(Dispatchers.IO) {
             try {
                 val titles = app.catalog.chart(CatalogChart.of(chart)).take(8)
@@ -296,6 +330,18 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, onLibrary:
                 }
             } catch (e: CancellationException) { throw e } catch (e: Exception) { chartError = e.message }
         }
+    }
+    val picks by vm.heroPicks.collectAsStateWithLifecycle()
+    val homeSource by vm.source.collectAsStateWithLifecycle()
+    val featured = if (useChart) chartTitles else picks.map { it.ref }
+    // The line above each title says where it came from: 「TMDB · 本周趋势」, or 「家里 NAS · 为你推荐」.
+    val heroLabels = remember(useChart, chart, picks, homeSource) {
+        if (useChart) emptyMap<String, String>()
+        else picks.associate { p -> p.ref.key to listOfNotNull(app.registry.get(p.ref.server)?.name?.takeIf { homeSource.isEmpty() }, p.tier.label).joinToString(" · ") }
+    }
+    SideEffect {
+        carousel.labels = heroLabels
+        carousel.defaultLabel = if (useChart) "TMDB · ${CatalogChart.of(chart).label}" else null
     }
     SideEffect { carousel.items = featured }
     // A slide cut off by leaving home rests on its page when home shows again.
@@ -325,12 +371,12 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, onLibrary:
         @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
         val list = rememberLazyListState(cacheWindow = androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow(ahead = 600.dp, behind = 400.dp))
         SideEffect { carousel.list = list }
-        val running = HeroCountdown(carousel, rotates, scope)
+        val running = rememberHeroCountdown(carousel, rotates, scope)
         LazyColumn(Modifier.fillMaxSize().padding(top = CONTENT_TOP), state = list) {
           item(key = "hero", contentType = "hero") {
            // The text pages slide over the backdrop pages; 详情 and the dots stay put. Both fade and
            // move up with the list as focus goes down to the rows (2026-10-25 user request).
-           Box(Modifier.fillMaxWidth().height(550.dp)) {
+           Box(Modifier.fillMaxWidth().height(598.dp)) {
             if (featured.isNotEmpty()) {
                 Column(Modifier.padding(top = 170.dp - CONTENT_TOP)) {
                     HeroPages(carousel, heroDetails)
@@ -340,6 +386,7 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, onLibrary:
                         running = running,
                         scope = scope,
                         onOpen = { nav.open(it) },
+                        modifier = Modifier.focusRequester(entry).upToSearch(search),
                         onFocusChange = { focused ->
                             // Back on the hero: show the whole top of the page again, not just the button.
                             if (focused && list.canScrollBackward) scope.launch { list.scrollToTopFirmly() }
@@ -348,11 +395,11 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, onLibrary:
                 }
             } else {
                 Box(Modifier.padding(start = 80.dp, top = 170.dp - CONTENT_TOP).width(880.dp)) {
-                    if (!app.catalog.configured || chartError != null) {
+                    if (useChart && chartError != null) {
                         Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
                             Text("TMDB · ${CatalogChart.of(chart).label}", fontSize = 38.sp, fontWeight = FontWeight.Bold)
                             Text(chartError ?: "在设置中填写 TMDB Read Access Token，启用影视榜单轮播", fontSize = 23.sp, color = Z.textSecondary)
-                            GlassButton("元数据设置", { nav.go(Route.Settings) }, Modifier.focusRequester(rememberInitialFocus("catalogSetup", shownAt)))
+                            GlassButton("元数据设置", { nav.go(Route.Settings) }, Modifier.focusRequester(rememberInitialFocus("catalogSetup", shownAt)).focusRequester(entry).upToSearch(search))
                         }
                     } else {
                     // Nothing cached and nothing from the servers (P4 离线与错误处理): say why and offer a retry.
@@ -370,6 +417,8 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, onLibrary:
                                 vm.refresh(force = true)
                             },
                             onServers = { nav.go(Route.Servers) },
+                            modifier = Modifier.upToSearch(search),
+                            entry = entry,
                         )
                     }
                     }

@@ -35,6 +35,9 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import app.zmby.R
 import app.zmby.catalog.CatalogChart
+import app.zmby.data.InputField
+import androidx.compose.foundation.layout.fillMaxWidth
+import app.zmby.ui.components.GlassButton
 import app.zmby.log.ZLog
 import app.zmby.playback.TrackPreference
 import app.zmby.segments.CreditsSkip
@@ -229,7 +232,7 @@ private fun ServersSummary(nav: Nav) {
             }
             ValueSetting(s.name, listOf(s.lineName, state).joinToString(" · "), onClick = { nav.go(Route.Servers) })
         }
-        ValueSetting("备份与恢复", "导出与恢复", onClick = { nav.go(Route.Backup) })
+        ValueSetting("备份与恢复", "扫码操作", onClick = { nav.go(Route.Backup) })
         ValueSetting("管理服务器", "共 ${servers.size} 台", onClick = { nav.go(Route.Servers) })
     }
 }
@@ -294,6 +297,16 @@ private fun About() {
     }
 }
 
+/** A long-text setting: its name, 「已设置」 or 「未设置」, and the glass 「用手机输入」 button. */
+@Composable
+internal fun PhoneInputRow(title: String, value: String, onPhone: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        Text(value, fontSize = 20.sp, color = Z.textSecondary)
+        GlassButton("用手机输入", onPhone, height = 52.dp, horizontalPadding = 22.dp, fontSize = 19, label = "$title 用手机输入")
+    }
+}
+
 @Composable
 private fun MetadataSettings() {
     val app = LocalContext.current.zmby
@@ -307,13 +320,19 @@ private fun MetadataSettings() {
     val anime by settings.animeAliases.flow.collectAsState()
     val languages = listOf("zh-CN" to "简体中文", "zh-TW" to "繁體中文（台灣）", "zh-HK" to "繁體中文（香港）", "en-US" to "English", "ja-JP" to "日本語", "ko-KR" to "한국어")
     SettingsGroup("影视数据库直连") {
-        Column(Modifier.padding(24.dp)) {
+        // 用手机输入 (ui-spec §2.13): two hundred characters are not typed with a remote; the remote
+        // field stays behind 「用遥控器输入」.
+        var phone by remember { mutableStateOf(false) }
+        var typing by rememberSaveable { mutableStateOf(false) }
+        PhoneInputRow("TMDB 令牌", if (token.isBlank()) "未设置" else "已设置") { phone = true }
+        if (typing) Column(Modifier.padding(24.dp)) {
             var draft by remember(token) { mutableStateOf(token) }
             Field("TMDB API Read Access Token", draft, { draft = it }, KeyboardType.Ascii, secret = true, last = true, onSubmit = {
                 ZLog.secret(draft.trim())
                 settings.tmdbToken.set(draft.trim())
             })
         }
+        if (phone) PhoneInputDialog(InputField.TmdbToken, onDismiss = { phone = false }, onRemote = { phone = false; typing = true })
         ToggleSetting("搜索包含 TMDB", search, { settings.tmdbSearch.set(!search) })
         ToggleSetting("Bangumi 与 bangumi-data 番剧别名", anime, { settings.animeAliases.set(!anime) }, sub = "按原名与译名查找番剧；季集关系不明确时保留待确认")
     }

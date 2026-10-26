@@ -45,7 +45,7 @@ private fun SettingLabel(title: String, sub: String?, mono: Boolean, modifier: M
 
 /** A row that toggles on OK; the whole row takes focus. */
 @Composable
-fun ToggleSetting(title: String, checked: Boolean, onToggle: () -> Unit, sub: String? = null, mono: Boolean = false, modifier: Modifier = Modifier, dimmed: Boolean = false) {
+fun ToggleSetting(title: String, checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, sub: String? = null, mono: Boolean = false, dimmed: Boolean = false) {
     SelectableRow(
         onToggle,
         modifier.defaultMinSize(minHeight = 70.dp),
@@ -86,7 +86,7 @@ fun ChoiceSetting(title: String, options: List<String>, selected: Int, onSelect:
 
 /** A row showing a value; with [onClick] it opens something (›). [glyph] is the row's single-colour icon. */
 @Composable
-fun ValueSetting(title: String, value: String?, onClick: (() -> Unit)? = null, sub: String? = null, mono: Boolean = false, modifier: Modifier = Modifier, glyph: Glyph? = null) {
+fun ValueSetting(title: String, value: String?, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, sub: String? = null, mono: Boolean = false, glyph: Glyph? = null) {
     val body: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
         if (glyph != null) Icon(glyph, size = 26.dp, strokeWidth = 2.2f)
         SettingLabel(title, sub, mono, Modifier.weight(1f))

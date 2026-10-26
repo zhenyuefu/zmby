@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android TV banner 320×180 (Logo.dc.html): gradient card, mark and wordmark. -->
+<!-- Android TV banner 320×180 px at xhdpi (160×90 dp) (Logo.dc.html): gradient card, mark and wordmark. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
-    android:width="320dp"
-    android:height="180dp"
+    android:width="160dp"
+    android:height="90dp"
     android:viewportWidth="320"
     android:viewportHeight="180">
     <path android:pathData="M0,0h320v180h-320z">

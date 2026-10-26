@@ -49,6 +49,12 @@ enum class Glyph(val path: String, val filled: Boolean = false) {
     // Refresh (观影统计, retry), and the manual segment marks on the detail page.
     Refresh("M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"),
     Marks("M4 6h16M4 18h16M8 3v6M16 15v6"),
+    // 侧边栏 (MainSidebar.dc.html).
+    Home("M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"),
+    Film("M6 4h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM3 9h18M8 4v5M16 4v5"),
+    Tv("M6 6h12a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3zM8 2l4 4 4-4"),
+    Servers("M5 4h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM5 13h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z"),
+    Close("M6 6l12 12M18 6L6 18"),
 }
 
 private val parsed = HashMap<Glyph, Path>()

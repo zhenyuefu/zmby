@@ -40,9 +40,7 @@ sealed interface Route {
     data object AddServer : Route
     /** Phone-side bulk import over the LAN (QR code). */
     data object Import : Route
-    data object BackupImport : Route
     data object Backup : Route
-    data class Restore(val uri: String, val source: String) : Route
     data object Settings : Route
     /** 人物页: [personKey] in the store, reached from [server]'s own person [personId]. */
     data class Person(val personKey: String, val server: String, val personId: String) : Route
@@ -141,7 +139,7 @@ fun rememberInitialFocus(key: Any?, shownAt: Long = rememberShownAt()): FocusReq
         if (memory != null && memory.restorePending) {
             // Coming back to this screen: the element focused before takes precedence.
             withTimeoutOrNull(RESTORE_WAIT_MS) { snapshotFlow { memory.restorePending }.first { !it } }
-            if (memory.restored) return@LaunchedEffect
+            if (memory.restored || RemoteInput.lastKeyAt >= shownAt) return@LaunchedEffect
             memory.restorePending = false
             ZLog.d("Focus", "restore of ${memory.lastKey} gave up; using initial focus")
             runCatching { requester.requestFocus() }

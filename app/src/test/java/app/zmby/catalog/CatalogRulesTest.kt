@@ -61,17 +61,41 @@ class CatalogRulesTest {
         assertFalse(ResourceMapping.same(work.item(), BaseItemDto("server", name = "Test", type = "Series")))
         assertFalse(ResourceMapping.same(work.item().copy(providerIds = mapOf("Tmdb" to "10", "Imdb" to "tt1")), BaseItemDto("server", type = "Series", providerIds = mapOf("Tmdb" to "10", "Imdb" to "tt2"))))
     }
-    @Test fun `published bangumi-data object exposes its items without losing aliases`() {
-        val data = Json.parseToJsonElement("""{"siteMeta":{},"items":[{"title":"Anime","sites":[{"site":"bangumi","id":"12"}]}]}""")
-        val rows = AnimeAliases.dataset(data)!!
-        assertEquals("12", AnimeAliases.subject(AnimeAliases.find(rows, listOf("Anime"), null)!!))
-        assertEquals(rows, AnimeAliases.dataset(rows))
+    private fun index(text: String) = AnimeIndex.decode(text.byteInputStream())
+    @Test fun `published bangumi-data object and plain arrays both index their aliases`() {
+        assertEquals("12", index("""{"siteMeta":{"x":1},"items":[{"title":"Anime","sites":[{"site":"bangumi","id":"12"}]}]}""").find(listOf("Anime"), null))
+        assertEquals("12", index("""  [{"title":"Anime","sites":[{"site":"bangumi","id":"12"}]}]""").find(listOf("anime!"), null))
     }
     @Test fun `anime aliases match original simplified or traditional without merging ambiguous subjects`() {
-        val row = Json.parseToJsonElement("""{"title":"原名","titleTranslate":{"zh-Hans":["简体名"],"zh-Hant":["繁體名"]},"begin":"2024-01-01","sites":[{"site":"bangumi","id":"12"}]}""").jsonObject
-        assertEquals("12", AnimeAliases.subject(AnimeAliases.find(JsonArray(listOf(row)), listOf("简体名"), 2024)!!))
-        assertNull(AnimeAliases.find(JsonArray(listOf(row)), listOf("简体名"), 2023))
-        val other = row + ("sites" to Json.parseToJsonElement("""[{"site":"bangumi","id":"13"}]"""))
-        assertNull(AnimeAliases.find(JsonArray(listOf(row, JsonObject(other))), listOf("原名"), null))
+        val row = """{"title":"原名","titleTranslate":{"zh-Hans":["简体名"],"zh-Hant":["繁體名"]},"begin":"2024-01-01","sites":[{"site":"bangumi","id":"12"}]}"""
+        val one = index("[$row]")
+        assertEquals("12", one.find(listOf("简体名"), 2024))
+        assertEquals("12", one.find(listOf("繁體名"), null))
+        assertNull(one.find(listOf("简体名"), 2023))
+        val other = row.replace("\"id\":\"12\"", "\"id\":\"13\"")
+        assertNull(index("[$row,$other]").find(listOf("原名"), null))
+        // An item with no Bangumi entry still counts, so it cannot be silently skipped over.
+        assertNull(index("""[$row,{"title":"原名","sites":[]}]""").find(listOf("原名"), null))
+    }
+    @Test fun `stored index reads back the same matches and rejects foreign files`() {
+        val dir = java.nio.file.Files.createTempDirectory("anime").toFile()
+        try {
+            val file = java.io.File(dir, "index.txt")
+            index("""[{"title":"原名","titleTranslate":{"zh-Hans":["简体名"]},"begin":"2024-01-01","sites":[{"site":"bangumi","id":"12"}]}]""").write(file, 42)
+            val (at, read) = AnimeIndex.read(file)!!
+            assertEquals(42L, at)
+            assertEquals("12", read.find(listOf("简体名"), 2024))
+            file.writeText("{\"not\":\"an index\"}")
+            assertNull(AnimeIndex.read(file))
+        } finally { dir.deleteRecursively() }
+    }
+    @Test fun `chart region is a country, never a script`() {
+        assertEquals("CN", CatalogRegion.of("zh-CN"))
+        assertEquals("CN", CatalogRegion.of("zh-Hans"))
+        assertEquals("TW", CatalogRegion.of("zh-Hant"))
+        assertEquals("HK", CatalogRegion.of("zh-Hant-HK"))
+        assertEquals("JP", CatalogRegion.of("ja"))
+        assertEquals("US", CatalogRegion.of("en"))
+        assertEquals("US", CatalogRegion.of("xx"))
     }
 }
