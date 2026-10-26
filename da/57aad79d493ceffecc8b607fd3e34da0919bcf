@@ -1,0 +1,23 @@
+PUBLIC_MANIFEST.sha256
+  s_016b9858421414::t_03d500683e9384 6,8
+README.md
+  s_016b9858421414::t_89c745a79e46e5 15
+app/build.gradle.kts
+  s_016b9858421414::t_197d824408f808 28-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da57aad79d493ceffecc8b607fd3e34da0919bcf",
+  "prompts": {},
+  "sessions": {
+    "s_016b9858421414": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17634-3e3e-7a61-96b5-4aa7cf628578",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    }
+  }
+}
