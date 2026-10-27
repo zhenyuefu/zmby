@@ -24,6 +24,7 @@ FILES = (
     'tools/mock_emby.py', 'tools/export_public.py',
     'docs/images/mark.svg', 'docs/images/home.png', 'docs/images/browse.png',
     'docs/images/detail.png', 'docs/images/search.png', 'docs/images/settings.png',
+    'docs/images/navigation.png', 'docs/images/series.png',
     'LICENSES/Apache-2.0.txt', 'LICENSES/LGPL-2.1.txt',
 )
 TREES = {
