@@ -22,7 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -156,9 +155,8 @@ internal fun RecommendationsBlock(nav: Nav, recs: List<Recommendation>, entry: F
                     topEnd = if (rec.hasResource) "${rec.versions} 个版本" else null,
                     subtitle = recommendationCaption(rec),
                     focusKey = "rec:${rec.key}",
-                    modifier = Modifier
-                        .graphicsLayer { alpha = if (rec.hasResource) 1f else 0.5f }
-                        .then(if (i == 0) Modifier.focusRequester(entry) else Modifier),
+                    dim = if (rec.hasResource) 1f else 0.5f,
+                    modifier = if (i == 0) Modifier.focusRequester(entry) else Modifier,
                 ) {
                     if (!rec.hasResource) {
                         Text(

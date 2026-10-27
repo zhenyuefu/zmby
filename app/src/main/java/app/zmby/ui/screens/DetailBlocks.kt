@@ -5,7 +5,6 @@ import androidx.core.graphics.get
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -24,7 +23,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,7 +30,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -97,10 +94,9 @@ internal fun serverCastCards(app: app.zmby.ZmbyApp, nav: Nav, ref: ServerItem): 
             }
         }
 
-/** 演职人员 expanded: 160-wide cells (140 avatar, name, role) in one row; [entry] on the first. */
+/** 演职人员: 160-wide cells (140 avatar, name, role) in one row, always with their text; [entry] on the first. */
 @Composable
-internal fun CastBlock(cards: List<CastCard>, entry: FocusRequester, showDetails: Boolean = true) {
-    val captionAlpha by animateFloatAsState(if (showDetails) 1f else 0f, tween(180), label = "cast-captions")
+internal fun CastBlock(cards: List<CastCard>, entry: FocusRequester) {
     Column(Modifier.padding(vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Box(Modifier.padding(horizontal = 80.dp)) { RowTitle("演职人员", trailing = "共 ${cards.size} 人") }
         LazyRow(Modifier.horizontalRow(), contentPadding = PaddingValues(horizontal = 80.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -108,7 +104,7 @@ internal fun CastBlock(cards: List<CastCard>, entry: FocusRequester, showDetails
                 Focusable(c.open, Modifier.width(160.dp).then(if (i == 0) Modifier.focusRequester(entry) else Modifier), origin = TransformOrigin(0.5f, 0f), outline = 0.dp, shadow = 0.dp, focusKey = c.key, label = c.name) { focused ->
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Avatar(c.name, c.image, 140.dp, focused, 52)
-                        Column(Modifier.graphicsLayer { alpha = captionAlpha }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(c.name, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (c.role.isNotBlank()) Text(c.role, fontSize = 18.sp, color = Z.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }

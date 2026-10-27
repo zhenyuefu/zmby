@@ -29,11 +29,33 @@ class AccordionTest {
         )
     }
 
-    @Test fun castKeepsBothCompactSourceRowsAboveIt() {
-        val accordion = Accordion("versions").apply { order = listOf("episodes", "versions", "tracks", "cast", "recs") }
-        assertEquals("versions", accordion.contextFor("cast"))
-        assertEquals("versions", accordion.contextFor("tracks"))
-        assertEquals("cast", accordion.contextFor("recs"))
+    @Test fun alignmentRowLiesAboveEveryBlockThatChanges() {
+        val series = Accordion("episodes").apply { order = listOf("episodes", "versions", "tracks", "cast", "recs") }
+        assertEquals("episodes", series.alignmentRow("episodes"))
+        assertEquals("versions", series.alignmentRow("versions"))
+        assertEquals("versions", series.alignmentRow("tracks"))
+        assertEquals("versions", series.alignmentRow("cast"))
+        assertEquals("cast", series.alignmentRow("recs"))
+        val noVersions = Accordion("tracks").apply { order = listOf("tracks", "cast", "recs") }
+        assertEquals("tracks", noVersions.alignmentRow("cast"))
+        val onlyCast = Accordion("cast").apply { order = listOf("cast", "recs") }
+        assertEquals("cast", onlyCast.alignmentRow("cast"))
+    }
+
+    @Test fun onlyTheActiveVersionsOrTracksBlockIsExpanded() {
+        val accordion = Accordion("episodes").apply { order = listOf("episodes", "versions", "tracks", "cast", "recs") }
+        assertTrue(accordion.isExpanded("episodes"))
+        assertFalse(accordion.isExpanded("versions"))
+        assertFalse(accordion.isExpanded("tracks"))
+        accordion.gainedFocus("tracks")
+        assertTrue(accordion.isExpanded("tracks"))
+        assertFalse(accordion.isExpanded("versions"))
+        // 剧集, 演职人员 and 为你推荐 never collapse, whichever block has focus.
+        assertTrue(accordion.isExpanded("episodes"))
+        assertTrue(accordion.isExpanded("cast"))
+        assertTrue(accordion.isExpanded("recs"))
+        val single = Accordion("cast").apply { order = listOf("versions") }
+        assertTrue(single.isExpanded("versions"))
     }
 
     @Test fun heldVersionsDirectionUsesTheSameOneJumpRule() {
@@ -42,20 +64,6 @@ class AccordionTest {
         assertTrue(accordion.sectionShortcut("versions", true, false, false, 500, jumps::add))
         assertTrue(accordion.sectionShortcut("tracks", true, false, false, 700, jumps::add))
         assertEquals(listOf(1), jumps)
-    }
-
-    @Test fun sourceStaysExpandedUntilDestinationCanReceiveFocus() {
-        val accordion = Accordion("tracks")
-        accordion.gainedFocus("tracks")
-        accordion.prepareHandoff("cast", FocusMemory().apply { lastKey = "audio:mock:source:1" })
-        assertEquals("tracks", accordion.leaving)
-        assertEquals("tracks", accordion.active)
-        assertEquals("cast", accordion.handoff)
-        // A delayed focus callback from the old layout must not undo the switch.
-        accordion.gainedFocus("tracks")
-        assertEquals("tracks", accordion.active)
-        accordion.gainedFocus("cast")
-        assertEquals("cast", accordion.active)
     }
 
     @Test fun heldTrackDirectionJumpsOnlyOnceUntilRelease() {
@@ -79,42 +87,19 @@ class AccordionTest {
         assertEquals(listOf(-1), jumps)
     }
 
-    @Test
-    fun eachBlockKeepsItsOwnFocusPosition() {
-        // Z9X 8K, 最后的餐桌: 剧集 → 版本 → back up to 剧集 → down again put focus on the off-screen 播放.
-        val accordion = Accordion("episodes").apply { order = listOf("episodes", "versions") }
+    @Test fun eachBlockKeepsItsOwnLastElement() {
         val memory = FocusMemory()
-
-        // Focus on an episode, then Down into 版本 (nothing remembered there yet).
+        val accordion = Accordion("episodes").apply { order = listOf("episodes", "versions"); this.memory = memory }
         memory.lastKey = "episode:s1:e1"
-        assertEquals(null, accordion.prepareHandoff("versions", memory))
-        accordion.gainedFocus("versions")
-        accordion.noteFocus("episodes", memory)
+        accordion.noteFocus("episodes")
         memory.lastKey = "画质 1080p"
-
-        // Up into 剧集: the memory is pointed at the episode before 版本 reports losing focus.
-        val back = accordion.prepareHandoff("episodes", memory)
-        accordion.gainedFocus("episodes")
-        assertEquals("episode:s1:e1", back)
-        memory.lastKey = back
+        accordion.noteFocus("versions")
+        assertEquals("episode:s1:e1", accordion.remembered("episodes"))
+        assertEquals("画质 1080p", accordion.remembered("versions"))
+        // While focus is being restored into a block, lastKey already names that block's element.
+        memory.lastKey = "episode:s1:e1"
         memory.beginRestore()
-        accordion.noteFocus("versions", memory)
-        memory.restorePending = false
-
-        // Down again: 版本 returns to its own element, not to the episode card that is collapsing.
-        assertEquals("画质 1080p", accordion.prepareHandoff("versions", memory))
-    }
-
-    @Test
-    fun leavingWithoutARestoreStillRecordsTheLastElement() {
-        val accordion = Accordion("episodes").apply { order = listOf("episodes", "versions", "cast") }
-        val memory = FocusMemory()
-        accordion.prepareHandoff("versions", memory)
-        accordion.gainedFocus("versions")
-        memory.lastKey = "线路 主线路"
-        accordion.noteFocus("versions", memory)
-        accordion.prepareHandoff("cast", memory)
-        accordion.gainedFocus("cast")
-        assertEquals("线路 主线路", accordion.prepareHandoff("versions", memory))
+        accordion.noteFocus("versions")
+        assertEquals("画质 1080p", accordion.remembered("versions"))
     }
 }

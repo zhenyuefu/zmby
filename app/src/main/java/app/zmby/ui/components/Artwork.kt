@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,9 +60,11 @@ fun MediaCard16x9(
     progress: Float = 0f,
     onFocus: (() -> Unit)? = null,
     focusKey: String? = null,
+    /** Opacity of the artwork and caption (cards without a resource); the focus outline stays opaque. */
+    dim: Float = 1f,
     caption: @Composable () -> Unit = {},
 ) {
-    CardFrame(onClick, width, width * 9 / 16, onFocus, caption, label = title ?: topStart, focusKey = focusKey, modifier = modifier) {
+    CardFrame(onClick, width, width * 9 / 16, onFocus, caption, label = title ?: topStart, focusKey = focusKey, dim = dim, modifier = modifier) {
         Artwork(imageUrl, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))))
         if (topStart != null) GlassChip(topStart, Modifier.align(Alignment.TopStart).padding(14.dp))
@@ -87,6 +90,10 @@ fun MediaCard16x9(
 /**
  * Shared card focus treatment (ui-spec §1.2): the whole card, caption included, scales 1.08 from its
  * top-left corner; the 4 px white outline and the large shadow belong to the artwork only.
+ *
+ * [dim] fades the artwork and caption inside their own bounds. Callers must not fade the whole card
+ * with an outer graphicsLayer: alpha below 1 renders it into an offscreen buffer of the unscaled
+ * size, which cuts off the scaled outline and the shadow on the right and bottom.
  */
 @Composable
 private fun CardFrame(
@@ -98,6 +105,7 @@ private fun CardFrame(
     modifier: Modifier = Modifier,
     label: String? = null,
     focusKey: String? = null,
+    dim: Float = 1f,
     art: @Composable BoxScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(22.dp)
@@ -107,15 +115,18 @@ private fun CardFrame(
                 Modifier
                     .width(width)
                     .height(height)
-                    .then(if (focused) Modifier.shadow(40.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.7f), spotColor = Color.Black.copy(alpha = 0.7f)) else Modifier)
+                    // A faded card would show its shadow through the artwork.
+                    .then(if (focused && dim >= 1f) Modifier.shadow(40.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.7f), spotColor = Color.Black.copy(alpha = 0.7f)) else Modifier)
                     .clip(shape)
                     .then(if (focused) Modifier.border(4.dp, Z.focusFill, shape) else Modifier),
             ) {
                 // Chips sit on the card's own artwork, not on the page backdrop: plain glass, without
                 // the backdrop slice and the per-chip position callback it needs on every scroll frame.
-                CompositionLocalProvider(LocalBackdrop provides null) { art() }
+                CompositionLocalProvider(LocalBackdrop provides null) {
+                    if (dim >= 1f) art() else Box(Modifier.matchParentSize().graphicsLayer { alpha = dim }) { art() }
+                }
             }
-            Box(Modifier.padding(top = 14.dp)) { caption() }
+            Box(Modifier.padding(top = 14.dp).then(if (dim >= 1f) Modifier else Modifier.graphicsLayer { alpha = dim })) { caption() }
         }
     }
 }
@@ -139,9 +150,11 @@ fun PosterCard2x3(
     subtitle: String? = null,
     onFocus: (() -> Unit)? = null,
     focusKey: String? = null,
+    /** Opacity of the poster and caption (only on TMDB, no resource); the focus outline stays opaque. */
+    dim: Float = 1f,
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
-    CardFrame(onClick, width, width * 3 / 2, onFocus, label = title, focusKey = focusKey, modifier = modifier, caption = {
+    CardFrame(onClick, width, width * 3 / 2, onFocus, label = title, focusKey = focusKey, dim = dim, modifier = modifier, caption = {
         Column {
             if (imageUrl != null) {
                 Text(title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)

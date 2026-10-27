@@ -163,8 +163,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     fun tracksFor(v: Version?) = picks[pickKey(v)] ?: TrackChoice()
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
-    val accordion = rememberAccordion(SECTION_VERSIONS)
-    val memory = LocalNavEntry.current?.focus
+    val accordion = rememberAccordion(SECTION_VERSIONS, scroll)
     val density = androidx.compose.ui.platform.LocalDensity.current.density
 
     var marking by remember { mutableStateOf<ServerItem?>(null) }
@@ -208,18 +207,18 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                     instances = versions.instances,
                     onPlay = { startMs -> playRef?.let { play(context, it, startMs, selected?.source?.id, tracksFor(selected), versions.alternatesTo(selected)) } },
                     // Back on the header: scroll all the way up so the title shows again, not just the buttons.
-                    onFocused = { accordion.showHeader(scope, scroll) },
+                    onFocused = { accordion.showHeader() },
                     onMarks = { marking = playRef },
                     availability = if (versions.searching > 0) "正在查找资源…" else if (versions.unresponsive.isNotEmpty()) "资源状态待确认 · 重试" else "暂无资源",
                     onRetry = versions.retry,
                     playRequester = headerPlay,
-                    onDown = { accordion.order.firstOrNull()?.let { accordion.open(it, scope, memory, scroll, density) } },
+                    onDown = { accordion.order.firstOrNull()?.let(accordion::open) },
                 )
                 Spacer(Modifier.height(44.dp))
                 if (hasVersions) {
-                    CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), scope, scroll, summary = {
+                    CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), summary = {
                         SummaryText(selected?.let(::versionSummary) ?: if (versions.searching > 0) "正在查找资源…" else "暂无可播放的版本")
-                    }) { _ ->
+                    }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
                             VersionSection(versions, selected, onSelect = { v ->
                                 picked = v
@@ -233,9 +232,9 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                     Text("暂无资源", fontSize = 21.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 80.dp))
                 }
                 shown?.let { v ->
-                    CollapsibleSection(accordion, SECTION_TRACKS, "音轨与字幕", "${v.source.subtitleStreams.size} 条字幕", scope, scroll, barHeight = 112.dp, summary = {
+                    CollapsibleSection(accordion, SECTION_TRACKS, "音轨与字幕", "${v.source.subtitleStreams.size} 条字幕", barHeight = 112.dp, summary = {
                         TrackSummary(v, tracksFor(v))
-                    }) { _ ->
+                    }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
                             TrackSection(v, chapters = v.item.chapters.size, runtimeTicks = v.item.runTimeTicks, choice = tracksFor(v), entry = accordion.entry(SECTION_TRACKS)) { c ->
                                 picks = picks + (pickKey(v)!! to c)
@@ -245,12 +244,12 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                 }
                 // 演职人员 (ui-spec §2.2 4), then 为你推荐 (§2.14).
                 if (cast.isNotEmpty()) {
-                    CollapsibleSection(accordion, SECTION_CAST, "演职人员", "共 ${cast.size} 人", scope, scroll, retainContent = true) { expanded ->
-                        CastBlock(cast, accordion.entry(SECTION_CAST), showDetails = expanded)
+                    DetailBlock(accordion, SECTION_CAST) {
+                        CastBlock(cast, accordion.entry(SECTION_CAST))
                     }
                 }
                 if (recs.isNotEmpty()) {
-                    CollapsibleSection(accordion, SECTION_RECS, "为你推荐", "${recs.size} 部", scope, scroll, retainContent = true) { _ ->
+                    DetailBlock(accordion, SECTION_RECS) {
                         RecommendationsBlock(nav, recs, accordion.entry(SECTION_RECS))
                     }
                 }

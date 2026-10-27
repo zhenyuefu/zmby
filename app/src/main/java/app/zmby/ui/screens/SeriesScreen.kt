@@ -32,7 +32,6 @@ import app.zmby.ui.theme.defaultScrollSpec
 import app.zmby.ui.theme.Mono
 import app.zmby.zmby
 import kotlinx.coroutines.*
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 
 private val SERIES_SCRIMS = Scrims(listOf(0f to 0.96f, 0.4f to 0.75f, 0.75f to 0.15f), bottomFrom = 300f / 1080f, bottomSolid = 0.55f)
@@ -200,8 +199,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         val index = episodes.indexOfFirst { it.key == currentKey }
         if (index > 0 && rowState.firstVisibleItemIndex == 0) rowState.scrollToItem((index - 1).coerceAtLeast(0))
     }
-    val accordion = rememberAccordion(SECTION_EPISODES)
-    val memory = LocalNavEntry.current?.focus
+    val accordion = rememberAccordion(SECTION_EPISODES, scroll)
     val density = LocalDensity.current.density
     val cast = remember(canonical?.cast, ref.key, ref.item.people) {
         canonical?.let { catalogCastCards(nav, it.cast) } ?: serverCastCards(app, nav, ref)
@@ -245,21 +243,14 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                 SeriesHeader(ref, display, seasons.size, episodes.size, shown?.item, selected,
                     onPlay = { _, v, start -> v?.let { play(context, it.ref, start, it.source.id, tracks(it), versions.alternatesTo(it)) } },
                     playButton = playButton,
-                    initialFocusKey = seriesId, onFocusChanged = { headerFocused = it; if (it) accordion.showHeader(scope, scroll) },
+                    initialFocusKey = seriesId, onFocusChanged = { headerFocused = it; if (it) accordion.showHeader() },
                     onMarks = { selected?.let { marking = it.ref } }, availability = availability,
                     onRetry = { versions.retry(); failed.forEach(app.registry::retry); resourceRetry++ },
-                    onDown = { accordion.open(SECTION_EPISODES, scope, memory, scroll, density) })
+                    onDown = { accordion.open(SECTION_EPISODES) })
                 Spacer(Modifier.height(44.dp))
                 val watched = episodes.count { it.item.userData?.played == true }
-                CollapsibleSection(accordion, SECTION_EPISODES, "剧集", if (episodes.isEmpty()) null else "${episodes.size} 集 · 已看 $watched 集", scope, scroll, summary = {
-                    SummaryText(shown?.let { row ->
-                        listOfNotNull(
-                            seasons.firstOrNull { it.number == seasonNumber }?.title,
-                            listOfNotNull("第 ${row.item.indexNumber ?: "?"} 集", episodeName(row.item)).joinToString(" "),
-                            row.resources.firstOrNull()?.item?.let(::remainingLabel),
-                        ).joinToString(" · ")
-                    } ?: "还没有剧集目录")
-                }) {
+                // 剧集 never collapses: the season row and the current episode stay in place (ui-spec §2.14).
+                DetailBlock(accordion, SECTION_EPISODES) {
                   Column(Modifier.padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
                     val segments = seasons.map { Segment(it.title) } + listOfNotNull(if (unknown.isNotEmpty()) Segment("未归类", unknown.size.toString()) else null)
                     if (segments.size > 1) SegmentedWell(segments, if (unsorted) seasons.size else seasons.indexOfFirst { it.number == seasonNumber }.coerceAtLeast(0),
@@ -287,8 +278,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                                 topEnd = status.label,
                                 watched = row.item.userData?.played == true, progress = progressFraction(row.item), onFocus = { currentKey = row.key },
                                 focusKey = "episode:${row.key}",
-                                modifier = Modifier.graphicsLayer { alpha = if (status.dim) 0.4f else 1f }
-                                    .then(if (row.key == shown?.key) Modifier.focusRequester(currentCard).focusRequester(accordion.entry(SECTION_EPISODES)) else Modifier)) {
+                                dim = if (status.dim) 0.4f else 1f,
+                                modifier = if (row.key == shown?.key) Modifier.focusRequester(currentCard).focusRequester(accordion.entry(SECTION_EPISODES)) else Modifier) {
                                 val number = "第 ${row.item.indexNumber ?: "?"} 集"
                                 val name = episodeName(row.item)
                                 // Without a name of its own the number takes the title line; the line above stays for alignment.
@@ -306,7 +297,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                   }
                 }
                 if (hasVersions) {
-                    CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), scope, scroll, summary = {
+                    CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), summary = {
                         SummaryText(selected?.let(::versionSummary) ?: if (versions.searching > 0) "正在查找资源…" else "这一集暂无可播放的版本")
                     }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
@@ -315,19 +306,19 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                     }
                 }
                 trackVersion?.let { v ->
-                    CollapsibleSection(accordion, SECTION_TRACKS, "音轨与字幕", "${v.source.subtitleStreams.size} 条字幕", scope, scroll, barHeight = 112.dp, summary = { TrackSummary(v, tracks(v)) }) {
+                    CollapsibleSection(accordion, SECTION_TRACKS, "音轨与字幕", "${v.source.subtitleStreams.size} 条字幕", barHeight = 112.dp, summary = { TrackSummary(v, tracks(v)) }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
                             TrackSection(v, v.item.chapters.size, v.item.runTimeTicks, tracks(v), accordion.entry(SECTION_TRACKS)) { picks = picks + (trackKey(v) to it) }
                         }
                     }
                 }
                 if (cast.isNotEmpty()) {
-                    CollapsibleSection(accordion, SECTION_CAST, "演职人员", "共 ${cast.size} 人", scope, scroll, retainContent = true) { expanded ->
-                        CastBlock(cast, accordion.entry(SECTION_CAST), showDetails = expanded)
+                    DetailBlock(accordion, SECTION_CAST) {
+                        CastBlock(cast, accordion.entry(SECTION_CAST))
                     }
                 }
                 if (recs.isNotEmpty()) {
-                    CollapsibleSection(accordion, SECTION_RECS, "为你推荐", "${recs.size} 部", scope, scroll, retainContent = true) { _ ->
+                    DetailBlock(accordion, SECTION_RECS) {
                         RecommendationsBlock(nav, recs, accordion.entry(SECTION_RECS))
                     }
                 }

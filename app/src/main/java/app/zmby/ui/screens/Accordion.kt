@@ -1,8 +1,8 @@
 package app.zmby.ui.screens
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -23,13 +23,16 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -40,8 +43,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -57,47 +61,64 @@ import app.zmby.ui.rememberRetained
 import app.zmby.ui.theme.Z
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /*
- * Detail navigation (ui-spec §2.14): a stable section anchor accepts focus before expansion;
- * the remembered row takes focus next. Artwork rows keep their dimensions and fade their captions.
- * A held direction leaves the tracks once; the page aligns the new section below its compact header.
+ * Detail navigation (ui-spec §2.14). The page is the header and a column of blocks. 版本 and
+ * 音轨与字幕 collapse to a summary bar while focus is elsewhere; 剧集, 演职人员 and 为你推荐 always
+ * stay as they are. Moving between blocks is one transition: focus parks on the destination's
+ * anchor, then in the same frame the destination expands and the source collapses while the page
+ * aligns once to a row above every changing block; focus then returns to the block's last element.
  */
 
-/** Where the preceding context row rests, below the 140-high compact header. */
+/** Where the alignment row rests, below the 140-high compact header. */
 private val SECTION_TOP = 170.dp
-private const val SECTION_RESIZE_MS = 180
+
+/** Height change, content crossfade and page alignment share one duration and easing. */
+private const val TRANSITION_MS = 200
+
+/** Blocks that collapse to a summary bar; the others always keep their content. */
+internal val COLLAPSIBLE = setOf(SECTION_VERSIONS, SECTION_TRACKS)
 
 @Stable
 class Accordion(first: String) {
-    /** The expanded block. */
+    /** The block focus is in (or was in last): the only collapsible block shown expanded. */
     var active by mutableStateOf(first)
         internal set
-    internal var leaving by mutableStateOf<String?>(null)
-        private set
-    private var focusedSection: String? = null
-    private var headerActive = false
-    /** The blocks on the page in order (only those that have something to show). */
-    var order: List<String> = emptyList()
-    /** Each block's default element: selected version, current audio, first person, current episode. */
-    private val entries = HashMap<String, FocusRequester>()
-    private val anchors = HashMap<String, FocusRequester>()
+    /** The block whose anchor may take focus while a transition parks focus there. */
     internal var handoff by mutableStateOf<String?>(null)
         private set
-    /** The element focused last in each block, by focus key, to return to when it expands again. */
-    private val lastKeys = HashMap<String, String>()
-    private val coordinates = HashMap<String, androidx.compose.ui.layout.LayoutCoordinates>()
+    /** The blocks on the page in order (only those that have something to show). */
+    var order: List<String> = emptyList()
     /** Where focus goes Up from the first block (the header's play button). */
     var header: FocusRequester? = null
-    private var navigation: Job? = null
-    private var heldJump = false
-    var moving by mutableStateOf(false)
-        private set
 
-    /** A held direction jumps once out of tracks; consume repeats until the remote is released. */
+    /** Each block's default element: selected version, current audio, current episode, first person. */
+    private val entries = HashMap<String, FocusRequester>()
+    private val anchors = HashMap<String, FocusRequester>()
+    /** The element focused last in each block, by focus key, to return to when it is entered again. */
+    private val lastKeys = HashMap<String, String>()
+    private val coordinates = HashMap<String, LayoutCoordinates>()
+    private var navigation: Job? = null
+    private var generation = 0
+    private var heldJump = false
+
+    // Bound by rememberAccordion on every composition.
+    internal var scope: CoroutineScope? = null
+    internal var scroll: ScrollState? = null
+    internal var memory: FocusMemory? = null
+    internal var focusManager: FocusManager? = null
+    internal var density = 1f
+
+    fun entry(key: String): FocusRequester = entries.getOrPut(key) { FocusRequester() }
+    internal fun anchor(key: String): FocusRequester = anchors.getOrPut(key) { FocusRequester() }
+
+    /** A single block never collapses; otherwise only the active collapsible block is expanded. */
+    fun isExpanded(key: String): Boolean = key !in COLLAPSIBLE || active == key || order.size <= 1
+
+    /** A held direction jumps once out of versions or tracks; repeats are consumed until the remote is released. */
     internal fun sectionShortcut(from: String, down: Boolean, up: Boolean, released: Boolean, heldMs: Long, jump: (Int) -> Unit): Boolean {
         if (!down && !up) return false
         if (released) {
@@ -106,147 +127,151 @@ class Accordion(first: String) {
             return consumed
         }
         if (heldJump) return true
-        if ((from != SECTION_TRACKS && from != SECTION_VERSIONS) || heldMs < 450) return false
+        if (from !in COLLAPSIBLE || heldMs < 450) return false
         heldJump = true
         jump(if (down) 1 else -1)
         return true
     }
 
-    fun entry(key: String): FocusRequester = entries.getOrPut(key) { FocusRequester() }
-    internal fun anchor(key: String): FocusRequester = anchors.getOrPut(key) { FocusRequester() }
-
-    internal fun noteFocus(key: String, memory: FocusMemory?) {
-        // While focus is being restored into another block, lastKey already names that block's element.
-        if (memory == null || memory.restorePending) return
+    /** Records the block's current element before a key can move focus away from it. */
+    internal fun noteFocus(key: String) {
+        // While a transition runs, lastKey still names the source's element (focus is on an anchor).
+        val memory = memory ?: return
+        if (handoff != null || memory.restorePending) return
         memory.lastKey?.let { lastKeys[key] = it }
     }
 
+    internal fun remembered(key: String): String? = lastKeys[key]
+
     internal fun gainedFocus(key: String) {
-        headerActive = false
-        focusedSection = key
-        // The outgoing block can report focus again while the incoming block is being laid out.
-        if (key != leaving) active = key
+        active = key
     }
 
-    internal fun prepareHandoff(key: String, memory: FocusMemory?): String? {
-        val from = focusedSection ?: active
-        if (!headerActive && key != from) memory?.lastKey?.let { lastKeys[from] = it }
-        leaving = from.takeIf { it != key }
-        handoff = key
-        moving = true
-        return lastKeys[key]
+    /**
+     * The row kept in place when [key] is entered: it lies above every block that changes height,
+     * so the alignment is computed once and the resize happens beneath it. Tracks and cast keep the
+     * versions bar above them; recommendations keep the cast row.
+     */
+    internal fun alignmentRow(key: String): String {
+        val i = order.indexOf(key)
+        if (i < 0) return key
+        if (key == SECTION_RECS) return order.getOrNull(i - 1) ?: key
+        if (key in COLLAPSIBLE || key == SECTION_CAST) return order.take(i + 1).firstOrNull { it in COLLAPSIBLE } ?: key
+        return key
     }
 
-    /** Keep compact source information above the focused row instead of pinning every row high. */
-    internal fun contextFor(key: String): String {
-        val before = order.takeWhile { it != key }
-        return if (key == SECTION_CAST && SECTION_VERSIONS in before) SECTION_VERSIONS
-        else before.lastOrNull() ?: key
-    }
-
-    internal fun cancelNavigation() {
-        navigation?.cancel()
-        leaving = null
-        handoff = null
-        heldJump = false
-        moving = false
-    }
-
-    /** Header and section navigation share one scroll job; rapid Up/Down cancels the older one. */
-    fun showHeader(scope: CoroutineScope, scroll: ScrollState) {
-        cancelNavigation()
-        headerActive = true
-        if (scroll.value > 0) navigation = scope.launch { scroll.animateScrollTo(0, tween(220)) }
-    }
-
-    internal fun noteLayout(key: String, c: androidx.compose.ui.layout.LayoutCoordinates) { coordinates[key] = c }
+    internal fun noteLayout(key: String, c: LayoutCoordinates) { coordinates[key] = c }
 
     private fun topOf(key: String): Float? = coordinates[key]?.takeIf { it.isAttached }?.positionInRoot()?.y
 
+    internal fun cancelNavigation() {
+        navigation?.cancel()
+        navigation = null
+        handoff = null
+        heldJump = false
+    }
+
+    /** Focus came back to the header: the whole page scrolls back up so the title shows again. */
+    fun showHeader() {
+        cancelNavigation()
+        val scroll = scroll ?: return
+        if (scroll.value > 0) navigation = scope?.launch { scroll.animateScrollTo(0, tween(TRANSITION_MS, easing = FastOutSlowInEasing)) }
+    }
+
     /**
      * Moves to the block [delta] away from [from] (Up from the first goes to the header); false when
-     * there is none. Focus returns to where it was in that block, else its default element.
+     * there is none.
      */
-    fun step(from: String, delta: Int, scope: CoroutineScope, memory: FocusMemory?, scroll: ScrollState?, density: Float): Boolean {
-        val i = order.indexOf(from)
-        val to = order.getOrNull(i + delta)
+    fun step(from: String, delta: Int): Boolean {
+        val to = order.getOrNull(order.indexOf(from) + delta)
         if (to == null) {
-            if (delta < 0) header?.let { h ->
-                navigation?.cancel()
-                moving = false
-                leaving = null
-                handoff = null
-                navigation = scope.launch { h.requestWhenReady() }
-                return true
-            }
-            return false
+            val h = header ?: return false
+            if (delta > 0) return false
+            cancelNavigation()
+            navigation = scope?.launch { h.requestWhenReady() }
+            return true
         }
-        if (from == SECTION_TRACKS || from == SECTION_VERSIONS) heldJump = true
-        open(to, scope, memory, scroll, density)
+        if (from in COLLAPSIBLE) heldJump = true
+        open(to, delta)
         return true
     }
 
-    /** Focuses the persistent anchor first, expands its section, then restores the row. */
-    fun open(key: String, scope: CoroutineScope, memory: FocusMemory?, scroll: ScrollState?, density: Float) {
+    /**
+     * Enters [to]: park on its anchor, switch blocks in one frame, align once, restore its element.
+     * A block without its default element (版本 with only 「n 台未响应」) takes its first control;
+     * one with no control at all is passed over in the direction of travel.
+     */
+    fun open(to: String, delta: Int = 1) {
+        val scope = scope ?: return
         navigation?.cancel()
-        val from = focusedSection ?: active
-        val remembered = prepareHandoff(key, memory)
+        val token = ++generation
+        handoff = to
+        val remembered = lastKeys[to]
+        val source = memory?.lastKey
         navigation = scope.launch {
-            // This anchor is always placed, even while its content is collapsed. Focus crosses to
-            // the section first; its focus callback then expands it and we restore the leaf below.
-            if (!anchor(key).requestWhenReady()) { leaving = null; handoff = null; moving = false; return@launch }
-            awaitFrame()
-            // Align the context row once, before removing the old expanded card. Every changing
-            // block is at or below this row, so expansion can adapt beneath a fixed page anchor.
-            // Card-internal focus never asks the outer page to bring an individual row into view.
-            if (scroll != null) {
-                topOf(contextFor(key))?.let { top ->
-                    val target = (scroll.value + top - SECTION_TOP.value * density).toInt().coerceIn(0, scroll.maxValue)
-                    if (kotlin.math.abs(scroll.value - target) > 1) scroll.animateScrollTo(target, tween(180, easing = FastOutSlowInEasing))
-                }
+            try {
+                // The anchor is always placed, so focus can leave the source before it collapses.
+                if (!anchor(to).requestWhenReady(600)) return@launch
+                active = to
+                align(to)
+                if (restore(remembered) || entry(to).requestWhenReady(300)) return@launch
+                // From the anchor at the block's top, Down lands on its first control (the block's
+                // focus group keeps the search inside it).
+                if (focusManager?.moveFocus(FocusDirection.Down) == true) return@launch
+                val next = order.getOrNull(order.indexOf(to) + delta)
+                if (next != null) open(next, delta)
+                // Nothing further that way: back to where focus came from.
+                else if (!restore(source)) header?.requestWhenReady()
+            } finally {
+                if (generation == token) handoff = null
             }
-            var done = false
-            if (remembered != null && memory != null) {
-                memory.lastKey = remembered
-                memory.beginRestore()
-                // The block's content is composed on the next frames; its element takes focus itself.
-                repeat(30) { if (!done) { delay(16); if (memory.restored && !memory.restorePending) done = true } }
-                memory.restorePending = false
-            }
-            if (!done) done = entry(key).requestWhenReady()
-            if (!done) {
-                active = from
-                entry(from).requestWhenReady()
-                leaving = null
-                handoff = null
-                moving = false
-                return@launch
-            }
-            // Keep the source placed until the destination has accepted focus. Removing the old
-            // focus target first lets the root choose the header's play button in between frames.
-            awaitFrame()
-            leaving = null
-            handoff = null
-            delay(SECTION_RESIZE_MS.toLong())
-            // A busy device can start the resize a frame late. Wait for positions to settle
-            // before considering the handoff complete; never retarget the page during the resize.
-            var previous: List<Int?>? = null
-            var stable = 0
-            for (frame in 0 until 12) {
-                awaitFrame()
-                val positions = order.map { topOf(it)?.toInt() }
-                stable = if (positions == previous) stable + 1 else 0
-                if (stable >= 2) break
-                previous = positions
-            }
-            moving = false
         }
+    }
+
+    private fun CoroutineScope.align(key: String) {
+        val scroll = scroll ?: return
+        val top = topOf(alignmentRow(key)) ?: return
+        val target = (scroll.value + top - SECTION_TOP.value * density).toInt().coerceAtLeast(0)
+        if (kotlin.math.abs(scroll.value - target) > 1) launch { scroll.animateScrollTo(target, tween(TRANSITION_MS, easing = FastOutSlowInEasing)) }
+    }
+
+    /** Returns focus to [key] once its element is composed in the expanded block. */
+    private suspend fun restore(key: String?): Boolean {
+        val memory = memory ?: return false
+        if (key == null) return false
+        memory.lastKey = key
+        memory.beginRestore()
+        withTimeoutOrNull(300) { snapshotFlow { memory.restorePending }.first { !it } }
+        val ok = memory.restored
+        memory.restorePending = false
+        return ok
     }
 }
 
+/** Keeps the accordion of one detail page across recompositions and binds it to the page's scroll. */
+@Composable
+fun rememberAccordion(first: String, scroll: ScrollState): Accordion {
+    val accordion = rememberRetained("detailAccordion", first) { Accordion(first) }
+    accordion.scope = rememberCoroutineScope()
+    accordion.scroll = scroll
+    accordion.memory = LocalNavEntry.current?.focus
+    accordion.focusManager = LocalFocusManager.current
+    accordion.density = LocalDensity.current.density
+    DisposableEffect(accordion) { onDispose { accordion.cancelNavigation() } }
+    return accordion
+}
+
+/** A block that never collapses (剧集, 演职人员, 为你推荐). */
+@Composable
+fun DetailBlock(accordion: Accordion, key: String, content: @Composable () -> Unit) {
+    BlockFrame(accordion, key, animateHeight = false) { content() }
+}
+
 /**
- * One accordion block: [content] when expanded, else the `mini` bar (88 high, radius 24, 4 % white
- * with a 1 px inner line): the block name (22/700, 150 wide), a one-line [summary] and the [count].
+ * A collapsible block: [content] when expanded, else the `mini` bar (88 high, radius 24, 4 % white):
+ * the block name (22/700, 150 wide), a one-line [summary] and the [count]. Both are composed and
+ * measured all the time, so switching only changes which is placed, the wrapper's height and the
+ * layers' alpha; nothing is laid out for the first time in the middle of a transition.
  */
 @Composable
 fun CollapsibleSection(
@@ -254,35 +279,49 @@ fun CollapsibleSection(
     key: String,
     title: String,
     count: String?,
-    scope: CoroutineScope,
-    scroll: ScrollState?,
     barHeight: Dp = 88.dp,
-    retainContent: Boolean = false,
     summary: @Composable RowScope.() -> Unit = {},
-    content: @Composable (expanded: Boolean) -> Unit,
+    content: @Composable () -> Unit,
 ) {
-    val expanded = accordion.active == key || accordion.leaving == key || accordion.order.size <= 1
-    val reveal by animateFloatAsState(if (expanded) 1f else 0f, tween(150), label = "section-reveal")
+    val expanded = accordion.isExpanded(key)
+    val reveal by animateFloatAsState(if (expanded) 1f else 0f, tween(TRANSITION_MS, easing = FastOutSlowInEasing), label = "section-reveal")
+    BlockFrame(accordion, key) {
+        Layout(content = {
+            Box(Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = 1f - reveal }) { MiniBar(title, count, barHeight, summary) }
+            Box(Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = reveal; translationY = (1f - reveal) * 12.dp.toPx() }) { content() }
+        }) { children, constraints ->
+            val mini = children[0].measure(constraints)
+            val full = children[1].measure(constraints)
+            val visible = if (expanded) full else mini
+            layout(visible.width, visible.height) {
+                if (!expanded || reveal < 1f) mini.placeRelative(0, 0)
+                if (expanded || reveal > 0f) full.placeRelative(0, 0)
+            }
+        }
+    }
+}
+
+/** Focus and key handling shared by all blocks. */
+@Composable
+private fun BlockFrame(accordion: Accordion, key: String, animateHeight: Boolean = true, content: @Composable () -> Unit) {
     val memory = LocalNavEntry.current?.focus
     val focusManager = LocalFocusManager.current
-    val density = LocalDensity.current.density
     Column(
         Modifier
             .fillMaxWidth()
-            // Only the wrapper changes height. The child keeps its final constraints and drawing
-            // layer, so its lazy lists and text are not remeasured at intermediate heights.
-            .animateContentSize(tween(SECTION_RESIZE_MS), alignment = Alignment.TopStart)
+            // Only the wrapper's height animates; the children keep their final constraints. The
+            // animation clips to the wrapper, so blocks that never collapse go without it and their
+            // focused cards keep the full scaled outline and shadow.
+            .then(if (animateHeight) Modifier.animateContentSize(tween(TRANSITION_MS, easing = FastOutSlowInEasing), alignment = Alignment.TopStart) else Modifier)
             .onGloballyPositioned { accordion.noteLayout(key, it) }
-            .onFocusChanged {
-                if (it.hasFocus) accordion.gainedFocus(key)
-            }
+            .onFocusChanged { if (it.hasFocus) accordion.gainedFocus(key) }
             .onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown) accordion.noteFocus(key, memory)
+                if (e.type == KeyEventType.KeyDown) accordion.noteFocus(key)
                 accordion.sectionShortcut(
                     key, e.key == Key.DirectionDown, e.key == Key.DirectionUp,
                     e.type == KeyEventType.KeyUp,
                     if (e.nativeKeyEvent.isLongPress || e.nativeKeyEvent.repeatCount > 0) 450L else e.nativeKeyEvent.eventTime - e.nativeKeyEvent.downTime,
-                ) { delta -> accordion.step(key, delta, scope, memory, scroll, density) }
+                ) { delta -> accordion.step(key, delta) }
             }
             .onKeyEvent { e ->
                 val delta = when (e.key) {
@@ -291,13 +330,14 @@ fun CollapsibleSection(
                     else -> 0
                 }
                 if (delta == 0 || e.type != KeyEventType.KeyDown) return@onKeyEvent false
+                // Still parked on the anchor: the press goes on to the next block right away.
+                if (accordion.handoff == key) { accordion.step(key, delta); return@onKeyEvent true }
                 // Inside the block first; at its edge, the next block (the search cannot leave the block).
                 val before = memory?.lastKey
                 val moved = focusManager.moveFocus(if (delta > 0) FocusDirection.Down else FocusDirection.Up)
                 // A nested onEnter can redirect focus while moveFocus itself reports cancellation.
-                // Treat the synchronous key change as success rather than also leaving this block.
                 if (moved || memory?.lastKey != before) return@onKeyEvent true
-                accordion.step(key, delta, scope, memory, scroll, density)
+                accordion.step(key, delta)
                 true
             }
             .focusProperties {
@@ -312,21 +352,7 @@ fun CollapsibleSection(
             .focusRequester(accordion.anchor(key))
             .focusProperties { canFocus = accordion.handoff == key }
             .focusable())
-        // Each tree keeps its final constraints and cached layer. Crossfade both during the resize
-        // so the outgoing card does not vanish into an empty gap before the next row moves up.
-        if (retainContent) Box(Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) { content(expanded) }
-        else Layout(content = {
-            Box(Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = 1f - reveal }) { MiniBar(title, count, barHeight, summary) }
-            Box(Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = reveal; translationY = (1f - reveal) * 12.dp.toPx() }) { content(true) }
-        }) { children, constraints ->
-            val mini = if (!expanded || reveal < 1f) children[0].measure(constraints) else null
-            val full = if (expanded || reveal > 0f) children[1].measure(constraints) else null
-            val visible = (if (expanded) full else mini)!!
-            layout(visible.width, visible.height) {
-                mini?.placeRelative(0, 0)
-                full?.placeRelative(0, 0)
-            }
-        }
+        content()
     }
 }
 
@@ -354,12 +380,4 @@ private fun MiniBar(title: String, count: String?, height: Dp, summary: @Composa
 @Composable
 fun RowScope.SummaryText(text: String, modifier: Modifier = Modifier) {
     Text(text, fontSize = 20.sp, color = Color.White.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier.weight(1f, fill = false))
-}
-
-/** Keeps the accordion of one detail page across recompositions. */
-@Composable
-fun rememberAccordion(first: String): Accordion {
-    val accordion = rememberRetained("detailAccordion", first) { Accordion(first) }
-    DisposableEffect(accordion) { onDispose { accordion.cancelNavigation() } }
-    return accordion
 }

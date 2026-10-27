@@ -3,9 +3,9 @@
 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986  LICENSE
 0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594  LICENSES/Apache-2.0.txt
 20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95  LICENSES/LGPL-2.1.txt
-a4f784b5fc5fcf700eea60bc8d608bdc57fa750bb33ef35887a43d00dd9d8929  README.md
+dc1d7705cdc6065e0c378e00b1dc718f86d9b7573b68c09f12d1ee29b7b0e7fd  README.md
 805eaf25ec598878e05272c08033f470958433cd29c59453836cec9a46ca42b8  THIRD_PARTY_NOTICES.md
-3a786b3c0778f0224b6a12de4dfbf283021dcf4932e21794a104da6ae6866d39  app/build.gradle.kts
+70e0a29425ea0be433270eda01ce90bc0534a3769fd2536be462cf473467fc53  app/build.gradle.kts
 129284da6c7adb6dcf3d047bafad7b00b0277bc433fdc60f286ca8812f1b42cf  app/compose-stability.conf
 223afb9212520b0b89e62459ae552c64c252f70240ec1b383f0490a9049ce241  app/proguard-rules.pro
 67f9892ad72b6735c864c2de763679362595af10fd938ab1a29269ca96015eec  app/schemas/app.zmby.store.ZmbyDatabase/1.json
@@ -93,7 +93,7 @@ b7c1da52d6684f24f40092074363c28b933f59dd0497cf61a75cb76ad2fcbfba  app/src/main/j
 df44c8d0823246b30bec7b810744de49f385302c0e7a4d5ffeab5c8cbc45af8e  app/src/main/java/app/zmby/ui/Errors.kt
 b06327c72c7c8412428b9df486ecd1dbec2054c8ff60890bf0e16f3231fbe73a  app/src/main/java/app/zmby/ui/Nav.kt
 f5601cdea572f92dc31848c1abeb4886f8a32699825cf921ab42c34b34efe520  app/src/main/java/app/zmby/ui/NavEntry.kt
-fcf800c100678fc57ef4889f2af419635411e60c1a10436a774bcff15b91f27d  app/src/main/java/app/zmby/ui/components/Artwork.kt
+9d8ea71b6c706310c7824f9a03f10aaaae14d43fa984749eb60c8c543ca64d84  app/src/main/java/app/zmby/ui/components/Artwork.kt
 27571754dd512f058b251b71be2a325401bcce91f52e7ed98f3410b1fbf0f269  app/src/main/java/app/zmby/ui/components/BoxBlur.kt
 1c2bc33fc962cd360e336bec16d8469881416467d60c33797f1136797785fef5  app/src/main/java/app/zmby/ui/components/Controls.kt
 25bbebc4857f6c2e2bd68da9f5cdc55b12ee2c3e4477adac1af26dfd87ede151  app/src/main/java/app/zmby/ui/components/Focus.kt
@@ -104,7 +104,7 @@ a7889e48b8aabba7cd08f518efc84d660b4ceef70d04b88ac42108379931961c  app/src/main/j
 84bb2743198151a45a44b2956388f186be9905b4b4b02dd862eeae2cb6930053  app/src/main/java/app/zmby/ui/components/Logo.kt
 846723e17c743ae7280c1b4314b5311fc7b4afe01af6b0270ef0006e04dc5854  app/src/main/java/app/zmby/ui/components/SettingRows.kt
 2cd4cc52ef66d009cdf634a0f51b0ddfa0d235b7376ebdde82d2d07f75fda0bf  app/src/main/java/app/zmby/ui/components/SlidingChoice.kt
-3cd4be54fcef8d674354d8593df2e4d719fb8c26fac9b26c58bd8f32c3cad3b3  app/src/main/java/app/zmby/ui/screens/Accordion.kt
+28ff49888997e009c43d5fbf2bfab47645ea274ae22a0e8e85a1b1cac212bbc9  app/src/main/java/app/zmby/ui/screens/Accordion.kt
 5cbee12513159cbf08b80ce561b078f8ebc26711048b1407eae5b62b11221b6b  app/src/main/java/app/zmby/ui/screens/BrowseModel.kt
 695873502c491bce2db5bded832d7b1681922ce0396ccc89eb7b4ef18ebfae42  app/src/main/java/app/zmby/ui/screens/BrowseScreen.kt
 a300044632193f5b0cc9b38ed651a999efccbb52bfaafd6d92f2c624faff81c9  app/src/main/java/app/zmby/ui/screens/CastRow.kt
@@ -112,10 +112,10 @@ c4572799f9983164412aa5805cc9b95115be57bffe60afa3dbc08ab84a581305  app/src/main/j
 57c627e200fb8257dd3d0253eb0b22c56abae6d282e2ab9d148d99fdd61464d2  app/src/main/java/app/zmby/ui/screens/CatalogVersions.kt
 fc9c9734ac3fcaafccd0df79d3a231452fbc73861707b2199538cf3bddf79f7c  app/src/main/java/app/zmby/ui/screens/Chrome.kt
 12a5c7532961f0481e1fdfd05e87e637cc6c86ef78ec341206151fa2f79708e0  app/src/main/java/app/zmby/ui/screens/DataSourceScreen.kt
-9e8da37a5f13af15fff3a4a1ebaf9ad9e957b9e2494610006c5592d27062527c  app/src/main/java/app/zmby/ui/screens/DetailBlocks.kt
+c7c9b6c60596dbd6123c1ba4f2fd676f183cbd4efd08ae950dcd8131cc411d73  app/src/main/java/app/zmby/ui/screens/DetailBlocks.kt
 4c6731b7ba42e226524f8bc2adf1f6a85daad2f2c4481c9c2adf5adf2ce33734  app/src/main/java/app/zmby/ui/screens/DetailMetadataLoader.kt
 97ea44cbea2743b9dc8bfdd5ab6497b416c20a179ccc0a7d99c5c67ef31cf455  app/src/main/java/app/zmby/ui/screens/DetailModel.kt
-10e6f345474b5b522f43577e370b619b2b4b9a4009b745030da3a162d25e06dd  app/src/main/java/app/zmby/ui/screens/DetailScreen.kt
+f1da09e9e3af367667122095d476ab84ab4bf80687ab3b96a2fb22e14c708d1d  app/src/main/java/app/zmby/ui/screens/DetailScreen.kt
 fc301ef0549597ea292af2df66cb9e031aa35562a4d512ba5a2c49ea55ab70a2  app/src/main/java/app/zmby/ui/screens/FavoritesGrid.kt
 c2e82c322006c1e0528f5f224ba1a035074254f853e71b7d85f7f059ae20be66  app/src/main/java/app/zmby/ui/screens/HomeExitConfirmation.kt
 3ae9f2bdb424340f1f00401cef96ff3a154530051dec0e6479d0c2bb918f5ca7  app/src/main/java/app/zmby/ui/screens/HomeHero.kt
@@ -126,10 +126,10 @@ ea1fc06b39fc42cead6834314cba04d315d02a797b6681501efd732d4e4c7c20  app/src/main/j
 b64e860104725a105deb0057405a3706db361b0d527bd9a26bd9cc8c3c2cf757  app/src/main/java/app/zmby/ui/screens/PersonModel.kt
 b9ec85662095fa9da9003214ea8fff9dfa1053eb39cdbd50c5b17e784cb6e1c2  app/src/main/java/app/zmby/ui/screens/PersonScreen.kt
 a18a82ff20f1b4f3ad424ed4a5abcf284bf965d62721a05a886fec9324621ba7  app/src/main/java/app/zmby/ui/screens/PhoneInputDialog.kt
-738f89880a4edece031c05e22fc4034101253cc9f695f89c8ab1389a70db35f4  app/src/main/java/app/zmby/ui/screens/RecommendationsBlock.kt
+516c43d7874091686479ee48a535e1bcb689a2c72bc2769641ae86b61376266d  app/src/main/java/app/zmby/ui/screens/RecommendationsBlock.kt
 a5b6de8013b8719361bc25cf72813a6d2501f0e060857dec872a56ed25109e78  app/src/main/java/app/zmby/ui/screens/SearchScreen.kt
 f3d013d986ba585fe3c43122bba61409a051da10630d1bbc7dfe4746a800d3cb  app/src/main/java/app/zmby/ui/screens/SegmentMarksPanel.kt
-b536f52533983d6191b3d98e9d420d466886b8f8609b6d22badf1d1aaef6fb9c  app/src/main/java/app/zmby/ui/screens/SeriesScreen.kt
+35d73a314c95a3ac68bbbfa0f63556d237ba0af246040d99cb74a6708d45a52f  app/src/main/java/app/zmby/ui/screens/SeriesScreen.kt
 623ea106258f0e1cf232393a3122d79e7f8def9e580adff2116f237d588d9fed  app/src/main/java/app/zmby/ui/screens/ServersScreen.kt
 dda9d6a115e489f042741ca93f7fb679ddb518f433979d5b6fcd43a60e310e90  app/src/main/java/app/zmby/ui/screens/SettingsScreen.kt
 12e9799204e51c7fbbc5232ebd9323f350e8902fff353a87d2c4a129d86a3b52  app/src/main/java/app/zmby/ui/screens/StatsScreen.kt
@@ -199,7 +199,7 @@ c8e238e6cef0290902dfad3a90092435fc7bf6dff754d4cc868cc419bce033b3  app/src/test/j
 8a0feb67c702c7d09728c69df39319a551a88e7ca55a9a18304f6dbb04cde602  app/src/test/java/app/zmby/store/LocalStoreTest.kt
 7041b852e7c85b1ba2203d0af5f01e48c183baa95fa5982d39590f8a01222664  app/src/test/java/app/zmby/store/SchemaTest.kt
 cd257449506e89637f35e1e03ef2bf53c20afa08ba9ffee37101ab698abe24c8  app/src/test/java/app/zmby/store/StoreKeysTest.kt
-042505ae38e9b697cceff25ebd04187e5b8fce75a647d6d323b51217bf8fbb7b  app/src/test/java/app/zmby/ui/AccordionTest.kt
+87ee181d43082e7770067e013fb4e34c567c62c4c72b00c6903dbdd1093b7918  app/src/test/java/app/zmby/ui/AccordionTest.kt
 e434f5dc60caabd19c7823eb75160001825a7733befeabc46660068968ea1479  app/src/test/java/app/zmby/ui/BrowseHelpersTest.kt
 3317fbe1e2d7e24f5ce1d5c4ae21c02305dae79479d769f50be654d3ec707973  app/src/test/java/app/zmby/ui/DetailBlocksTest.kt
 e95d783f8cbbce76f3e0dab919ab7d0698eabe6002c9136afda766ed2981abbd  app/src/test/java/app/zmby/ui/DetailMetadataLoaderTest.kt
