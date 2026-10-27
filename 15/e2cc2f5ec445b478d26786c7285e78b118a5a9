@@ -1,0 +1,37 @@
+PUBLIC_MANIFEST.sha256
+  s_77bea6a61ba028::t_6bb03744a79502 6,8,96,107,115,118,129,132,202
+README.md
+  s_77bea6a61ba028::t_2362848ec8188b 15
+app/build.gradle.kts
+  s_77bea6a61ba028::t_01fff92505c69c 28-29
+app/src/main/java/app/zmby/ui/components/Artwork.kt
+  s_77bea6a61ba028::t_cdeb6931dbcf3c 27,63-64,67,93-96,108,118-119,125-127,129,153-154,157
+app/src/main/java/app/zmby/ui/screens/Accordion.kt
+  s_77bea6a61ba028::t_9fa60326919dbe 5,26,28,32,35,47-48,64,66,69-73,76,78-83,87,90-91,95-98,101,103,105,108-121,130,136-140,144-145,147,150-160,163-165,169,174-175,177-178,183,185-186,188-192,194-195,199-205,207-210,212-226,230-267,271-274,284,286-306,312-315,317,319,324,333-334,340,355
+app/src/main/java/app/zmby/ui/screens/DetailBlocks.kt
+  s_77bea6a61ba028::t_3d9210b26050a8 97,99,107
+app/src/main/java/app/zmby/ui/screens/DetailScreen.kt
+  s_77bea6a61ba028::t_dc7a2867075339 166,210,215,219,221,235,237,247-248,252
+app/src/main/java/app/zmby/ui/screens/RecommendationsBlock.kt
+  s_77bea6a61ba028::t_b93b5d8320491c 158-159
+app/src/main/java/app/zmby/ui/screens/SeriesScreen.kt
+  s_77bea6a61ba028::t_501beddf6fed1a 202,246,249,252-253,281-282,300,309,316-317,321
+app/src/test/java/app/zmby/ui/AccordionTest.kt
+  s_77bea6a61ba028::t_f0cb4399ebef3b 32-58,90,92,94,96-100,102-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "15e2cc2f5ec445b478d26786c7285e78b118a5a9",
+  "prompts": {},
+  "sessions": {
+    "s_77bea6a61ba028": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17b54-abd6-74a0-a022-e3309f43d369",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    }
+  }
+}
