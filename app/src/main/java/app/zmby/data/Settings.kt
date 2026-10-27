@@ -114,6 +114,9 @@ class Settings(context: Context) {
     val publicMetaDbKey = string("publicmetadb_key", "")
 
     val tmdbToken = string("tmdb_read_token", "")
+    val tmdbApiBase = registered(Pref(prefs, "tmdb_api_base", app.zmby.catalog.TmdbEndpoint.DEFAULT,
+        { k, d -> getString(k, d) ?: d }, { k, v -> putString(k, v) },
+        normalize = { app.zmby.catalog.TmdbEndpoint.normalize(it) ?: app.zmby.catalog.TmdbEndpoint.DEFAULT }))
     val metadataLanguage = string("metadata_language", "zh-CN")
     val posterLanguage = string("poster_language", "zh-CN")
     val logoLanguage = string("logo_language", "zh-CN")

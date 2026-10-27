@@ -58,6 +58,10 @@ import kotlinx.coroutines.withContext
 
 /** How a field is checked and where a good value goes (ui-spec §2.13). [server] is for the User-Agent. */
 internal fun ZmbyApp.inputTarget(field: InputField, server: String? = null): Pair<suspend (String) -> String?, (String) -> Unit> = when (field) {
+    InputField.TmdbApiBase -> Pair(
+        { v -> app.zmby.catalog.TmdbEndpoint.check(v) },
+        { v -> settings.tmdbApiBase.set(v) },
+    )
     InputField.TmdbToken -> Pair(
         { v -> catalog.verifyToken(v) },
         { v -> ZLog.secret(v); settings.tmdbToken.set(v) },

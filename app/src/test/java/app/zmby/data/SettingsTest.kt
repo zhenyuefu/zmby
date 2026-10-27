@@ -42,6 +42,23 @@ class SettingsTest {
         assertEquals(64,first.metadataCacheMb.value);assertFalse(first.skipIntro.value)
     }
 
+    @Test fun `TMDB address persists normalizes restores and resets without changing the token`() {
+        val settings = Settings(context)
+        assertEquals("https://api.tmdb.org/3/", settings.tmdbApiBase.value)
+        settings.tmdbToken.set("test-token")
+        settings.tmdbApiBase.set("https://example.com/proxy/3")
+        val backup = settings.backupValues()
+        finishPreferenceWrites()
+        assertEquals("https://example.com/proxy/3/", Settings(context).tmdbApiBase.value)
+        settings.tmdbApiBase.set("")
+        assertEquals("https://api.tmdb.org/3/", settings.tmdbApiBase.value)
+        settings.restoreValues(backup)
+        assertEquals("https://example.com/proxy/3/", settings.tmdbApiBase.flow.value)
+        settings.tmdbApiBase.set("https://example.com?api_key=secret")
+        assertEquals("https://api.tmdb.org/3/", settings.tmdbApiBase.value)
+        assertEquals("test-token", settings.tmdbToken.value)
+    }
+
     @Test fun `cache budgets have defaults and persist independently`() {
         val settings = Settings(context)
         assertEquals(128, settings.metadataCacheMb.value)

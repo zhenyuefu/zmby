@@ -19,11 +19,12 @@ class CatalogException(message: String, val retryAfterMs: Long? = null) : IOExce
  * bangumi-data alias index is kept in [animeIndexFile] (app-private), not in the Room cache.
  */
 class CatalogHttp(private val http: OkHttpClient, private val dao: CatalogStorage, private val token: () -> String,
-    private val tmdbBase: String = "https://api.themoviedb.org/3/", private val bgmBase: String = "https://api.bgm.tv/v0/",
+    private val tmdbBase: String = TmdbEndpoint.DEFAULT, private val bgmBase: String = "https://api.bgm.tv/v0/",
     private val clock: () -> Long = System::currentTimeMillis,
     private val animeIndexFile: java.io.File? = null,
     private val animeEndpoints: List<String> = ANIME_ENDPOINTS,
-    private val userAgent: String = "zmby (https://github.com/zhenyuefu/zmby)") {
+    private val userAgent: String = "zmby (https://github.com/zhenyuefu/zmby)",
+    private val tmdbBaseProvider: () -> String = { tmdbBase }) {
     val json = Json { ignoreUnknownKeys = true }
     private val blockedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val requests = Semaphore(4)
@@ -31,7 +32,7 @@ class CatalogHttp(private val http: OkHttpClient, private val dao: CatalogStorag
     val configured get() = token().isNotBlank()
     suspend fun tmdb(path: String, params: Map<String, String> = emptyMap(), ttl: Long = DAY): JsonObject {
         if (!configured) throw CatalogException("请在设置中填写 TMDB API Read Access Token")
-        return get(tmdbBase + path, params, ttl, true).obj()
+        return get(tmdbBaseProvider() + path, params, ttl, true).obj()
     }
     suspend fun bgm(path: String, params: Map<String, String> = emptyMap()): JsonElement = get(bgmBase + path, params, DAY, false)
     private val animeLock = Mutex()
@@ -143,7 +144,7 @@ class CatalogHttp(private val http: OkHttpClient, private val dao: CatalogStorag
      * appears in the reason, the URL or the log.
      */
     suspend fun verifyToken(candidate: String): String? = withContext(Dispatchers.IO) {
-        val request = Request.Builder().url(tmdbBase + "configuration").header("User-Agent", userAgent)
+        val request = Request.Builder().url(tmdbBaseProvider() + "configuration").header("User-Agent", userAgent)
             .header("Accept", "application/json").header("Authorization", "Bearer ${candidate.trim()}").build()
         try {
             requests.withPermit { fetch(request) }

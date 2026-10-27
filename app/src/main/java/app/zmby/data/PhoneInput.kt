@@ -14,6 +14,7 @@ import java.security.SecureRandom
 /** A long setting typed on a phone instead of with the remote (ui-spec §2.13 用手机输入). */
 enum class InputField(val source: String, val title: String, val label: String, val helpUrl: String? = null, val singleLine: Boolean = false) {
     TmdbToken("TMDB", "API 读取访问令牌", "令牌", helpUrl = "https://www.themoviedb.org/settings/api"),
+    TmdbApiBase("TMDB", "API 地址", "地址", singleLine = true),
     PublicMetaDbKey("PublicMetaDB", "API 密钥", "密钥"),
     UserAgent("客户端身份", "自定义 User-Agent", "User-Agent", singleLine = true),
     ;
@@ -170,6 +171,7 @@ class InputSession(
         /** Trims the value; one-line fields keep only their first line, and tokens lose inner whitespace. */
         fun clean(raw: String, field: InputField): String = when (field) {
             InputField.UserAgent -> raw.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
+            InputField.TmdbApiBase -> raw.trim()
             else -> raw.filterNot { it.isWhitespace() }
         }
 

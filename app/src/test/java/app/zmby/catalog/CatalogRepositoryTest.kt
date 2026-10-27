@@ -87,6 +87,30 @@ class CatalogRepositoryTest {
         override suspend fun put(row: CatalogCache) { rows[row.key] = row }
         override suspend fun prune(before: Long) { rows.entries.removeAll { it.value.fetchedAt < before } }
     }
+    @Test fun `changing the endpoint routes new requests and token checks without sharing HTTP cache`() = runBlocking {
+        MockWebServer().use { first ->
+            MockWebServer().use { second ->
+                var base = first.url("/3/").toString()
+                val api = CatalogHttp(OkHttpClient(), MemoryCache(), { "test-token" }, tmdbBaseProvider = { base })
+                first.enqueue(MockResponse().setBody("""{"id":1}"""))
+                assertEquals("1", api.tmdb("movie/1")["id"].toString())
+                assertEquals("/3/movie/1", first.takeRequest().path)
+                base = second.url("/proxy/3/").toString()
+                second.enqueue(MockResponse().setBody("""{"id":2}"""))
+                assertEquals("2", api.tmdb("movie/1")["id"].toString())
+                val request = second.takeRequest()
+                assertEquals("/proxy/3/movie/1", request.path)
+                assertEquals("Bearer test-token", request.getHeader("Authorization"))
+                second.enqueue(MockResponse().setBody("{}"))
+                assertNull(api.verifyToken("candidate-token"))
+                val check = second.takeRequest()
+                assertEquals("/proxy/3/configuration", check.path)
+                assertEquals("Bearer candidate-token", check.getHeader("Authorization"))
+                assertEquals(1, first.requestCount)
+            }
+        }
+    }
+
     private val detail = """{"id":10,"name":"Wrong fallback","original_name":"Original","original_language":"ja","first_air_date":"2024-01-01","translations":{"translations":[{"iso_639_1":"zh","iso_3166_1":"CN","data":{"name":"简体片名","overview":"简体简介"}},{"iso_639_1":"zh","iso_3166_1":"TW","data":{"name":"繁體片名","overview":"繁體簡介"}},{"iso_639_1":"ja","iso_3166_1":"JP","data":{"name":"Original","overview":"Original overview"}}]},"seasons":[{"season_number":1,"name":"Season 1","episode_count":3},{"season_number":2,"name":"Season 2","episode_count":5}],"aggregate_credits":{"cast":[{"id":7,"name":"Actor","roles":[{"character":"A"}]},{"id":7,"name":"Actor","roles":[{"character":"B"}]}],"crew":[]},"external_ids":{"imdb_id":"tt1"}}"""
     private val images = """{"posters":[{"iso_639_1":"zh","iso_3166_1":"TW","file_path":"/tw.jpg","vote_average":10},{"iso_639_1":"zh","iso_3166_1":"CN","file_path":"/cn.jpg","vote_average":1},{"iso_639_1":"ja","file_path":"/ja.jpg"}],"logos":[{"iso_639_1":"ja","file_path":"/logo.png"}],"backdrops":[{"iso_639_1":null,"file_path":"/bg.jpg"}]}"""
     @Test fun `work uses regional translations and artwork caches provider only and deduplicates people`() = runBlocking {

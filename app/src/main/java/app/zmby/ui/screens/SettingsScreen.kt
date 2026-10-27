@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -30,10 +31,12 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import app.zmby.R
+import app.zmby.catalog.TmdbEndpoint
 import app.zmby.catalog.CatalogChart
 import app.zmby.data.InputField
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -302,7 +305,7 @@ private fun About() {
 internal fun PhoneInputRow(title: String, value: String, onPhone: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
         Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-        Text(value, fontSize = 20.sp, color = Z.textSecondary)
+        Text(value, fontSize = 20.sp, color = Z.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 400.dp))
         GlassButton("用手机输入", onPhone, height = 52.dp, horizontalPadding = 22.dp, fontSize = 19, label = "$title 用手机输入")
     }
 }
@@ -312,6 +315,7 @@ private fun MetadataSettings() {
     val app = LocalContext.current.zmby
     val settings = app.settings
     val token by settings.tmdbToken.flow.collectAsState()
+    val apiBase by settings.tmdbApiBase.flow.collectAsState()
     val text by settings.metadataLanguage.flow.collectAsState()
     val poster by settings.posterLanguage.flow.collectAsState()
     val logo by settings.logoLanguage.flow.collectAsState()
@@ -320,6 +324,25 @@ private fun MetadataSettings() {
     val anime by settings.animeAliases.flow.collectAsState()
     val languages = listOf("zh-CN" to "简体中文", "zh-TW" to "繁體中文（台灣）", "zh-HK" to "繁體中文（香港）", "en-US" to "English", "ja-JP" to "日本語", "ko-KR" to "한국어")
     SettingsGroup("影视数据库直连") {
+        var addressPhone by remember { mutableStateOf(false) }
+        var addressTyping by rememberSaveable { mutableStateOf(false) }
+        PhoneInputRow("TMDB API 地址", apiBase) { addressPhone = true }
+        if (addressPhone) PhoneInputDialog(InputField.TmdbApiBase, onDismiss = { addressPhone = false },
+            onRemote = { addressPhone = false; addressTyping = true })
+        if (addressTyping) Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            var draft by remember(apiBase) { mutableStateOf(apiBase) }
+            var error by remember { mutableStateOf<String?>(null) }
+            fun saveAddress() {
+                error = TmdbEndpoint.check(draft)
+                if (error == null) { settings.tmdbApiBase.set(draft); addressTyping = false }
+            }
+            Field("TMDB API 地址", draft, { draft = it; error = null }, KeyboardType.Uri, last = true, onSubmit = { saveAddress() })
+            error?.let { Text(it, color = Z.warn, fontSize = 18.sp) }
+            GlassButton("保存地址", { saveAddress() })
+        }
+        GlassButton("恢复默认 API 地址", { settings.tmdbApiBase.set(""); addressTyping = false },
+            modifier = Modifier.padding(horizontal = 24.dp))
+        Text("默认 api.tmdb.org；可填写自定义 HTTP / HTTPS 地址。仅域名自动补 /3/，自定义路径保留。保存后立即用于后续请求，令牌会发送到该地址。", fontSize = 18.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
         // 用手机输入 (ui-spec §2.13): two hundred characters are not typed with a remote; the remote
         // field stays behind 「用遥控器输入」.
         var phone by remember { mutableStateOf(false) }

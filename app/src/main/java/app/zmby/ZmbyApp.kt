@@ -205,7 +205,7 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         catalogCache = app.zmby.catalog.LimitedCatalogCache(store.db, { settings.metadataCacheMb.value * app.zmby.data.CacheLimits.MIB })
         val catalogHttp = app.zmby.catalog.CatalogHttp(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build(),
             catalogCache, { settings.tmdbToken.value },
-            tmdbBase = debugUrl("debug.zmby.tmdb_base") ?: "https://api.themoviedb.org/3/",
+            tmdbBaseProvider = { debugUrl("debug.zmby.tmdb_base") ?: settings.tmdbApiBase.value },
             bgmBase = debugUrl("debug.zmby.bgm_base") ?: "https://api.bgm.tv/v0/",
             animeIndexFile = noBackupFilesDir.resolve("catalog").resolve("bangumi-data-index.txt"),
             animeEndpoints = listOfNotNull(debugUrl("debug.zmby.bangumi_data")) + app.zmby.catalog.CatalogHttp.ANIME_ENDPOINTS,
