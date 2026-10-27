@@ -1,0 +1,53 @@
+app/src/main/java/app/zmby/ui/screens/PhoneInputDialog.kt
+  s_32adec4666422c::t_436d8645b0ddd7 61-64
+app/src/test/java/app/zmby/data/SettingsTest.kt
+  s_32adec4666422c::t_4dc19cd0eccb81 45-61
+app/src/test/java/app/zmby/catalog/TmdbEndpointTest.kt
+  s_32adec4666422c::t_f944dc6dbdd92e 1-21
+README.md
+  s_32adec4666422c::t_67cf58517cb87f 15,59
+app/src/main/java/app/zmby/catalog/CatalogHttp.kt
+  s_32adec4666422c::t_21782b4751ffd6 22,26-27,35,147
+PUBLIC_MANIFEST.sha256
+  s_32adec4666422c::t_d9f4aac11c2e8f 6,8,20,36,41,50,56,129,135,160,164,171
+app/build.gradle.kts
+  s_32adec4666422c::t_bbcb46340b27ad 28-29
+app/src/main/java/app/zmby/data/PhoneInput.kt
+  s_32adec4666422c::t_dcfe16b60453d8 17,174
+app/src/main/java/app/zmby/catalog/TmdbEndpoint.kt
+  s_32adec4666422c::t_5af174fae0cd86 1-21
+app/src/main/java/app/zmby/ZmbyApp.kt
+  s_32adec4666422c::t_850cd99effa29b 208
+app/src/main/java/app/zmby/data/Settings.kt
+  s_32adec4666422c::t_1a055f0a178e91 117-119
+app/src/main/java/app/zmby/ui/screens/SettingsScreen.kt
+  s_485dafd7a1a674::t_8c828cf89ccd3c 308
+  s_32adec4666422c::t_0393325328819f 39,318,327-345
+  s_32adec4666422c::t_b4f6262bd2fdb7 15,34
+app/src/test/java/app/zmby/catalog/CatalogRepositoryTest.kt
+  s_32adec4666422c::t_378e0b60cb344b 90-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f02c2872957141bb053b75f05ac30e3fdcdc2fb5",
+  "prompts": {},
+  "sessions": {
+    "s_32adec4666422c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17b70-8e2a-7222-adc5-ed9ae2f0f82e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    },
+    "s_485dafd7a1a674": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17981-8166-7c30-a9ea-15793ac69fc6",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    }
+  }
+}
