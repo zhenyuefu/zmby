@@ -1,0 +1,23 @@
+PUBLIC_MANIFEST.sha256
+  s_77bea6a61ba028::t_13e41ea33e3672 6,219-221,223-226,235
+README.md
+  s_77bea6a61ba028::t_13c88c86965bd9 17,21,23-33,37-38,41-46
+tools/export_public.py
+  s_77bea6a61ba028::t_9c1bea11ccc147 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "993935173c3c932d249df36276991d34f41dfacc",
+  "prompts": {},
+  "sessions": {
+    "s_77bea6a61ba028": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17b54-abd6-74a0-a022-e3309f43d369",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    }
+  }
+}
