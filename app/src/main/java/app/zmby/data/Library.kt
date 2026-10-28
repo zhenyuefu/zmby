@@ -33,6 +33,18 @@ data class ServerItem(val server: String, val item: BaseItemDto) {
     val key: String get() = "$server:${item.id}"
 }
 
+/** Playback reports are newer than a cached resource directory; a newer server report still wins. */
+fun ServerItem.withPlaybackProgress(progress: Map<String, app.zmby.emby.UserItemData>): ServerItem {
+    val local = progress[key] ?: return this
+    fun time(value: String?) = value?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+    val serverTime = time(item.userData?.lastPlayedDate)
+    val localTime = time(local.lastPlayedDate) ?: return this
+    if (serverTime != null && serverTime > localTime) return this
+    val data = (item.userData ?: app.zmby.emby.UserItemData()).copy(
+        playbackPositionTicks = local.playbackPositionTicks, played = local.played, lastPlayedDate = local.lastPlayedDate)
+    return copy(item = item.copy(userData = data))
+}
+
 data class LibraryView(val server: String, val id: String, val name: String, val collectionType: String?, val onHome: Boolean, val inSearch: Boolean)
 
 /**

@@ -8,6 +8,47 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CatalogResourcesTest {
+    private class NamedSource(private val candidates: List<BaseItemDto>) : VersionSource {
+        var queries = 0
+        override suspend fun byProviderIds(server: String, type: String, ids: List<String>): List<BaseItemDto> { queries++; return emptyList() }
+        override suspend fun searchType(server: String, term: String, type: String, limit: Int) = candidates
+        override suspend fun item(server: String, id: String): BaseItemDto = error("not needed")
+        override suspend fun sources(server: String, itemId: String): List<MediaSourceInfo> = error("not needed")
+        override suspend fun seasons(server: String, seriesId: String) = listOf(BaseItemDto("season:$seriesId", type = "Season", indexNumber = 1))
+        override suspend fun episodePage(server: String, seriesId: String, seasonId: String, start: Int, limit: Int) =
+            ItemsResult(listOf(BaseItemDto("episode:$seriesId", type = "Episode", indexNumber = 1)), 1)
+    }
+
+    @Test fun `one exact name candidate without IDs maps by its season and episode and directory is cached`() = runBlocking {
+        val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "某部剧", year = 2024, ids = mapOf("Tmdb" to "10"))
+        val source = NamedSource(listOf(BaseItemDto("series", "[网盘] 某部剧", "Series", productionYear = 2024)))
+        val fan = FanOut(health)
+        val loader = CatalogResources(source, fan)
+        val fallback = app.zmby.data.ServerItem("a", source.searchType("a", "", "", 5).single())
+        val batch = (loader.series(listOf("a"), work, fallback).toList().single() as Outcome.Ok).value
+        val mapped = ResourceMapping.episodes(work, listOf(CatalogEpisode("101", 1, 1, "One")), batch)
+        assertEquals("episode:series", mapped.matched["101"]!!.single().item.id)
+        assertTrue(mapped.unmatched.isEmpty())
+        CatalogResources(source, fan).series(listOf("a"), work, fallback).toList()
+        assertEquals(1, source.queries)
+        loader.invalidate(listOf("a"), work, fallback)
+        loader.series(listOf("a"), work, fallback).toList()
+        assertEquals(2, source.queries)
+    }
+
+    @Test fun `ambiguous exact names and explicit conflicts do not borrow episode numbers`() = runBlocking {
+        val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "某部剧", year = 2024, ids = mapOf("Tmdb" to "10"))
+        val a = BaseItemDto("a", "某部剧", "Series", productionYear = 2024)
+        val source = NamedSource(listOf(a, a.copy(id = "b")))
+        val batches = (CatalogResources(source, FanOut(health)).series(listOf("a"), work).toList().single() as Outcome.Ok).value
+        val mapped = ResourceMapping.episodes(work, listOf(CatalogEpisode("101", 1, 1, "One")), batches)
+        assertTrue(mapped.matched.isEmpty())
+        assertEquals(2, mapped.unmatched.size)
+        assertFalse(ResourceMapping.named(work, a.copy(providerIds = mapOf("Tmdb" to "99"))))
+        assertFalse(ResourceMapping.named(work, a.copy(productionYear = 2023)))
+        assertFalse(ResourceMapping.named(work, a.copy(name = "某部剧 第二季")))
+    }
+
     private val health = object : HealthBook {
         override fun isCooling(serverId: String) = false
         override fun onSuccess(serverId: String) = Unit

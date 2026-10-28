@@ -27,7 +27,7 @@ sealed interface ServerVersions {
     /** The series is there but not this episode: 「缺此集」. */
     data class Missing(override val server: String, val reason: String) : ServerVersions
     data class NotFound(override val server: String, val reason: String) : ServerVersions
-    data class Failed(override val server: String, val message: String, val timedOut: Boolean) : ServerVersions
+    data class Failed(override val server: String, val message: String, val timedOut: Boolean, val retryable: Boolean = true) : ServerVersions
     data class Skipped(override val server: String) : ServerVersions
 }
 
@@ -37,15 +37,21 @@ sealed interface ServerVersions {
  */
 class VersionFinder(private val source: VersionSource, private val fanOut: FanOut) {
 
+    private fun key(ref: BaseItemDto, series: BaseItemDto? = null): Any = listOf("versions", identity(ref), series?.let(::identity))
+    private fun identity(ref: BaseItemDto): Any = listOf(ref.id, ref.type, ref.name, ref.productionYear, ref.providerIds,
+        ref.path, ref.parentIndexNumber, ref.indexNumber)
+
+    fun invalidate(servers: List<String>, ref: BaseItemDto, series: BaseItemDto? = null) = fanOut.invalidate(key(ref, series), servers)
+
     fun movie(servers: List<String>, ref: BaseItemDto): Flow<ServerVersions> =
-        fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS, share = "versions:${ref.id}:${ref.name}") { s -> findMovie(s, ref) }.map(::unwrap)
+        fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS, share = key(ref), cacheMs = FanOut.RESOURCE_CACHE_MS) { s -> findMovie(s, ref) }.map(::unwrap)
 
     fun episode(servers: List<String>, ref: BaseItemDto, refSeries: BaseItemDto): Flow<ServerVersions> =
-        fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS, share = "versions:${ref.id}:${refSeries.id}") { s -> findEpisode(s, ref, refSeries) }.map(::unwrap)
+        fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS, share = key(ref, refSeries), cacheMs = FanOut.RESOURCE_CACHE_MS) { s -> findEpisode(s, ref, refSeries) }.map(::unwrap)
 
     private fun unwrap(o: Outcome<ServerVersions>): ServerVersions = when (o) {
         is Outcome.Ok -> o.value
-        is Outcome.Failed -> ServerVersions.Failed(o.server, o.error.message ?: o.error.javaClass.simpleName, o.timedOut)
+        is Outcome.Failed -> ServerVersions.Failed(o.server, o.error.message ?: o.error.javaClass.simpleName, o.timedOut, FanOut.isTransient(o.error))
         is Outcome.Skipped -> ServerVersions.Skipped(o.server)
     }
 
@@ -101,7 +107,9 @@ class VersionFinder(private val source: VersionSource, private val fanOut: FanOu
     }
 
     private suspend fun found(server: String, item: BaseItemDto, verdict: Verdict): ServerVersions {
-        val sources = optional { source.sources(server, item.id) }?.takeIf { it.isNotEmpty() } ?: item.mediaSources
+        val sources = try { source.sources(server, item.id).ifEmpty { item.mediaSources } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { item.mediaSources.ifEmpty { throw e } }
         return ServerVersions.Found(server, item, sources, verdict)
     }
 

@@ -113,6 +113,7 @@ import kotlinx.coroutines.launch
 import app.zmby.aggregate.Confidence
 import app.zmby.aggregate.Keys
 import app.zmby.aggregate.ServerVersions
+import app.zmby.aggregate.FailureTracker
 import app.zmby.aggregate.VersionFacts
 import app.zmby.aggregate.VersionPrefs
 import app.zmby.aggregate.VersionRanker
@@ -149,6 +150,7 @@ class VersionsState(
     val retry: () -> Unit = {},
     /** Every version in default-version order (VersionRanker): what 播放失败自动换源 tries in turn. */
     val ordered: List<Version> = emptyList(),
+    val refresh: () -> Unit = {},
 ) {
     val all: List<Version> get() = groups.flatMap { it.versions }
 
@@ -179,6 +181,7 @@ internal fun rememberVersions(
     cached: Map<String, ServerVersions.Found> = emptyMap(),
     /** The work on screen, under which found cards are kept for next time. */
     forKey: String? = null,
+    onRefresh: (() -> Unit)? = null,
 ): VersionsState {
     val app = LocalContext.current.zmby
     val servers by app.registry.servers.collectAsState()
@@ -190,9 +193,10 @@ internal fun rememberVersions(
     val others = remember(servers, server, sourceRows) { app.sources.servers(SourceFeature.Aggregate).filter { it != server } }
     LaunchedEffect(found, servers, lookUp) {
         if (!lookUp) return@LaunchedEffect
-        val paused = found.values.filterIsInstance<ServerVersions.Skipped>()
-        val deadline = paused.mapNotNull { app.registry.get(it.server)?.coolingUntil }.minOrNull()
-            ?: return@LaunchedEffect
+        val paused = found.values.filter { it is ServerVersions.Skipped || it is ServerVersions.Failed && it.retryable }
+        if (paused.isEmpty()) return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        val deadline = paused.minOf { app.registry.get(it.server)?.coolingUntil?.takeIf { until -> until > now } ?: (now + FailureTracker.COOL_MS) }
         kotlinx.coroutines.delay((deadline - System.currentTimeMillis()).coerceAtLeast(0) + 50)
         val ready = paused.filter { !app.registry.isCooling(it.server) }.map { it.server }.toSet()
         if (ready.isNotEmpty()) {
@@ -219,7 +223,7 @@ internal fun rememberVersions(
     val pattern by settings.versionPattern.flow.collectAsState()
     val quality by settings.quality.flow.collectAsState()
     val nonDisc by settings.preferNonDisc.flow.collectAsState()
-    return remember(servers, found, cached, item, pattern, quality, nonDisc, lookUp) {
+    return remember(servers, found, cached, item, pattern, quality, nonDisc, lookUp, onRefresh) {
         val (groups, unresponsive) = versionCards(self, item, servers.filter { it.id in others }, found, cached)
         val prefs = VersionPrefs(
             manual = app.library.pickedVersion(Keys.work(server, if (item.type == "Episode" && series != null) series else item) + episodeSuffix(item)),
@@ -236,6 +240,12 @@ internal fun rememberVersions(
             // 「n 台未响应」 pressed: lift their cool-downs and ask those servers again.
             unresponsive.forEach { app.registry.retry(it) }
             found = found.filterKeys { it !in unresponsive }
+            retry++
+        }, refresh = {
+            others.forEach(app.registry::retry)
+            app.versions.invalidate(others, item, series)
+            found = emptyMap()
+            onRefresh?.invoke()
             retry++
         })
     }
@@ -324,6 +334,8 @@ internal fun VersionSection(
                 // The servers that could not answer, in one focusable pill: OK asks them again.
                 GlassButton("${state.unresponsive.size} 台未响应", state.retry, height = 52.dp, horizontalPadding = 26.dp, fontSize = 20, label = "未响应的服务器 重试")
             }
+            GlassButton(if (state.searching > 0) "刷新中…" else "刷新", { if (state.searching == 0) state.refresh() },
+                glyph = Glyph.Refresh, height = 52.dp, horizontalPadding = 26.dp, fontSize = 20, label = "刷新版本")
         }
         // One card per server, in server order; versions on the same server stack inside it.
         val cards = state.groups.mapNotNull { g -> g.copy(versions = g.versions.filter { it.tier == tier }).takeIf { it.versions.isNotEmpty() } }

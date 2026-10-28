@@ -34,6 +34,7 @@ import app.zmby.emby.OfficialEmby
 import app.zmby.emby.UserAgentInterceptor
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.imageLoader
 import app.zmby.emby.EmbyClient
 import app.zmby.emby.ServerSession
 import app.zmby.playback.PlaybackMonitor
@@ -52,6 +53,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.UUID
@@ -69,6 +71,8 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     lateinit var emby: EmbyClient
         private set
     lateinit var preparer: PlaybackPreparer
+        private set
+    lateinit var playbackArtwork: app.zmby.playback.PlaybackArtworkResolver
         private set
     lateinit var capsStore: ServerCapsStore
         private set
@@ -139,6 +143,9 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     /** The playback currently handed to the external player, if any. */
     var activePlayback: ActivePlayback? = null
 
+    private val _recentProgress = MutableStateFlow<Map<String, app.zmby.emby.UserItemData>>(emptyMap())
+    val recentProgress: StateFlow<Map<String, app.zmby.emby.UserItemData>> = _recentProgress.asStateFlow()
+
     /**
      * False until [init] has read the preferences and built the app's parts on a background thread;
      * the screens show an empty frame until then (architecture: 线程与性能约定).
@@ -165,6 +172,7 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     suspend fun awaitReady() { ready.first { it } }
 
     /** Everything that reads preferences or files: runs on [Dispatchers.IO], never on the main thread. */
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun init() {
         settings = Settings(this)
         activeImageCacheMb = settings.imageCacheMb.value
@@ -190,7 +198,6 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         val playbackStore = MediaStorePlaybackStore(contentResolver)
         val subtitleAgent = { url: String -> (if (::library.isInitialized) library.agentFor(url) else null) ?: info.userAgent }
         localStrm = LocalStrmPreparer(playbackStore, SubtitleDownloader(http, subtitleAgent)::download)
-        preparer = PlaybackPreparer(emby, StreamProbe(http, emby.clientInfo.userAgent), capsStore, relay, localStrm)
         // Whatever a killed process left behind; a playback that old is not running any more.
         runCatching { playbackStore.sweep(STALE_SESSION_MS) }
             .onSuccess { if (it > 0) ZLog.i(TAG, "removed $it stale playback session(s)") }
@@ -223,7 +230,21 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             }
         }
         library = Library(this, emby, registry, sessionStore, capsStore, store)
-        fanOut = FanOut(registry)
+        val artworkServer = app.zmby.playback.CachedArtworkServer { url ->
+            val snapshot = imageLoader.diskCache?.openSnapshot(url)
+            if (snapshot == null) null else {
+                val file = snapshot.data.toFile()
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(file.path, bounds)
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) { snapshot.close(); null }
+                else app.zmby.playback.CachedArtwork(file, snapshot::close)
+            }
+        }
+        playbackArtwork = app.zmby.playback.PlaybackArtworkResolver(catalog::cached,
+            { server, id -> store.detail(server, id)?.item }, { library.backdrop(it) }, { library.logo(it) }, artworkServer::cached)
+        preparer = PlaybackPreparer(emby, StreamProbe(http, emby.clientInfo.userAgent), capsStore, relay, localStrm,
+            artwork = { session, item -> playbackArtwork.resolve(session.id, item) })
+        fanOut = FanOut(registry, cacheContext = { registry.session(it) })
         home = HomeFeed(library, fanOut, store)
         versions = VersionFinder(library, fanOut)
         search = AggregateSearch(library, fanOut)
@@ -329,9 +350,11 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         ZLog.d(TAG, "played ${ref.key}: ${outcome.positionMs} ms, watched=${outcome.watched}")
         // Watching started (progress or watched): the work leaves 待看 and shows in 继续观看.
         val data = (ref.item.userData ?: app.zmby.emby.UserItemData()).copy(
-            playbackPositionTicks = app.zmby.emby.msToTicks(outcome.positionMs ?: 0),
+            playbackPositionTicks = if (outcome.watched) 0 else app.zmby.emby.msToTicks(outcome.positionMs ?: 0),
             played = outcome.watched,
+            lastPlayedDate = java.time.Instant.now().toString(),
         )
+        _recentProgress.update { (it - ref.key + (ref.key to data)).entries.toList().takeLast(128).associate { row -> row.toPair() } }
         watchlist.removeStarted(listOf(ServerItem(ref.server, ref.item.copy(userData = data))))
     }
 

@@ -41,11 +41,29 @@ class CatalogRulesTest {
         assertFalse(mapped.matched.containsKey("103"))
         assertEquals(3, catalog.size)
     }
-    @Test fun `extras unknown numbers conflicting episode IDs and duplicates are retained separately`() {
+    @Test fun `extras and conflicting IDs stay separate while duplicate slots are playable versions`() {
         val resources = listOf(resource("a", "extra", 99), resource("a", "unnumbered", null), resource("a", "wrong", 3, tmdb = "999"), resource("a", "dup1", 2), resource("a", "dup2", 2), resource("a", "good", 1))
         val mapped = ResourceMapping.episodes(work, catalog, listOf(ResourceBatch("a", resources, true)))
-        assertEquals(setOf("101"), mapped.matched.keys)
-        assertEquals(setOf("extra", "unnumbered", "wrong", "dup1", "dup2"), mapped.unmatched.map { it.item.id }.toSet())
+        assertEquals(setOf("101", "102"), mapped.matched.keys)
+        assertEquals(setOf("dup1", "dup2"), mapped.matched["102"]!!.map { it.item.id }.toSet())
+        assertEquals(setOf("extra", "unnumbered", "wrong"), mapped.unmatched.map { it.item.id }.toSet())
+    }
+    @Test fun `inherited show ID does not block valid episode numbers`() {
+        val mapped = ResourceMapping.episodes(work, catalog, listOf(ResourceBatch("a", listOf(resource("a", "episode", 2, tmdb = "10")), true)))
+        assertEquals("episode", mapped.matched["102"]!!.single().item.id)
+        assertTrue(mapped.unmatched.isEmpty())
+    }
+    @Test fun `a real catalog episode ID still wins when its number equals the series ID`() {
+        val mapped = ResourceMapping.episodes(work, listOf(CatalogEpisode("10", 1, 1, "One")),
+            listOf(ResourceBatch("a", listOf(resource("a", "episode", null, season = null, tmdb = "10")), true)))
+        assertEquals("episode", mapped.matched["10"]!!.single().item.id)
+        assertTrue(mapped.unmatched.isEmpty())
+    }
+    @Test fun `invalid season episode coordinates are never shifted to fit the catalog`() {
+        val refs = listOf(resource("a", "season", 1, season = 99), resource("a", "zero", 0), resource("a", "negative", -1))
+        val mapped = ResourceMapping.episodes(work, catalog, listOf(ResourceBatch("a", refs, true)))
+        assertTrue(mapped.matched.isEmpty())
+        assertEquals(3, mapped.unmatched.size)
     }
     @Test fun `unverified series never borrows a numbered slot`() {
         val mapped = ResourceMapping.episodes(work, catalog, listOf(ResourceBatch("a", listOf(resource("a", "guess", 1)), false)))

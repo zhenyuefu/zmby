@@ -7,6 +7,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RegistryTest {
+    @Test fun `a failed ping is a warning and successful library access clears the stale ping`() {
+        val reg = ServerRegistry(MemoryRegistryStore())
+        reg.add(config("a", "http://a"))
+        reg.recordLatency("a", "a-l", null, null)
+        assertEquals(Health.Warn, reg.get("a")!!.health)
+        reg.onFailure("a", java.io.IOException("reset"), false)
+        reg.onSuccess("a")
+        assertEquals(null, reg.get("a")!!.lastError)
+        assertEquals(false, reg.get("a")!!.measured)
+        assertEquals(false, reg.isCooling("a"))
+    }
+
+    @Test fun `cooldown expiry allows a fresh failure window rather than immediately pausing again`() {
+        var now = 0L
+        val reg = ServerRegistry(MemoryRegistryStore(), clock = { now })
+        reg.add(config("a", "http://a"))
+        repeat(2) { reg.onFailure("a", java.io.IOException("reset"), false) }
+        assertTrue(reg.isCooling("a"))
+        now += app.zmby.aggregate.FailureTracker.COOL_MS + 1
+        reg.onFailure("a", java.io.IOException("reset"), false)
+        assertEquals(false, reg.isCooling("a"))
+        assertEquals(Health.Warn, reg.get("a")!!.health)
+    }
     private fun config(id: String, url: String, emby: String? = null, user: String = "u") =
         ServerConfig(id, id, listOf(ServerLine("$id-l", "主线路", url)), "$id-l", user, "tok-$id", embyServerId = emby)
 

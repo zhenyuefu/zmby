@@ -15,6 +15,14 @@ import org.junit.Before
 import org.junit.Test
 
 class EmbyClientTest {
+    @Test fun pingRetriesAnInitiallyUnavailableServer() = runTest {
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setBody("""{"Version":"4.9"}"""))
+        val (latency, version) = client.ping(session.baseUrl)
+        assertTrue(latency != null)
+        assertEquals("4.9", version)
+        assertEquals(2, server.requestCount)
+    }
     private val server = MockWebServer()
     private val client = EmbyClient(OkHttpClient(), ClientInfo(device = "Z9X", deviceId = "dev-1", version = "0.1.0"))
     private lateinit var session: ServerSession

@@ -3,7 +3,9 @@ package app.zmby.ui.screens
 import app.zmby.data.SourceFeature
 import android.os.Build
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,11 +17,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -30,6 +35,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,24 +65,31 @@ import app.zmby.ui.components.SettingsGroup
 import app.zmby.ui.components.ToggleSetting
 import app.zmby.ui.components.ValueSetting
 import app.zmby.ui.components.ZmbyMark
+import app.zmby.ui.components.groupCard
 import app.zmby.ui.rememberInitialFocus
 import app.zmby.ui.theme.Z
 import app.zmby.zmby
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.withContext
 
-private enum class Category(val label: String) {
-    General("通用"), Metadata("元数据与图片"), Cache("本地缓存"), Playback("播放"), Tracks("音频与字幕"), Home("首页与媒体库"), Servers("服务器"), Sources("数据来源"), Appearance("外观"), About("关于")
+private enum class Category(val label: String, val glyph: Glyph, val value: String) {
+    Playback("播放", Glyph.Play, "Zidoo"), Metadata("影视资料", Glyph.Film, "TMDB · Bangumi"),
+    Home("首页", Glyph.Home, "主推 · 媒体库"), Servers("服务器与来源", Glyph.Servers, "连接 · 聚合"),
+    Cache("缓存", Glyph.Stack, "资料 · 图片"), About("关于", Glyph.Info, "zmby")
 }
 
 /** Settings.dc.html: categories on the left (moving onto one shows it), grouped rows on the right. */
 @Composable
 fun SettingsScreen(nav: Nav) {
-    var category by rememberSaveable { mutableStateOf(Category.General) }
+    var category by rememberSaveable { mutableStateOf(Category.Playback) }
     val requesters = remember { Category.entries.associateWith { FocusRequester() } }
+    val focus = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
     Row(Modifier.fillMaxSize()) {
         Column(
-            Modifier.width(560.dp).fillMaxHeight().padding(start = 80.dp, end = 40.dp, top = 44.dp, bottom = 56.dp),
+            Modifier.width(420.dp).fillMaxHeight().background(Z.aside).padding(start = 48.dp, end = 32.dp, top = 56.dp, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(30.dp),
         ) {
             Text("设置", fontSize = 48.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp, modifier = Modifier.padding(top = 4.dp))
@@ -91,16 +104,19 @@ fun SettingsScreen(nav: Nav) {
             ) {
                 Category.entries.forEach { c ->
                     SelectableRow(
-                        onClick = { if (c == Category.Servers) nav.go(Route.Servers) },
-                        modifier = Modifier.focusRequester(requesters.getValue(c)).then(if (c == category) Modifier.focusRequester(initial) else Modifier).height(68.dp),
+                        onClick = {
+                            category = c
+                            scope.launch { awaitFrame(); focus.moveFocus(FocusDirection.Right) }
+                        },
+                        modifier = Modifier.focusRequester(requesters.getValue(c)).then(if (c == category) Modifier.focusRequester(initial) else Modifier).height(88.dp),
                         selected = c == category,
                         showCheck = false,
                         radius = 20.dp,
                         onFocus = { category = c },
                         label = "设置 ${c.label}",
                     ) {
-                        Text(c.label, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        Icon(Glyph.Chevron, size = 20.dp, strokeWidth = 2.4f, color = androidx.tv.material3.LocalContentColor.current.copy(alpha = 0.5f))
+                        Icon(c.glyph, size = 26.dp)
+                        Text(c.label, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -110,22 +126,24 @@ fun SettingsScreen(nav: Nav) {
                 Text("zmby ${appVersion()}", fontSize = 18.sp, color = Z.textTertiary)
             }
         }
-        Column(
-            Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 80.dp, top = 56.dp, bottom = 40.dp),
+        key(category) {
+          Column(
+            Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 56.dp, end = 72.dp, top = 56.dp, bottom = 56.dp),
             verticalArrangement = Arrangement.spacedBy(26.dp),
-        ) {
+          ) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                Text(category.label, fontSize = 44.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(category.value, fontSize = 20.sp, color = Z.textSecondary)
+            }
             when (category) {
-                Category.General -> General(nav)
                 Category.Metadata -> MetadataSettings()
                 Category.Cache -> CacheSettings()
-                Category.Playback -> Playback(nav)
-                Category.Tracks -> Tracks()
-                Category.Home -> HomeRows(nav)
-                Category.Servers -> ServersSummary(nav)
-                Category.Sources -> Sources(nav)
-                Category.Appearance -> Appearance()
+                Category.Playback -> { Playback(nav); Tracks(); General(nav) }
+                Category.Home -> { HomeRows(nav); Appearance() }
+                Category.Servers -> { ServersSummary(nav); Sources(nav) }
                 Category.About -> About()
             }
+          }
         }
     }
 }
@@ -139,13 +157,11 @@ private fun appVersion(): String {
 @Composable
 private fun General(nav: Nav) {
     val settings = LocalContext.current.zmby.settings
-    SettingsGroup("观影") {
-        ValueSetting("观影统计", null, onClick = { nav.go(Route.Stats) }, glyph = Glyph.Chart)
-    }
     val percent by settings.watchedPercent.collectAsState()
     val steps = remember(percent) { (listOf(70, 80, 85, 90, 95) + percent).distinct().sorted() }
-    SettingsGroup("进度") {
+    SettingsGroup("播放进度") {
         ChoiceSetting("看完阈值", steps.map { "$it%" }, steps.indexOf(percent), { settings.setWatchedPercent(steps[it]) })
+        ValueSetting("观影统计", null, onClick = { nav.go(Route.Stats) }, glyph = Glyph.Chart)
     }
 }
 
@@ -158,8 +174,7 @@ private fun Playback(nav: Nav) {
     val failover by settings.autoFailover.flow.collectAsState()
     SettingsGroup("播放器") {
         ToggleSetting("看完后提示下一集", offerNext, { settings.offerNextEpisode.set(!offerNext) })
-        ToggleSetting("倒计时自动播放下一集", countdown && offerNext, { settings.upNextCountdown.set(!countdown) }, dimmed = !offerNext,
-            sub = "沿用同一服务器、线路与音轨字幕语言")
+        if (offerNext) ToggleSetting("自动播放下一集", countdown, { settings.upNextCountdown.set(!countdown) })
         ToggleSetting("播放失败自动换源", failover, { settings.autoFailover.set(!failover) })
     }
     val skipIntro by settings.skipIntro.flow.collectAsState()
@@ -217,6 +232,11 @@ private fun HomeRows(nav: Nav) {
         ToggleSetting("「最新添加」行", latest, { settings.showLatestRow.set(!latest) })
         ToggleSetting("「待看」行", watchlist, { settings.showWatchlistRow.set(!watchlist) })
     }
+    val chart by settings.tmdbChart.flow.collectAsState()
+    SettingsGroup("主推内容") {
+        val charts = CatalogChart.entries
+        ChoiceSetting("TMDB 榜单", charts.map { it.label }, charts.indexOf(CatalogChart.of(chart)), { settings.tmdbChart.set(charts[it].name) })
+    }
     SettingsGroup("媒体库") {
         ValueSetting("首页与搜索开关", "按服务器", onClick = { nav.go(Route.Servers) })
     }
@@ -231,7 +251,7 @@ private fun ServersSummary(nav: Nav) {
             val state = when {
                 !s.enabled -> "已停用"
                 !s.measured -> "未测"
-                else -> s.latencyMs?.let { "$it ms" } ?: "离线"
+                else -> s.latencyMs?.let { "$it ms" } ?: "待重试"
             }
             ValueSetting(s.name, listOf(s.lineName, state).joinToString(" · "), onClick = { nav.go(Route.Servers) })
         }
@@ -319,11 +339,10 @@ private fun MetadataSettings() {
     val text by settings.metadataLanguage.flow.collectAsState()
     val poster by settings.posterLanguage.flow.collectAsState()
     val logo by settings.logoLanguage.flow.collectAsState()
-    val chart by settings.tmdbChart.flow.collectAsState()
     val search by settings.tmdbSearch.flow.collectAsState()
     val anime by settings.animeAliases.flow.collectAsState()
     val languages = listOf("zh-CN" to "简体中文", "zh-TW" to "繁體中文（台灣）", "zh-HK" to "繁體中文（香港）", "en-US" to "English", "ja-JP" to "日本語", "ko-KR" to "한국어")
-    SettingsGroup("影视数据库直连") {
+    SettingsGroup("TMDB 连接") {
         var addressPhone by remember { mutableStateOf(false) }
         var addressTyping by rememberSaveable { mutableStateOf(false) }
         PhoneInputRow("TMDB API 地址", apiBase) { addressPhone = true }
@@ -340,9 +359,8 @@ private fun MetadataSettings() {
             error?.let { Text(it, color = Z.warn, fontSize = 18.sp) }
             GlassButton("保存地址", { saveAddress() })
         }
-        GlassButton("恢复默认 API 地址", { settings.tmdbApiBase.set(""); addressTyping = false },
-            modifier = Modifier.padding(horizontal = 24.dp))
-        Text("默认 api.tmdb.org；可填写自定义 HTTP / HTTPS 地址。仅域名自动补 /3/，自定义路径保留。保存后立即用于后续请求，令牌会发送到该地址。", fontSize = 18.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
+        if (apiBase != TmdbEndpoint.DEFAULT) ValueSetting("恢复默认 API 地址", "api.tmdb.org",
+            onClick = { settings.tmdbApiBase.set(""); addressTyping = false })
         // 用手机输入 (ui-spec §2.13): two hundred characters are not typed with a remote; the remote
         // field stays behind 「用遥控器输入」.
         var phone by remember { mutableStateOf(false) }
@@ -356,18 +374,15 @@ private fun MetadataSettings() {
             })
         }
         if (phone) PhoneInputDialog(InputField.TmdbToken, onDismiss = { phone = false }, onRemote = { phone = false; typing = true })
-        ToggleSetting("搜索包含 TMDB", search, { settings.tmdbSearch.set(!search) })
-        ToggleSetting("Bangumi 与 bangumi-data 番剧别名", anime, { settings.animeAliases.set(!anime) }, sub = "按原名与译名查找番剧；季集关系不明确时保留待确认")
     }
-    SettingsGroup("语言偏好") {
-        ChoiceSetting("元数据语言", languages.map { it.second }, languages.indexOfFirst { it.first == text }.coerceAtLeast(0), { settings.metadataLanguage.set(languages[it].first) })
+    SettingsGroup("显示语言") {
+        ChoiceSetting("影视资料语言", languages.map { it.second }, languages.indexOfFirst { it.first == text }.coerceAtLeast(0), { settings.metadataLanguage.set(languages[it].first) })
         ChoiceSetting("海报语言", languages.map { it.second }, languages.indexOfFirst { it.first == poster }.coerceAtLeast(0), { settings.posterLanguage.set(languages[it].first) })
         ChoiceSetting("Logo 语言", languages.map { it.second }, languages.indexOfFirst { it.first == logo }.coerceAtLeast(0), { settings.logoLanguage.set(languages[it].first) })
-        Text("图片严格匹配语言；缺失时回退原语言。无法确认简繁的中文图片不作为匹配结果。", fontSize = 18.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
     }
-    SettingsGroup("首页轮播榜单") {
-        val charts = CatalogChart.entries
-        ChoiceSetting("TMDB 榜单", charts.map { it.label }, charts.indexOf(CatalogChart.of(chart)), { settings.tmdbChart.set(charts[it].name) })
+    SettingsGroup("查找内容") {
+        ToggleSetting("TMDB 搜索", search, { settings.tmdbSearch.set(!search) })
+        ToggleSetting("番剧别名匹配", anime, { settings.animeAliases.set(!anime) })
     }
 }
 
@@ -382,16 +397,34 @@ private fun CacheSettings() {
     val imageSize by androidx.compose.runtime.produceState<Long?>(null, imageLimit) {
         value = withContext(Dispatchers.IO) { context.imageLoader.diskCache?.size }
     }
-    SettingsGroup("元数据缓存") {
-        ChoiceSetting("元数据上限", CacheLimits.metadataMb.map(CacheLimits::label), CacheLimits.metadataMb.indexOf(metadataLimit),
-            { app.settings.metadataCacheMb.set(CacheLimits.metadataMb[it]) }, sub = "立即生效，超限时优先清理较少使用的资料")
-        ValueSetting("已用容量", CacheLimits.usage(metadataSize), sub = "影视资料、人物、季集、搜索和榜单缓存")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        SettingsGroup("影视资料", Modifier.weight(1f)) {
+            CacheMeter(metadataSize, metadataLimit, "立即生效")
+            ChoiceSetting("资料上限", CacheLimits.metadataMb.map(CacheLimits::label), CacheLimits.metadataMb.indexOf(metadataLimit),
+                { app.settings.metadataCacheMb.set(CacheLimits.metadataMb[it]) })
+        }
+        SettingsGroup("图片", Modifier.weight(1f)) {
+            CacheMeter(imageSize, app.activeImageCacheMb, if (imageLimit != app.activeImageCacheMb) "待重启 · ${CacheLimits.label(imageLimit)}" else "重启后生效")
+            ChoiceSetting("图片上限", CacheLimits.imagesMb.map(CacheLimits::label), CacheLimits.imagesMb.indexOf(imageLimit),
+                { app.settings.imageCacheMb.set(CacheLimits.imagesMb[it]) })
+        }
     }
-    SettingsGroup("图片缓存") {
-        ChoiceSetting("图片上限", CacheLimits.imagesMb.map(CacheLimits::label), CacheLimits.imagesMb.indexOf(imageLimit),
-            { app.settings.imageCacheMb.set(CacheLimits.imagesMb[it]) },
-            sub = if (imageLimit != app.activeImageCacheMb) "已保存，重启应用后生效；当前上限 ${CacheLimits.label(app.activeImageCacheMb)}" else "调整后需重启应用，优先清理较少使用的图片")
-        ValueSetting("已用容量", imageSize?.let(CacheLimits::usage) ?: "正在读取…", sub = "海报、背景、Logo 和人物头像")
+    SettingsGroup("资源查找") {
+        ValueSetting("版本与剧集目录", "6 小时", glyph = Glyph.Clock)
     }
-    Text("收藏、待看和观看记录单独保存，不计入以上缓存上限。", fontSize = 19.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
+}
+
+@Composable
+private fun CacheMeter(bytes: Long?, limitMb: Int, status: String) {
+    Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Text(bytes?.let(CacheLimits::usage) ?: "读取中…", fontSize = 38.sp, fontWeight = FontWeight.Bold)
+        Box(Modifier.fillMaxWidth().height(10.dp).background(Z.well, RoundedCornerShape(5.dp))) {
+            val used = ((bytes ?: 0).toFloat() / (limitMb * CacheLimits.MIB)).coerceIn(0f, 1f)
+            Box(Modifier.fillMaxWidth(used).height(10.dp).background(Z.ok, RoundedCornerShape(5.dp)))
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("上限 ${CacheLimits.label(limitMb)}", fontSize = 18.sp, color = Z.textSecondary)
+            Text(status, fontSize = 18.sp, color = Z.textTertiary)
+        }
+    }
 }

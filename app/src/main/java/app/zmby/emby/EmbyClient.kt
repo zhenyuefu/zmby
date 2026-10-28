@@ -344,15 +344,19 @@ class EmbyClient(
     suspend fun ping(baseUrl: String, ua: UaSetting = UaSetting(), serverId: String = ""): Pair<Long?, String?> {
         var version: String? = null
         var setting = ua
-        suspend fun once(): Long? = runCatching {
+        suspend fun once(): Long? = try {
             val started = System.nanoTime()
             val base = normalizeBaseUrl(baseUrl)
             val reply = call(base, null, setting, serverId) { id -> request(base, null, "System/Info/Public", id) {}.get().build() }
             if (setting.canFallBack) setting = setting.copy(detected = reply.mode)
             version = json.decodeFromString<SystemInfoPublic>(reply.text).version
             (System.nanoTime() - started) / 1_000_000
-        }.getOrNull()
-        val first = once() ?: return null to null
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { null }
+        val first = once() ?: run {
+            kotlinx.coroutines.delay(350)
+            return once() to version
+        }
         return minOf(first, once() ?: first) to version
     }
 

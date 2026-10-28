@@ -140,7 +140,8 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     val manualPick = remember(server, metadataItem?.id) { metadataItem?.let { item -> app.library.pickedVersion(Keys.work(server, item)) } }
     val versions = when {
         lookupWork != null -> rememberCatalogVersions(lookupWork, null, emptyList(), tick, cached?.ref, manual = manualPick)
-        metadataItem != null && server != "catalog" -> rememberVersions(server, metadataItem, cached = cachedVersions, forKey = cached?.workKey)
+        metadataItem != null && server != "catalog" -> rememberVersions(server, metadataItem, cached = cachedVersions, forKey = cached?.workKey,
+            onRefresh = { vm.refresh(replace = true) })
         else -> VersionsState(emptyList(),0,null)
     }
     val it = metadataItem
@@ -170,7 +171,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     val cast = remember(canonical?.cast, ref.key, ref.item.people) {
         if (canonical != null) catalogCastCards(nav, canonical.cast) else serverCastCards(app, nav, ref)
     }
-    val hasVersions = versions.all.isNotEmpty() || versions.searching > 0 || versions.unresponsive.isNotEmpty()
+    val hasVersions = it.type in setOf("Movie", "Video", "Episode") || lookupWork != null || versions.all.isNotEmpty() || versions.searching > 0 || versions.unresponsive.isNotEmpty()
     // 为你推荐 (ui-spec §2.14): keyed by the work's external identity when it has one.
     val tmdbId = (lookupWork?.ref ?: it.tmdb()?.let { id -> CatalogId("tmdb", "movie", id) })?.takeIf { r -> r.source == "tmdb" }
     val recKey = tmdbId?.let { r -> "movie:tmdb:${r.id}" } ?: Keys.work(ref.server, ref.item)

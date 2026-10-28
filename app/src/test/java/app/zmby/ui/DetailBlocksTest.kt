@@ -50,7 +50,7 @@ class DetailBlocksTest {
         assertEquals("没有季集编号", reasons["none"])
         assertEquals("目录里没有这一集", reasons["far"])
         assertEquals("外部 ID 对不上目录", reasons["wrong"])
-        assertEquals("同一集有多条", reasons["d1"])
+        assertEquals(setOf("d1", "d2"), mapped.matched["101"]!!.map { it.item.id }.toSet())
         assertEquals("剧集身份未确认", reasons["guess"])
     }
 }

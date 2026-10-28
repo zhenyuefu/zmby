@@ -113,7 +113,7 @@ class PrefsRegistryStore(context: Context) : RegistryStore {
 /**
  * The servers (aggregation spec §3.1, architecture: ServerRegistry): many servers in priority order,
  * each with lines, switches, sync policy and this run's health. Health combines speed tests with
- * fan-out results; a server that keeps failing cools down for five minutes.
+ * fan-out results; a server that keeps failing pauses briefly before another attempt.
  */
 class ServerRegistry(
     private val store: RegistryStore,
@@ -144,7 +144,7 @@ class ServerRegistry(
         val cooling = f.coolingUntil > clock()
         val health = when {
             !c.enabled || cooling -> Health.Off
-            c.lineId in lines && lines[c.lineId] == null -> Health.Off
+            c.lineId in lines && lines[c.lineId] == null -> Health.Warn
             c.needsLogin || f.failures > 0 -> Health.Warn
             c.lineId !in lines -> Health.Warn
             (lines[c.lineId] ?: 0) > SLOW_MS -> Health.Warn
@@ -240,7 +240,14 @@ class ServerRegistry(
     override fun isCooling(serverId: String): Boolean = failures.isCooling(serverId)
 
     override fun onSuccess(serverId: String) {
-        if (failures.state(serverId).failures == 0) return
+        val line = get(serverId)?.config?.lineId
+        val stalePing = synchronized(this) {
+            val lines = latency[serverId].orEmpty()
+            (line != null && line in lines && lines[line] == null).also {
+                if (it) latency[serverId] = lines - line!!
+            }
+        }
+        if (failures.state(serverId).failures == 0 && !stalePing) return
         failures.success(serverId)
         publish()
     }
@@ -248,7 +255,7 @@ class ServerRegistry(
     override fun onFailure(serverId: String, error: Throwable, timedOut: Boolean) {
         ZLog.w("Servers", "${get(serverId)?.name ?: serverId}: ${if (timedOut) "request timed out" else "request failed"}: ${error.message ?: error.javaClass.simpleName}")
         if (failures.failure(serverId, error.message ?: error.javaClass.simpleName, timedOut)) {
-            ZLog.w("Servers", "${get(serverId)?.name ?: serverId} failed twice in a row; skipped for ${FailureTracker.COOL_MS / 60_000} minutes")
+            ZLog.w("Servers", "${get(serverId)?.name ?: serverId} failed twice in a row; skipped for ${FailureTracker.COOL_MS / 1_000} seconds")
         }
         publish()
     }

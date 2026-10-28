@@ -32,6 +32,7 @@ import app.zmby.ui.theme.defaultScrollSpec
 import app.zmby.ui.theme.Mono
 import app.zmby.zmby
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.platform.LocalDensity
 
 private val SERIES_SCRIMS = Scrims(listOf(0f to 0.96f, 0.4f to 0.75f, 0.75f to 0.15f), bottomFrom = 300f / 1080f, bottomSolid = 0.55f)
@@ -41,6 +42,15 @@ internal fun episodeSlot(season: Int?, number: Int?, fallback: String): String =
     if (season != null && number != null) "s$season:e$number" else "extra:$fallback"
 
 private data class EpisodeRow(val key: String, val item: BaseItemDto, val image: String?, val canonical: CatalogEpisode? = null, val resources: List<ServerItem> = emptyList())
+
+private suspend fun serverDirectory(app: app.zmby.ZmbyApp, server: String, seriesId: String, seasonId: String? = null,
+    load: suspend () -> List<BaseItemDto>): List<BaseItemDto> =
+    when (val result = app.fanOut.run(listOf(server), FanOut.SEARCH_TIMEOUT_MS,
+        share = listOf("server-directory", seriesId, seasonId), cacheMs = FanOut.RESOURCE_CACHE_MS) { load() }.first()) {
+        is Outcome.Ok -> result.value
+        is Outcome.Failed -> throw result.error
+        is Outcome.Skipped -> throw java.io.IOException("服务器暂时未响应")
+    }
 
 /** The original series layout is shared by server entries, provider search and cached metadata. */
 @Composable
@@ -71,6 +81,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     var anchor by remember { mutableStateOf<BaseItemDto?>(null) }
     var resourceRetry by remember { mutableIntStateOf(0) }
     var episodeError by remember { mutableStateOf<String?>(null) }
+    var recoverable by remember { mutableStateOf<List<String>>(emptyList()) }
     // No full server metadata is needed for an externally identified series. These requests only
     // obtain resource directories and progress, independently of the provider request.
     LaunchedEffect(server, seriesId, tick, resourceWork?.ref, resourceRetry) {
@@ -79,11 +90,14 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         if (seasonNumber < 0) anchor?.parentIndexNumber?.let { seasonNumber = it }
         // Without a TMDB token a known external ID gives no catalogue directory: list the server's own seasons.
         if (resourceWork == null || !app.catalog.configured) try {
-            serverSeasons = app.library.seasons(server, seriesId)
+            serverSeasons = serverDirectory(app, server, seriesId) { app.library.seasons(server, seriesId) }
             if (seasonNumber < 0) seasonNumber = serverSeasons.firstOrNull { (it.indexNumber ?: 0) > 0 }?.indexNumber ?: 0
             if (anchor == null) anchor = app.library.nextUp(server, seriesId)
             if (!anchorApplied && currentKey == null) anchor?.let { seasonNumber = it.parentIndexNumber ?: seasonNumber }
-        } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        } catch (e: CancellationException) { throw e } catch (e: Exception) {
+            episodeError = "剧集目录暂时无法加载"
+            if (FanOut.isTransient(e)) recoverable = (recoverable + server).distinct()
+        }
     }
     val seasons = canonical?.seasons ?: serverSeasons.map { CatalogSeason(it.indexNumber ?: 0, it.name.orEmpty(), it.childCount ?: 0) }
     LaunchedEffect(seasons) {
@@ -92,8 +106,16 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     LaunchedEffect(server, seasonNumber, serverSeasons, canonical?.ref, resourceRetry, tick) {
         if (server == "catalog" || canonical != null) return@LaunchedEffect
         val season = serverSeasons.firstOrNull { it.indexNumber == seasonNumber } ?: return@LaunchedEffect
-        try { serverEpisodes = app.library.episodes(server, seriesId, season.id); episodeError = null }
-        catch (e: CancellationException) { throw e } catch (_: Exception) { episodeError = "剧集目录暂时无法加载" }
+        try {
+            serverEpisodes = serverDirectory(app, server, seriesId, season.id) {
+                app.library.episodes(server, seriesId, season.id).map { it.copy(parentIndexNumber = it.parentIndexNumber ?: season.indexNumber, seriesId = it.seriesId ?: seriesId) }
+            }
+            episodeError = null; recoverable = recoverable - server
+        }
+        catch (e: CancellationException) { throw e } catch (e: Exception) {
+            episodeError = "剧集目录暂时无法加载"
+            if (FanOut.isTransient(e)) recoverable = (recoverable + server).distinct()
+        }
     }
     val page by produceState<Pair<Int,List<CatalogEpisode>>?>(null, canonical, seasonNumber, resourceRetry) {
         val work = canonical ?: return@produceState
@@ -106,26 +128,46 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     val servers by app.registry.servers.collectAsState()
     val sourceRows by app.sources.rows.collectAsState()
     val targets = remember(servers, sourceRows, server) { (app.sources.servers(SourceFeature.Aggregate) + listOfNotNull(server.takeUnless { it == "catalog" })).distinct() }
-    var batches by remember { mutableStateOf<List<ResourceBatch>>(emptyList()) }
+    val resourceLookup = remember(app) { CatalogResources(app.library, app.fanOut) }
+    var batches by remember(resourceWork?.ref) { mutableStateOf<List<ResourceBatch>>(emptyList()) }
     var pending by remember { mutableIntStateOf(0) }
     var failed by remember { mutableStateOf<List<String>>(emptyList()) }
-    LaunchedEffect(resourceWork?.ref, resourceWork?.ids, targets, tick, resourceRetry) {
+    LaunchedEffect(resourceWork?.ref, resourceWork?.ids, targets, tick, resourceRetry, fallback?.key, fallback?.item?.providerIds) {
         val work = resourceWork ?: return@LaunchedEffect
-        batches = emptyList(); pending = targets.size; failed = emptyList()
-        CatalogResources(app.library, app.fanOut).series(targets, work, fallback).collect { result ->
+        batches = batches.filter { it.server in targets }; pending = targets.size; failed = emptyList(); recoverable = emptyList()
+        resourceLookup.series(targets, work, fallback).collect { result ->
             when (result) {
                 is Outcome.Ok -> batches = batches.filter { it.server != result.server } + result.value
-                else -> failed = failed + result.server
+                else -> {
+                    failed = failed + result.server
+                    if (result is Outcome.Skipped || result is Outcome.Failed && FanOut.isTransient(result.error)) recoverable = recoverable + result.server
+                }
             }
             pending--
         }
     }
-    val catalogEpisodes = page?.takeIf { it.first == seasonNumber }?.second
-    val mapped by produceState(EpisodeResources(emptyMap(), emptyList()), canonical, catalogEpisodes, batches) {
-        val work = canonical ?: return@produceState
-        value = withContext(Dispatchers.Default) { ResourceMapping.episodes(work, catalogEpisodes.orEmpty(), batches) }
+    LaunchedEffect(recoverable, pending, servers) {
+        if (pending > 0 || recoverable.isEmpty()) return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        val next = recoverable.minOf { app.registry.get(it)?.coolingUntil?.takeIf { until -> until > now } ?: (now + FailureTracker.COOL_MS) }
+        delay((next - now).coerceAtLeast(0) + 50)
+        resourceRetry++
     }
-    val episodes by produceState<List<EpisodeRow>>(emptyList(), canonical, catalogEpisodes, serverEpisodes, seasonNumber, mapped) {
+    fun refreshResources() {
+        targets.forEach(app.registry::retry)
+        resourceWork?.let { resourceLookup.invalidate(targets, it, fallback) }
+        app.fanOut.invalidate(listOf("server-directory", seriesId, null), listOf(server))
+        serverSeasons.forEach { app.fanOut.invalidate(listOf("server-directory", seriesId, it.id), listOf(server)) }
+        resourceRetry++
+    }
+    val catalogEpisodes = page?.takeIf { it.first == seasonNumber }?.second
+    val progress by app.recentProgress.collectAsState()
+    val mapped by produceState(EpisodeResources(emptyMap(), emptyList()), canonical, catalogEpisodes, batches, progress) {
+        val work = canonical ?: return@produceState
+        value = withContext(Dispatchers.Default) { ResourceMapping.episodes(work, catalogEpisodes.orEmpty(),
+            batches.map { batch -> batch.copy(episodes = batch.episodes.map { it.withPlaybackProgress(progress) }) }) }
+    }
+    val episodes by produceState<List<EpisodeRow>>(emptyList(), canonical, catalogEpisodes, serverEpisodes, seasonNumber, mapped, progress) {
       value = withContext(Dispatchers.Default) {
         val work = canonical
         val counts=serverEpisodes.groupingBy { it.parentIndexNumber to it.indexNumber }.eachCount()
@@ -134,7 +176,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
             val resources = mapped.matched[ep.id].orEmpty()
             val progress = resources.firstOrNull()?.item?.userData
             EpisodeRow(key, work.item(ep).copy(id = key, overview = ep.overview, userData = progress), ep.image, ep, resources)
-        } else serverEpisodes.filter { it.parentIndexNumber == seasonNumber }.map { ep ->
+        } else serverEpisodes.filter { it.parentIndexNumber == seasonNumber }.map { original ->
+            val ep = ServerItem(server, original).withPlaybackProgress(progress).item
             val unique = counts[ep.parentIndexNumber to ep.indexNumber] == 1
             val key = episodeSlot(ep.parentIndexNumber.takeIf { unique }, ep.indexNumber, ep.id)
             EpisodeRow(key, ep, app.library.landscapeImage(ServerItem(server, ep)), resources = listOf(ServerItem(server, ep)))
@@ -155,8 +198,9 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     var settled by remember(shown?.key) { mutableStateOf(false) }
     LaunchedEffect(shown?.key) { delay(600); settled = true }
     val versions = when {
-        canonical != null -> rememberCatalogVersions(canonical!!, shown?.canonical, if (settled) shown?.resources.orEmpty() else emptyList(), tick + resourceRetry, fallback)
-        shown != null && s != null -> rememberVersions(server, shown.item, s, lookUp = settled)
+        canonical != null -> rememberCatalogVersions(canonical!!, shown?.canonical, if (settled) shown?.resources.orEmpty() else emptyList(), tick + resourceRetry, fallback,
+            onRefresh = ::refreshResources)
+        shown != null && s != null -> rememberVersions(server, shown.item, s, lookUp = settled, onRefresh = ::refreshResources)
         else -> VersionsState(emptyList(), 0, null)
     }
     var picked by remember(shown?.key) { mutableStateOf<Version?>(null) }
@@ -218,7 +262,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         }).distinctBy { c -> c.server }
     }
     val recs = rememberRecommendations(recKey, recCopies, tmdbId, tick).orEmpty()
-    val hasVersions = !unsorted && (versions.all.isNotEmpty() || versions.searching > 0 || versions.unresponsive.isNotEmpty())
+    val hasVersions = !unsorted && (shown != null || canonical != null || versions.all.isNotEmpty() || versions.searching > 0 || versions.unresponsive.isNotEmpty())
     val trackVersion = (preview ?: selected).takeIf { !unsorted }
     accordion.order = listOfNotNull(
         SECTION_EPISODES,

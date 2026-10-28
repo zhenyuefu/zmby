@@ -100,6 +100,7 @@ class PlaybackPreparer(
     private val relay: StreamRelay? = null,
     private val localStrm: LocalStrmPreparer? = null,
     private val now: () -> Long = System::currentTimeMillis,
+    private val artwork: suspend (ServerSession, BaseItemDto) -> PlaybackImages = { _, _ -> PlaybackImages() },
 ) {
 
     suspend fun prepare(
@@ -124,7 +125,9 @@ class PlaybackPreparer(
         val source = chooseSource(info.mediaSources, mediaSourceId)
         val tracks = TrackPreference.choose(source, picked, audioLanguage, subtitleLanguage)
         val runTimeTicks = source.runTimeTicks ?: item.runTimeTicks
-        val backdropTag = item.backdropImageTags.firstOrNull()
+        val images = try { artwork(session, item) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { ZLog.w(TAG, "cached playback artwork unavailable", e); PlaybackImages() }
         val direct = StreamUrls.direct(session.baseUrl, source, session.accessToken)
         val directUrl = checkedUrl(session, direct ?: client.streamUrl(session, item.id, source, info.playSessionId))
         val transport = caps.get(session.capsKey).relay
@@ -164,8 +167,8 @@ class PlaybackPreparer(
                         container = source.container,
                         title = item.displayTitle,
                         startPositionMs = attemptStartMs,
-                        loadingImageUrl = backdropTag?.let { client.imageUrl(session, item.id, "Backdrop", it, 1080) },
-                        clearLogoUrl = logoUrl(session, item),
+                        loadingImageUrl = images.backdrop,
+                        clearLogoUrl = images.logo,
                         subtitleSearchTitle = subtitleSearchTitle(item),
                         fileName = source.fileName,
                         userAgent = client.identity(session).userAgent,
@@ -218,14 +221,6 @@ class PlaybackPreparer(
         return url
     }
 
-    /** The item's own Logo, or for an episode its series' logo; null when the server has none. */
-    private fun logoUrl(session: ServerSession, item: BaseItemDto): String? {
-        item.imageTags["Logo"]?.let { return client.imageUrl(session, item.id, "Logo", it, LOGO_HEIGHT) }
-        val parent = item.parentLogoItemId ?: return null
-        val tag = item.parentLogoImageTag ?: return null
-        return client.imageUrl(session, parent, "Logo", tag, LOGO_HEIGHT)
-    }
-
     private fun externalSubtitles(session: ServerSession, item: BaseItemDto, source: MediaSourceInfo): List<ExternalSubtitle> {
         val base = source.fileName?.substringBeforeLast('.') ?: item.name ?: "subtitle"
         return ZidooTracks.externalSubtitles(source).mapNotNull { s ->
@@ -238,7 +233,6 @@ class PlaybackPreparer(
 
     companion object {
         private const val TAG = "Play"
-        private const val LOGO_HEIGHT = 360
 
         /** Fixed choices are authoritative; automatic playback always starts direct. */
         fun usesRelay(caps: ServerCaps): Boolean = caps.relay == Override.On

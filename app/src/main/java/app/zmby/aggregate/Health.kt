@@ -31,7 +31,8 @@ class FailureTracker(
 
     /** Returns true when this failure starts a cool-down. */
     @Synchronized fun failure(id: String, message: String, timedOut: Boolean): Boolean {
-        val old = state(id)
+        val previous = state(id)
+        val old = if (previous.coolingUntil != 0L && previous.coolingUntil <= clock()) State() else previous
         val failures = old.failures + 1
         val cool = failures >= failuresToCool
         states[id] = State(failures, if (cool) clock() + coolMs else old.coolingUntil, message, timedOut)
@@ -44,6 +45,6 @@ class FailureTracker(
 
     companion object {
         const val FAILURES_TO_COOL = 2
-        const val COOL_MS = 5 * 60_000L
+        const val COOL_MS = 30_000L
     }
 }

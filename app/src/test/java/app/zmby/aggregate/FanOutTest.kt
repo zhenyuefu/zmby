@@ -50,7 +50,7 @@ class FanOutTest {
         assertTrue(order.single { it.server == "broken" }.let { it is Outcome.Failed && !it.timedOut })
     }
 
-    @Test fun `two failures in a row cool a server down for five minutes, then it is asked again`() = runTest {
+    @Test fun `two failures in a row briefly cool a server down then it is asked again`() = runTest {
         var clock = 0L
         val book = Book(FailureTracker({ clock }))
         val fan = FanOut(book, clock = { clock })
