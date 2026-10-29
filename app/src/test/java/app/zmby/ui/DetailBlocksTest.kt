@@ -8,6 +8,12 @@ import app.zmby.catalog.ResourceMapping
 import app.zmby.data.ServerItem
 import app.zmby.emby.BaseItemDto
 import app.zmby.emby.MediaSourceInfo
+import app.zmby.emby.MediaStream
+import app.zmby.data.ServerConfig
+import app.zmby.data.ServerLine
+import app.zmby.data.ServerStatus
+import app.zmby.ui.screens.Version
+import app.zmby.ui.screens.versionSummary
 import app.zmby.ui.screens.episodeStatus
 import app.zmby.ui.screens.unsortedCode
 import org.junit.Assert.assertEquals
@@ -19,6 +25,25 @@ import org.junit.Test
 class DetailBlocksTest {
     private fun ep(server: String, id: String, sources: Int = 1) =
         ServerItem(server, BaseItemDto(id, type = "Episode", mediaSources = List(sources) { MediaSourceInfo("$id-$it") }))
+
+    @Test fun `collapsed version summary follows selected audio and keeps the source identity`() {
+        val line = ServerLine("local", "内网", "http://127.0.0.1:8096")
+        val server = ServerStatus(ServerConfig("nas", "家里 NAS", listOf(line), line.id, "mock", "mock"), 0)
+        val source = MediaSourceInfo("source", name = "REMUX", mediaStreams = listOf(
+            MediaStream(0, "Video", width = 3840, height = 2160, extendedVideoType = "Hdr10"),
+            MediaStream(1, "Audio", codec = "truehd", profile = "Atmos", isDefault = true),
+            MediaStream(2, "Audio", codec = "ac3"),
+        ))
+        val v = Version(server, BaseItemDto("movie"), source)
+        assertEquals("家里 NAS · 2160p REMUX · HDR10 · AC3 · 内网", versionSummary(v, 2))
+        assertEquals("家里 NAS · 2160p REMUX · HDR10 · TrueHD Atmos · 内网", versionSummary(v))
+        assertEquals(versionSummary(v), versionSummary(v, 999))
+        val noCodec = v.copy(source = source.copy(mediaStreams = listOf(source.mediaStreams.first(), MediaStream(1, "Audio"))))
+        assertEquals("家里 NAS · 2160p REMUX · HDR10 · 内网", versionSummary(noCodec))
+        val corrected = v.copy(item = v.item.copy(parentIndexNumber = 4, indexNumber = 1), canonicalEpisode = app.zmby.catalog.CatalogEpisode("301", 3, 1, "One"))
+        assertEquals("片源：第 4 季 第 1 集 · 目录：第 3 季 第 1 集", app.zmby.ui.screens.sourceNumberNote(corrected))
+        assertEquals(4, corrected.item.parentIndexNumber)
+    }
 
     @Test fun `episode corner counts versions across servers`() {
         val s = episodeStatus(listOf(ep("a", "1", 2), ep("b", "2", 1)), null, "2026-10-26", searching = true, failed = false)

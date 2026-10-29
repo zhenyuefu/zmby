@@ -8,15 +8,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CatalogResourcesTest {
-    private class NamedSource(private val candidates: List<BaseItemDto>) : VersionSource {
+    private class NamedSource(private val candidates: List<BaseItemDto>, private val identified: List<BaseItemDto> = emptyList(),
+        private val episodeParent: String? = null, private val parentIdentities: List<BaseItemDto> = emptyList()) : VersionSource {
         var queries = 0
-        override suspend fun byProviderIds(server: String, type: String, ids: List<String>): List<BaseItemDto> { queries++; return emptyList() }
+        var identityQueries = 0
+        override suspend fun byProviderIds(server: String, type: String, ids: List<String>): List<BaseItemDto> { queries++; return identified }
         override suspend fun searchType(server: String, term: String, type: String, limit: Int) = candidates
         override suspend fun item(server: String, id: String): BaseItemDto = error("not needed")
+        override suspend fun identities(server: String, ids: List<String>): List<BaseItemDto> { identityQueries++; return parentIdentities }
         override suspend fun sources(server: String, itemId: String): List<MediaSourceInfo> = error("not needed")
         override suspend fun seasons(server: String, seriesId: String) = listOf(BaseItemDto("season:$seriesId", type = "Season", indexNumber = 1))
         override suspend fun episodePage(server: String, seriesId: String, seasonId: String, start: Int, limit: Int) =
-            ItemsResult(listOf(BaseItemDto("episode:$seriesId", type = "Episode", indexNumber = 1)), 1)
+            ItemsResult(listOf(BaseItemDto("episode:$seriesId", type = "Episode", indexNumber = 1, seriesId = episodeParent)), 1)
     }
 
     @Test fun `one exact name candidate without IDs maps by its season and episode and directory is cached`() = runBlocking {
@@ -47,6 +50,52 @@ class CatalogResourcesTest {
         assertFalse(ResourceMapping.named(work, a.copy(providerIds = mapOf("Tmdb" to "99"))))
         assertFalse(ResourceMapping.named(work, a.copy(productionYear = 2023)))
         assertFalse(ResourceMapping.named(work, a.copy(name = "某部剧 第二季")))
+    }
+
+    @Test fun `the opened series with explicit IDs is verified even when provider search only returns another edition`() = runBlocking {
+        val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "某部剧", ids = mapOf("Tmdb" to "10"))
+        val opened = BaseItemDto("opened", type = "Series", providerIds = mapOf("Tmdb" to "10"))
+        val source = NamedSource(emptyList(), listOf(opened.copy(id = "other-edition")))
+        val batches = (CatalogResources(source, FanOut(health)).series(listOf("a"), work,
+            app.zmby.data.ServerItem("a", opened)).toList().single() as Outcome.Ok).value
+        assertTrue(batches.all { it.verified })
+        val mapped = ResourceMapping.episodes(work, listOf(CatalogEpisode("101", 1, 1, "One")), batches)
+        assertEquals(setOf("episode:opened", "episode:other-edition"), mapped.matched["101"]!!.map { it.item.id }.toSet())
+        assertTrue(mapped.unmatched.isEmpty())
+    }
+
+    @Test fun `provider search omitting IDs does not erase the opened series identity or override explicit conflicts`() = runBlocking {
+        val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "某部剧", ids = mapOf("Tmdb" to "10", "Imdb" to "tt1"))
+        val opened = BaseItemDto("opened", type = "Series", providerIds = work.ids)
+        suspend fun batches(found: BaseItemDto) = (CatalogResources(NamedSource(emptyList(), listOf(found)), FanOut(health))
+            .series(listOf("a"), work, app.zmby.data.ServerItem("a", opened)).toList().single() as Outcome.Ok).value
+        assertTrue(batches(opened.copy(providerIds = emptyMap())).single().verified)
+        assertFalse(batches(opened.copy(providerIds = work.ids + ("Imdb" to "tt2"))).single().verified)
+    }
+
+    @Test fun `episodes from another parent edition use verified external identity instead of being marked unconfirmed`() = runBlocking {
+        val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "Series", ids = mapOf("Tmdb" to "10"))
+        val series = BaseItemDto("queried", type = "Series", providerIds = work.ids)
+        val source = NamedSource(emptyList(), listOf(series), "alias", listOf(series.copy(id = "alias")))
+        val batches = (CatalogResources(source, FanOut(health)).series(listOf("a"), work).toList().single() as Outcome.Ok).value
+        val mapped = ResourceMapping.episodes(work, listOf(CatalogEpisode("101", 1, 1, "One")), batches)
+        assertEquals(1, source.identityQueries)
+        assertTrue(batches.single().verified)
+        assertEquals("alias", mapped.matched["101"]!!.single().item.seriesId)
+        assertTrue(mapped.unmatched.isEmpty())
+    }
+
+    @Test fun `conflicting or absent parent identities do not bypass series verification`() = runBlocking {
+        val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "Series", ids = mapOf("Tmdb" to "10"))
+        val series = BaseItemDto("queried", type = "Series", providerIds = work.ids)
+        for (parents in listOf(emptyList(), listOf(series.copy(id = "alias", providerIds = mapOf("Tmdb" to "99"))))) {
+            val source = NamedSource(emptyList(), listOf(series), "alias", parents)
+            val batches = (CatalogResources(source, FanOut(health)).series(listOf("a"), work).toList().single() as Outcome.Ok).value
+            assertFalse(batches.single().verified)
+            val mapped = ResourceMapping.episodes(work, listOf(CatalogEpisode("101", 1, 1, "One")), batches)
+            assertTrue(mapped.matched.isEmpty())
+            assertEquals("剧集身份未确认", mapped.reasons["a:episode:queried"])
+        }
     }
 
     private val health = object : HealthBook {

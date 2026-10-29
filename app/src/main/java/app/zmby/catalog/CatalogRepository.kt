@@ -142,6 +142,19 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
             all
         }
     }
+
+    /** Resolve IMDb/TVDB episode IDs with TMDB's show-scoped episode results; responses use the normal cache. */
+    suspend fun episodeIdentity(work: CatalogWork, item: BaseItemDto, refresh: Boolean = false): EpisodeIdentity = withContext(Dispatchers.IO) {
+        resolveEpisodeIdentity(work, item) { provider, id ->
+            val params = mapOf("external_source" to if (provider == "imdb") "imdb_id" else "tvdb_id")
+            (if (refresh) api.tmdb("find/$id", params, ttl = 0) else api.tmdb("find/$id", params))
+                .rows("tv_episode_results").mapNotNull { ep ->
+                    val show = ep.str("show_id") ?: return@mapNotNull null
+                    val episode = ep.str("id") ?: return@mapNotNull null
+                    EpisodeIdentityHit(show, episode)
+                }
+        }
+    }
     private fun bgmName(body: JsonObject) = if (textLanguage() in setOf("zh-CN", "zh-Hans")) body.str("name_cn") ?: body.str("name").orEmpty() else body.str("name").orEmpty()
     private suspend fun bangumi(ref: CatalogId): CatalogWork {
         val body = api.bgm("subjects/${ref.id}").obj()

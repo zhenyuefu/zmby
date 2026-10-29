@@ -116,13 +116,20 @@ internal fun CastBlock(cards: List<CastCard>, entry: FocusRequester) {
 }
 
 /** 版本 collapsed: 「家里 NAS · 2160p REMUX · DV P7 · TrueHD Atmos · 内网」. */
-internal fun versionSummary(v: Version): String = listOfNotNull(
+internal fun versionSummary(v: Version, audioIndex: Int? = null): String = listOfNotNull(
     v.server.name,
     versionTitle(v.source),
     hdrBadge(v.source.videoStream),
-    defaultAudio(v.source)?.let(::audioFormat),
+    (v.source.audioStreams.firstOrNull { it.index == audioIndex } ?: defaultAudio(v.source))?.let(::audioFormat),
     v.server.lineName,
 ).joinToString(" · ")
+
+@Composable
+internal fun RowScope.VersionSummary(v: Version, choice: TrackChoice) {
+    val tracks = rememberEffectiveTracks(v, choice)
+    val summary = remember(v, tracks.audio) { versionSummary(v, tracks.audio) }
+    SummaryText(summary)
+}
 
 /** 「4K · 共 7 个 · 还在查找 2 台」 or 「· n 台未响应」. */
 internal fun versionCount(state: VersionsState, selected: Version?): String = listOfNotNull(

@@ -56,6 +56,10 @@ object VersionRanker {
 
     fun best(versions: List<VersionFacts>, prefs: VersionPrefs): VersionFacts? = versions.minWithOrNull(comparator(prefs))
 
+    /** Rank the known sources of one server, using the detail page's preferences (e.g. home badges). */
+    fun bestSource(server: String, sources: List<MediaSourceInfo>, prefs: VersionPrefs): MediaSourceInfo? =
+        best(sources.map { VersionFacts(server, 0, true, null, it) }, prefs)?.source
+
     fun matches(pattern: Regex, source: MediaSourceInfo): Boolean =
         listOfNotNull(source.name, source.fileName, source.path).any { pattern.containsMatchIn(it) }
 

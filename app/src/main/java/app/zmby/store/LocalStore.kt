@@ -39,6 +39,7 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
     private val favoriteDao = db.favorites()
     val watchlist = db.watchlist()
     val sources = db.sources()
+    val episodeMappings = EpisodeMappings(db)
 
     // ---- items
 
@@ -254,6 +255,7 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
         }
         versionDao.deleteServer(server)
         db.playHistory().deleteServer(server)
+        db.episodeMappings().deleteServer(server)
         people.deleteServerAliases(server)
         sources.deleteServerSync(server)
         sources.deleteSource(server)

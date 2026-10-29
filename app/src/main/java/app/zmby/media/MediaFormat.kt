@@ -28,10 +28,19 @@ fun qualityTier(source: MediaSourceInfo): QualityTier {
 }
 
 fun isDiscImage(source: MediaSourceInfo): Boolean {
-    val c = source.container?.lowercase()
-    val t = source.videoType?.lowercase()
-    return c == "iso" || c == "bluray" || c == "dvd" || t == "iso" || t == "bluray" || t == "dvd" ||
-        source.path?.lowercase()?.endsWith(".iso") == true
+    return discBadge(source) != null
+}
+
+/** Keep the container (ISO) distinct from Blu-ray/DVD directory structures. */
+fun discBadge(source: MediaSourceInfo): String? {
+    val types = listOfNotNull(source.container, source.videoType).map { it.trim().lowercase(Locale.ROOT) }
+    val path = source.path.orEmpty().replace('\\', '/').lowercase(Locale.ROOT)
+    return when {
+        "iso" in types || path.endsWith(".iso") -> "原盘 ISO"
+        types.any { it in setOf("bluray", "blu-ray", "bdmv") } || path.endsWith(".bdmv") -> "原盘 Blu-ray"
+        "dvd" in types || path.endsWith("/video_ts.ifo") -> "原盘 DVD"
+        else -> null
+    }
 }
 
 private val RELEASE_TAGS = listOf(
@@ -102,17 +111,25 @@ fun hdrBadge(video: MediaStream?): String? {
 }
 
 /** "TrueHD Atmos", "DTS-HD MA", "DDP Atmos", "AAC". */
-fun audioFormat(stream: MediaStream): String {
-    val codec = stream.codec.orEmpty().lowercase()
+private val ATMOS = Regex("\\batmos\\b", RegexOption.IGNORE_CASE)
+private val DTS_X = Regex("\\bdts[ :_-]*x\\b", RegexOption.IGNORE_CASE)
+private val DTS_MA = Regex("\\b(ma|master[ -]+audio)\\b", RegexOption.IGNORE_CASE)
+private val DTS_HRA = Regex("\\b(hra|high[ -]+resolution(?:[ -]+audio)?)\\b", RegexOption.IGNORE_CASE)
+private val DTS_HD_MA = Regex("\\bdts[ _-]*hd[ _-]*(?:ma|master[ -]+audio)\\b", RegexOption.IGNORE_CASE)
+private val DTS_HD_HRA = Regex("\\bdts[ _-]*hd[ _-]*(?:hra|high[ -]+resolution(?:[ -]+audio)?)\\b", RegexOption.IGNORE_CASE)
+
+fun audioFormat(stream: MediaStream): String? {
+    val codec = stream.codec.orEmpty().trim().lowercase(Locale.ROOT)
+    if (codec.isEmpty() || codec == "?" || codec == "？") return null
     val profile = stream.profile.orEmpty()
-    val title = (stream.displayTitle.orEmpty() + " " + stream.title.orEmpty())
-    val atmos = profile.contains("Atmos", true) || title.contains("Atmos", true)
+    val description = listOfNotNull(stream.profile, stream.displayTitle, stream.title).joinToString(" ")
+    val atmos = codec in setOf("truehd", "eac3") && ATMOS.containsMatchIn(description)
     val base = when (codec) {
         "truehd" -> "TrueHD"
         "dts" -> when {
-            profile.contains("MA", false) || profile.contains("HD MA", true) -> "DTS-HD MA"
-            profile.contains("X", false) -> "DTS:X"
-            profile.contains("HRA", true) || profile.contains("HD HRA", true) -> "DTS-HD HRA"
+            DTS_X.containsMatchIn(description) -> "DTS:X"
+            DTS_MA.containsMatchIn(profile) || DTS_HD_MA.containsMatchIn(description) -> "DTS-HD MA"
+            DTS_HRA.containsMatchIn(profile) || DTS_HD_HRA.containsMatchIn(description) -> "DTS-HD HRA"
             else -> "DTS"
         }
         "eac3" -> "DDP"
@@ -122,20 +139,32 @@ fun audioFormat(stream: MediaStream): String {
         "opus" -> "Opus"
         "mp3" -> "MP3"
         "pcm_s16le", "pcm_s24le", "pcm_bluray", "lpcm" -> "LPCM"
-        else -> codec.uppercase(Locale.ROOT).ifBlank { "?" }
+        else -> codec.uppercase(Locale.ROOT)
     }
     return if (atmos && base != "DTS:X") "$base Atmos" else base
 }
 
-fun channelLabel(stream: MediaStream): String? = when (val c = stream.channels) {
-    null -> stream.channelLayout
-    1 -> "1.0"
-    2 -> "2.0"
-    3 -> "2.1"
-    6 -> "5.1"
-    7 -> "6.1"
-    8 -> "7.1"
-    else -> "${c}ch"
+private val CHANNEL_LAYOUT = Regex("^(\\d+\\.\\d+(?:\\.\\d+)?)(?:\\([a-z ]+\\))?$")
+
+fun channelLabel(stream: MediaStream): String? {
+    val count = stream.channels?.takeIf { it > 0 }
+    val layout = stream.channelLayout?.trim()?.lowercase(Locale.ROOT)
+    val numeric = when (layout) {
+        "mono" -> "1.0"
+        "stereo" -> "2.0"
+        else -> layout?.let { CHANNEL_LAYOUT.matchEntire(it)?.groupValues?.get(1) }
+    }
+    if (numeric != null) {
+        val total = numeric.split('.').sumOf { it.toIntOrNull() ?: 0 }
+        if (total > 0 && (count == null || count == total)) return numeric
+    }
+    // A channel count alone cannot tell 3.0 from 2.1, or 7.1 from 5.1.2.
+    return when (count) {
+        null -> null
+        1 -> "1.0"
+        2 -> "2.0"
+        else -> "${count}ch"
+    }
 }
 
 fun defaultAudio(source: MediaSourceInfo): MediaStream? {
@@ -145,12 +174,12 @@ fun defaultAudio(source: MediaSourceInfo): MediaStream? {
 
 
 /** Badges next to the title on the hero (4K / DOLBY VISION / ATMOS). */
-fun heroBadges(source: MediaSourceInfo?): List<String> {
+fun heroBadges(source: MediaSourceInfo?, audioIndex: Int? = null): List<String> {
     if (source == null) return emptyList()
     val out = mutableListOf<String>()
     if (qualityTier(source) == QualityTier.UHD) out += "4K"
     hdrBadge(source.videoStream)?.let { out += if (it.startsWith("DV")) "DOLBY VISION" else it }
-    val audio = defaultAudio(source)?.let(::audioFormat).orEmpty()
+    val audio = (source.audioStreams.firstOrNull { it.index == audioIndex } ?: defaultAudio(source))?.let(::audioFormat).orEmpty()
     if (audio.contains("Atmos")) out += "ATMOS" else if (audio.startsWith("DTS:X")) out += "DTS:X"
     return out
 }
@@ -263,32 +292,34 @@ fun audioRows(source: MediaSourceInfo): List<TrackRow> {
     val default = defaultAudio(source)
     return source.audioStreams.mapIndexed { i, a ->
         val fmt = listOfNotNull(
-            listOfNotNull(audioFormat(a), channelLabel(a)).joinToString(" "),
+            listOfNotNull(audioFormat(a), channelLabel(a)).joinToString(" ").ifBlank { null },
             a.sampleRate?.let { "%s kHz".format(Locale.ROOT, (it / 1000.0).toString().removeSuffix(".0")) },
             a.bitDepth?.let { "$it bit" } ?: formatBitrate(a.bitRate),
             a.title?.takeIf { it.isNotBlank() && !it.equals(a.displayTitle, true) },
         ).joinToString(" · ")
-        TrackRow(i + 1, languageName(a), fmt, if (a === default) "默认" else null, a.index)
+        TrackRow(i + 1, TrackFacts.audioLanguage(a) ?: languageName(a), fmt, if (a === default) "默认" else null, a.index)
     }
 }
 
 fun subtitleRows(source: MediaSourceInfo): List<TrackRow> = source.subtitleStreams.mapIndexed { i, s ->
-    val codec = when (s.codec?.lowercase()) {
+    val rawCodec = s.codec.orEmpty().trim().lowercase(Locale.ROOT)
+    val codec = when (rawCodec) {
+        "", "?", "？" -> ""
         "pgssub", "pgs", "hdmv_pgs_subtitle" -> "PGS"
         "ass", "ssa" -> "ASS"
         "subrip", "srt" -> "SRT"
         "dvdsub", "dvd_subtitle", "vobsub" -> "VobSub"
         "mov_text" -> "TX3G"
         "webvtt", "vtt" -> "VTT"
-        else -> s.codec?.uppercase(Locale.ROOT) ?: "?"
+        else -> rawCodec.uppercase(Locale.ROOT)
     }
-    val fmt = if (s.isForced) "$codec · 强制" else codec
-    val tag = when {
-        s.index == source.defaultSubtitleStreamIndex || s.isDefault -> "默认"
-        s.isExternal -> "外挂"
-        else -> null
-    }
-    TrackRow(i + 1, s.title?.takeIf { it.isNotBlank() } ?: languageName(s), fmt, tag, s.index, s.isExternal)
+    val tag = listOfNotNull(
+        "默认".takeIf { s.index == source.defaultSubtitleStreamIndex || s.isDefault },
+        "外挂".takeIf { s.isExternal },
+        "强制".takeIf { s.isForced },
+        "特效".takeIf { TrackFacts.effects(s) },
+    ).joinToString(" · ").ifEmpty { null }
+    TrackRow(i + 1, s.title?.takeIf { it.isNotBlank() } ?: languageName(s), codec, tag, s.index, s.isExternal)
 }
 
 private fun languageName(s: MediaStream): String {

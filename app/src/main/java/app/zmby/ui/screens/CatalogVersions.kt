@@ -58,7 +58,7 @@ internal fun rememberCatalogVersions(
                 val full = app.library.resourceItem(server, item.id)
                 require(full.id == item.id && full.type == item.type) { "片源身份发生变化" }
                 val sources = app.library.sources(server, full.id).ifEmpty { full.mediaSources }
-                sources.map { Version(status, full, it) }
+                sources.map { Version(status, full, it, episode) }
             })
         }.collect { result ->
             if (result is Outcome.Ok) result.value.forEach { app.playbackArtwork.remember(result.server, it.item.id, work.ref, it.item.seriesId) }
@@ -78,10 +78,10 @@ internal fun rememberCatalogVersions(
     val quality by app.settings.quality.flow.collectAsState()
     val nonDisc by app.settings.preferNonDisc.flow.collectAsState()
     val targets = if (work.ref.kind == "movie") allowed else resources.map { it.server }.distinct()
-    return remember(servers, results, targets, pending, pattern, quality, nonDisc, manual, onRefresh, lookupKey, progress) {
+    return remember(servers, results, targets, pending, pattern, quality, nonDisc, manual, onRefresh, lookupKey, progress, episode) {
         val groups = results.values.filterIsInstance<Outcome.Ok<List<Version>>>().mapNotNull { o ->
             val status = servers.firstOrNull { it.id == o.server } ?: return@mapNotNull null
-            if (o.value.isEmpty()) null else VersionGroup(status, o.value.map { Version(status, it.ref.withPlaybackProgress(progress).item, it.source) }, "作品与季集已匹配")
+            if (o.value.isEmpty()) null else VersionGroup(status, o.value.map { Version(status, it.ref.withPlaybackProgress(progress).item, it.source, episode) }, "作品与季集已匹配")
         }.sortedBy { it.server.order }
         val prefs = VersionPrefs(manual = manual, pattern = VersionPrefs.pattern(pattern), quality = quality, preferNonDisc = nonDisc)
         val ordered = rankCatalogVersions(groups.flatMap { it.versions }, prefs)

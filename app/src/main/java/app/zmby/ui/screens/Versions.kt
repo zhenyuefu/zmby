@@ -70,11 +70,11 @@ import app.zmby.media.fileRows
 import app.zmby.media.formatClock
 import app.zmby.media.formatDuration
 import app.zmby.media.formatSize
-import app.zmby.media.isDiscImage
 import app.zmby.media.isProbed
 import app.zmby.media.qualityTier
 import app.zmby.media.subtitleRows
 import app.zmby.media.versionBadges
+import app.zmby.media.discBadge
 import app.zmby.media.versionOrder
 import app.zmby.media.versionTitle
 import app.zmby.playback.TrackChoice
@@ -121,10 +121,17 @@ import app.zmby.data.ServerItem
 import app.zmby.ui.components.Health
 
 /** One playable version: a media source of an item on a server. */
-data class Version(val server: ServerStatus, val item: BaseItemDto, val source: MediaSourceInfo) {
+data class Version(val server: ServerStatus, val item: BaseItemDto, val source: MediaSourceInfo, val canonicalEpisode: app.zmby.catalog.CatalogEpisode? = null) {
     val key: String get() = "${server.id}:${item.id}:${source.id}"
     val tier: QualityTier get() = qualityTier(source)
     val ref: ServerItem get() = ServerItem(server.id, item)
+}
+
+internal fun sourceNumberNote(v: Version): String? {
+    val ep = v.canonicalEpisode ?: return null
+    if (v.item.parentIndexNumber == ep.season && v.item.indexNumber == ep.number) return null
+    val target = ep.number?.let { "第 ${ep.season} 季 第 $it 集" } ?: ep.title
+    return "片源：${unsortedCode(v.item) ?: "编号缺失"} · 目录：$target"
 }
 
 internal fun uniqueVersions(versions: List<Version>): List<Version> = versions.distinctBy { it.key }
@@ -462,7 +469,7 @@ private fun ServerVersionCard(
                                     Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text(versionTitle(v.source), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                         if (isDefault(v)) Badge("默认", fill = true)
-                                        if (isDiscImage(v.source)) Badge("原盘 ISO", fill = true)
+                                        discBadge(v.source)?.let { Badge(it, fill = true) }
                                     }
                                     formatSize(v.source.size)?.let { Text(it, fontSize = 17.sp, color = secondaryText()) }
                                 }
@@ -472,6 +479,7 @@ private fun ServerVersionCard(
                                         badges.forEach { Badge(it) }
                                     }
                                 }
+                                sourceNumberNote(v)?.let { Text(it, fontSize = 16.sp, color = secondaryText(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                             }
                         }
                     }
@@ -625,23 +633,25 @@ private fun androidx.compose.foundation.layout.ColumnScope.TrackList(
                 } }.focusGroup(), contentPadding = PaddingValues(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(rows, key = { "$keyPrefix:${it.embyIndex}" }, contentType = { if (twoLine) "audio" else "subtitle" }) { r ->
                     val usable = r.embyIndex !in unusable
+                    // Combined subtitle attributes need their own line, rather than squeezing out the title.
+                    val stacked = twoLine || r.tag?.contains(" · ") == true || !usable
                     SelectableRow(
                         { if (usable) onPick(r) },
                         modifier = if (r == rows.getOrNull(entryIndex) && entry != null) Modifier.focusRequester(entry) else Modifier,
                         onFocus = { lastFocused.value = r.embyIndex },
                         selected = r.embyIndex == selected,
                         dimmed = !usable,
-                        padding = PaddingValues(horizontal = 16.dp, vertical = if (twoLine) 12.dp else 10.dp),
+                        padding = PaddingValues(horizontal = 16.dp, vertical = if (stacked) 12.dp else 10.dp),
                         label = "$title ${r.number} ${r.language}",
                         focusKey = "$keyPrefix:${r.embyIndex}",
                         animateFocus = true,
                     ) {
-                        val tag = if (usable) r.tag else "外挂 · 此格式暂不支持"
+                        val tag = if (usable) r.tag else listOfNotNull(r.tag, "此格式暂不支持").joinToString(" · ")
                         val format = listOfNotNull(r.format.ifEmpty { null }, tag).joinToString(" · ")
-                        if (twoLine) {
+                        if (stacked) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(r.language, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                if (format.isNotEmpty()) Text(format, fontSize = 17.sp, color = secondaryText(), maxLines = 2)
+                                Text(r.language, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (format.isNotEmpty()) Text(format, fontSize = 17.sp, color = secondaryText(), maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         } else {
                             Text(r.language, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

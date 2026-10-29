@@ -313,6 +313,9 @@ class Library(
     override suspend fun byProviderIds(server: String, type: String, ids: List<String>): List<BaseItemDto> =
         emby.byProviderIds(session(server), type, ids).items
 
+    override suspend fun identities(server: String, ids: List<String>): List<BaseItemDto> =
+        emby.providerIdsOf(session(server), ids).items
+
     override suspend fun searchType(server: String, term: String, type: String, limit: Int): List<BaseItemDto> =
         emby.searchType(session(server), term, type, limit).items
 

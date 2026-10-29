@@ -69,6 +69,37 @@ class CatalogRulesTest {
         val mapped = ResourceMapping.episodes(work, catalog, listOf(ResourceBatch("a", listOf(resource("a", "guess", 1)), false)))
         assertTrue(mapped.matched.isEmpty()); assertEquals("guess", mapped.unmatched.single().item.id)
     }
+
+    @Test fun `whole series mapping separates genuine extras from resources awaiting another season directory`() {
+        val first = CatalogEpisode("101", 1, 1, "One")
+        val second = CatalogEpisode("201", 2, 1, "Two")
+        val refs = listOf(resource("a", "first", 1), resource("a", "second", 1, season = 2),
+            resource("a", "extra-first", 99), resource("a", "extra-second", 99, season = 2))
+        val batches = listOf(ResourceBatch("a", refs, true))
+        val partial = ResourceMapping.episodes(work, listOf(first), batches, pendingSeasons = setOf(2))
+        assertEquals(listOf("extra-first"), partial.unmatched.map { it.item.id })
+        assertEquals(setOf("second", "extra-second"), partial.awaitingCatalog.map { it.item.id }.toSet())
+        val complete = ResourceMapping.episodes(work, listOf(first, second), batches)
+        assertEquals(setOf("101", "201"), complete.matched.keys)
+        assertEquals(setOf("extra-first", "extra-second"), complete.unmatched.map { it.item.id }.toSet())
+        assertTrue(complete.awaitingCatalog.isEmpty())
+    }
+
+    @Test fun `an episode ID without coordinates waits for all season directories but conflicts are not matched by number`() {
+        val ref = resource("a", "id-only", null, season = null, tmdb = "201")
+        val batch = listOf(ResourceBatch("a", listOf(ref), true))
+        val partial = ResourceMapping.episodes(work, catalog, batch, pendingSeasons = setOf(2))
+        assertEquals(listOf(ref), partial.awaitingCatalog)
+        assertTrue(partial.unmatched.isEmpty())
+        val complete = ResourceMapping.episodes(work, catalog + CatalogEpisode("201", 2, 1, "Two"), batch)
+        assertEquals(listOf(ref), complete.matched["201"])
+        val conflict = resource("a", "wrong-id", 1, tmdb = "999")
+        val pending = ResourceMapping.episodes(work, catalog, listOf(ResourceBatch("a", listOf(conflict), true)), pendingSeasons = setOf(2))
+        assertTrue(pending.matched.isEmpty())
+        assertEquals(listOf(conflict), pending.awaitingCatalog)
+        assertEquals("外部 ID 对不上目录", ResourceMapping.episodes(work, catalog,
+            listOf(ResourceBatch("a", listOf(conflict), true))).reasons[conflict.key])
+    }
     @Test fun `Bangumi numbering does not imply a TMDB mapping`() {
         val bgm = work.copy(ref = CatalogId("bangumi", "tv", "20"))
         assertTrue(ResourceMapping.episodes(bgm, catalog, listOf(ResourceBatch("a", listOf(resource("a", "guess", 1)), true))).matched.isEmpty())

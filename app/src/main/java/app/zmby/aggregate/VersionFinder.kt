@@ -13,6 +13,8 @@ interface VersionSource {
     suspend fun byProviderIds(server: String, type: String, ids: List<String>): List<BaseItemDto>
     suspend fun searchType(server: String, term: String, type: String, limit: Int): List<BaseItemDto>
     suspend fun item(server: String, id: String): BaseItemDto
+    /** Optional lightweight identity lookup for parent aliases returned by a series directory. */
+    suspend fun identities(server: String, ids: List<String>): List<BaseItemDto> = emptyList()
     suspend fun seasons(server: String, seriesId: String): List<BaseItemDto>
     suspend fun episodePage(server: String, seriesId: String, seasonId: String, start: Int, limit: Int): ItemsResult
     /** The sources the server will actually play (PlaybackInfo, not playback). */

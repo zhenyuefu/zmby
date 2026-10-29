@@ -12,6 +12,26 @@ import java.util.concurrent.TimeUnit
 class TooBigRowException : RuntimeException("Row too big to fit into CursorWindow")
 
 class CatalogRepositoryTest {
+    @Test fun `secondary episode lookup uses the official find route with cache refresh and no credential in keys`() = runBlocking {
+        MockWebServer().use { server ->
+            val cache = MemoryCache()
+            server.enqueue(MockResponse().setBody("""{"tv_episode_results":[{"id":301,"show_id":10,"season_number":3,"episode_number":1}]}"""))
+            server.enqueue(MockResponse().setBody("""{"tv_episode_results":[{"id":302,"show_id":10,"season_number":3,"episode_number":2}]}"""))
+            val api = CatalogHttp(OkHttpClient(), cache, { "test-read-token" }, server.url("/3/").toString())
+            val repo = CatalogRepository(api, cache, { "zh-CN" }, { "zh-CN" }, { "zh-CN" }, { false })
+            val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "Series")
+            val item = app.zmby.emby.BaseItemDto("file", type = "Episode", providerIds = mapOf("Imdb" to "tt123"))
+            assertEquals("301", repo.episodeIdentity(work, item).episodeId)
+            assertEquals("301", repo.episodeIdentity(work, item).episodeId)
+            assertEquals(1, server.requestCount)
+            assertEquals("302", repo.episodeIdentity(work, item, refresh = true).episodeId)
+            val request = server.takeRequest()
+            assertEquals("/3/find/tt123", request.requestUrl!!.encodedPath)
+            assertEquals("imdb_id", request.requestUrl!!.queryParameter("external_source"))
+            assertEquals("Bearer test-read-token", request.getHeader("Authorization"))
+            assertFalse(cache.rows.keys.any { "test-read-token" in it })
+        }
+    }
     private class WindowLimitedCache : CatalogStorage {
         val rows = mutableMapOf<String, CatalogCache>()
         override suspend fun get(key: String) = rows[key]?.also { if (it.json.length > 2 * 1024 * 1024) throw TooBigRowException() }

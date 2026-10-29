@@ -33,7 +33,7 @@ class MediaFormatTest {
         assertEquals("DV P7", hdrBadge(video(3840, 2160, ext = "DolbyVision", sub = "DoviProfile76")))
         assertEquals("HDR10+", hdrBadge(video(3840, 2160, ext = "Hdr10Plus")))
         assertEquals(null, hdrBadge(video(1920, 1080)))
-        val atmos = MediaStream(index = 1, type = "Audio", codec = "truehd", profile = "TrueHD + Atmos", channels = 8)
+        val atmos = MediaStream(index = 1, type = "Audio", codec = "truehd", profile = "TrueHD + Atmos", channels = 8, channelLayout = "7.1")
         assertEquals("TrueHD Atmos", audioFormat(atmos))
         assertEquals("DTS-HD MA", audioFormat(MediaStream(index = 2, type = "Audio", codec = "dts", profile = "DTS-HD MA")))
         assertEquals("7.1", channelLabel(atmos))
@@ -73,5 +73,54 @@ class MediaFormatTest {
         )
         assertEquals(0.4f, progressFraction(item), 0.001f)
         assertEquals(null, remainingLabel(item))
+    }
+
+    @Test fun audioExtensionsUseWholeTokensAndDtsXWinsOverTheBaseProfile() {
+        fun dts(profile: String?, title: String? = null) = audioFormat(MediaStream(1, "Audio", codec = "dts", profile = profile, title = title))
+        assertEquals("DTS:X", dts("DTS-HD MA + DTS:X"))
+        assertEquals("DTS:X", dts("dts-hd ma", "dts:x 7.1"))
+        assertEquals("DTS-HD MA", dts("dts-hd ma"))
+        assertEquals("DTS-HD HRA", dts("DTS-HD High Resolution Audio"))
+        assertEquals("DTS", dts("MAX", "EXTRA"))
+        assertEquals("DTS", dts(null, "Ma piste audio"))
+        assertEquals("DTS-HD MA", dts(null, "DTS-HD MA 5.1"))
+        assertEquals("DTS", dts(null, "A DTS:Xylophone Commentary"))
+        assertEquals("DDP Atmos", audioFormat(MediaStream(1, codec = " EAC3 ", displayTitle = "Dolby Atmos")))
+        assertEquals("AAC", audioFormat(MediaStream(1, codec = "aac", title = "Atmos commentary")))
+        assertEquals("TrueHD", audioFormat(MediaStream(1, codec = "truehd", title = "Atmospheric music")))
+    }
+
+    @Test fun channelLayoutsTakePrecedenceAndCountsDoNotInventSubwoofers() {
+        fun channels(count: Int?, layout: String? = null) = channelLabel(MediaStream(1, channels = count, channelLayout = layout))
+        assertEquals("3.0", channels(3, "3.0"))
+        assertEquals("2.1", channels(3, "2.1"))
+        assertEquals("5.1", channels(6, "5.1(side)"))
+        assertEquals("5.1.2", channels(8, "5.1.2"))
+        assertEquals("2.0", channels(2, "stereo"))
+        assertEquals("1.0", channels(null, "mono"))
+        assertEquals("3ch", channels(3))
+        assertEquals("6ch", channels(6, "unknown"))
+        assertEquals("8ch", channels(8, "5.1"))
+        assertEquals(null, channels(0))
+        assertEquals(null, channels(null, "unknown"))
+    }
+
+    @Test fun discBadgesDistinguishImageFilesFromDirectoryStructures() {
+        assertEquals("原盘 ISO", discBadge(source("x", path = "/m/Film.ISO", container = "bluray")))
+        assertEquals("原盘 Blu-ray", discBadge(source("x", container = "bluray")))
+        assertEquals("原盘 Blu-ray", discBadge(source("x", path = "/m/BDMV/index.bdmv")))
+        assertEquals("原盘 DVD", discBadge(source("x", container = "dvd")))
+        assertEquals("原盘 DVD", discBadge(source("x", path = "/m/VIDEO_TS/VIDEO_TS.IFO")))
+        assertEquals(null, discBadge(source("x", path = "/m/Film.BluRay.mkv")))
+    }
+
+    @Test fun heroBadgesDescribeOneSourceAndItsEffectiveAudio() {
+        val s = source("x", video(3840, 2160, ext = "DolbyVision", sub = "DoviProfile81"),
+            MediaStream(1, "Audio", codec = "aac", isDefault = true),
+            MediaStream(2, "Audio", codec = "eac3", profile = "Atmos"))
+        assertEquals(listOf("4K", "DOLBY VISION"), heroBadges(s))
+        assertEquals(listOf("4K", "DOLBY VISION", "ATMOS"), heroBadges(s, 2))
+        assertEquals(heroBadges(s), heroBadges(s, 99))
+        assertEquals(emptyList<String>(), heroBadges(null))
     }
 }

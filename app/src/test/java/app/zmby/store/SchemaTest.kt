@@ -68,5 +68,18 @@ class SchemaTest {
         }
     }
 
+    @Test fun `version 4 upgrade adds local mappings without deleting user lists or resources`() {
+        helper.createDatabase("schema-v4-mappings.db", 4).use { db ->
+            db.execSQL("INSERT INTO favorite (work_key, title, year, type, added_at, updated_at, removed_at, image_tag) VALUES ('series:tmdb:10', 'Keep', 2024, 'Series', 1, 1, NULL, NULL)")
+            db.execSQL("INSERT INTO work_instance (server_id, item_id, work_key, type, item_json, played, position_ticks, server_favorite, fetched_at, detail_at, accessed_at) VALUES ('a', '1', 'series:tmdb:10', 'Series', '{}', 0, 0, 0, 1, 1, 1)")
+        }
+        helper.runMigrationsAndValidate("schema-v4-mappings.db", 5, true, ZmbyDatabase.MIGRATION_4_5).use { db ->
+            db.query("SELECT title FROM favorite").use { it.moveToFirst(); assertEquals("Keep", it.getString(0)) }
+            db.query("SELECT COUNT(*) FROM work_instance").use { it.moveToFirst(); assertEquals(1, it.getInt(0)) }
+            db.execSQL("INSERT INTO episode_mapping (id, work_key, server_id, series_id, source_season, first_episode, last_episode, target_season, `offset`) VALUES ('rule', 'tmdb:tv:10', 'a', 'parent', 4, 1, 8, 3, 0)")
+            db.query("SELECT source_season, target_season FROM episode_mapping").use { it.moveToFirst(); assertEquals(4, it.getInt(0)); assertEquals(3, it.getInt(1)) }
+        }
+    }
+
     private companion object { const val DB = "schema-test.db" }
 }

@@ -39,6 +39,17 @@ class VersionRankerTest {
     @Test fun `an invalid pattern is ignored`() {
         assertEquals(null, VersionPrefs.pattern("2160p.*(REMUX"))
     }
+
+    @Test fun `home source ranking uses detail preferences instead of response order`() {
+        val sources = listOf(friendWeb.source, friend.source, nas.source)
+        assertEquals("f1", VersionRanker.bestSource("nas", sources, VersionPrefs())?.id)
+        assertEquals("n1", VersionRanker.bestSource("nas", sources, VersionPrefs(quality = QualityPreference.FHD))?.id)
+        assertEquals("f2", VersionRanker.bestSource("nas", sources, VersionPrefs(pattern = VersionPrefs.pattern("WEB-DL")))?.id)
+        assertEquals("n1", VersionRanker.bestSource("nas", sources, VersionPrefs(manual = "nas" to "n1"))?.id)
+        // Source IDs from a different server must never be treated as this server's manual choice.
+        assertEquals("f1", VersionRanker.bestSource("nas", sources, VersionPrefs(manual = "friend" to "n1"))?.id)
+        assertEquals(null, VersionRanker.bestSource("nas", emptyList(), VersionPrefs()))
+    }
 }
 
 class HomeMergeTest {

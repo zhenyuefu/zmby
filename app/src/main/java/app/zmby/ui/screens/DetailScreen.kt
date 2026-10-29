@@ -218,7 +218,8 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                 Spacer(Modifier.height(44.dp))
                 if (hasVersions) {
                     CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), summary = {
-                        SummaryText(selected?.let(::versionSummary) ?: if (versions.searching > 0) "正在查找资源…" else "暂无可播放的版本")
+                        selected?.let { VersionSummary(it, tracksFor(it)) }
+                            ?: SummaryText(if (versions.searching > 0) "正在查找资源…" else "暂无可播放的版本")
                     }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
                             VersionSection(versions, selected, onSelect = { v ->

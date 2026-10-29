@@ -101,7 +101,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     }
     val seasons = canonical?.seasons ?: serverSeasons.map { CatalogSeason(it.indexNumber ?: 0, it.name.orEmpty(), it.childCount ?: 0) }
     LaunchedEffect(seasons) {
-        if (seasonNumber < 0 && seasons.isNotEmpty()) seasonNumber = seasons.firstOrNull { it.number > 0 }?.number ?: seasons.first().number
+        if (seasons.isNotEmpty() && (seasonNumber < 0 || canonical != null && seasons.none { it.number == seasonNumber }))
+            seasonNumber = seasons.firstOrNull { it.number > 0 }?.number ?: seasons.first().number
     }
     LaunchedEffect(server, seasonNumber, serverSeasons, canonical?.ref, resourceRetry, tick) {
         if (server == "catalog" || canonical != null) return@LaunchedEffect
@@ -117,12 +118,16 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
             if (FanOut.isTransient(e)) recoverable = (recoverable + server).distinct()
         }
     }
-    val page by produceState<Pair<Int,List<CatalogEpisode>>?>(null, canonical, seasonNumber, resourceRetry) {
-        val work = canonical ?: return@produceState
-        value = null
-        if (seasonNumber >= 0) withContext(Dispatchers.IO) {
-            try { value = seasonNumber to app.catalog.episodes(work, seasonNumber); episodeError = null }
-            catch (e: CancellationException) { throw e } catch (_: Exception) { episodeError = "剧集目录暂时无法加载" }
+    var directory by remember(canonical) { mutableStateOf(SeriesDirectory()) }
+    var directoryRetry by remember(canonical) { mutableIntStateOf(resourceRetry) }
+    LaunchedEffect(canonical, seasonNumber, resourceRetry) {
+        val work = canonical ?: return@LaunchedEffect
+        if (seasonNumber < 0) return@LaunchedEffect
+        val previous = if (directoryRetry == resourceRetry) directory.pages else emptyMap()
+        directoryRetry = resourceRetry
+        seriesDirectory(work.seasons.map { it.number }, seasonNumber, previous) { app.catalog.episodes(work, it) }.collect {
+            directory = it
+            episodeError = if (it.failed.isEmpty()) null else "${it.failed.size} 季目录暂时无法加载"
         }
     }
     val servers by app.registry.servers.collectAsState()
@@ -160,12 +165,34 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         serverSeasons.forEach { app.fanOut.invalidate(listOf("server-directory", seriesId, it.id), listOf(server)) }
         resourceRetry++
     }
-    val catalogEpisodes = page?.takeIf { it.first == seasonNumber }?.second
+    val catalogEpisodes = directory.pages[seasonNumber]
     val progress by app.recentProgress.collectAsState()
-    val mapped by produceState(EpisodeResources(emptyMap(), emptyList()), canonical, catalogEpisodes, batches, progress) {
-        val work = canonical ?: return@produceState
-        value = withContext(Dispatchers.Default) { ResourceMapping.episodes(work, catalogEpisodes.orEmpty(),
-            batches.map { batch -> batch.copy(episodes = batch.episodes.map { it.withPlaybackProgress(progress) }) }) }
+    val localMappings by remember(canonical?.ref?.key) { app.store.episodeMappings.observe(canonical?.ref?.key.orEmpty()) }.collectAsState(initial = emptyList())
+    var identities by remember(canonical?.ref) { mutableStateOf<Map<String, EpisodeIdentity>>(emptyMap()) }
+    var identityInputs by remember(canonical?.ref) { mutableStateOf<Map<String, Map<String, String>>>(emptyMap()) }
+    var identityRetry by remember(canonical?.ref) { mutableIntStateOf(0) }
+    var identityEpoch by remember(canonical?.ref) { mutableStateOf(resourceRetry to identityRetry) }
+    LaunchedEffect(canonical?.ref, canonical?.ids, batches, resourceRetry, identityRetry) {
+        val work = canonical ?: return@LaunchedEffect
+        val refs = withContext(Dispatchers.Default) { batches.filter { it.verified }.flatMap { it.episodes }.distinctBy { it.key } }
+        val inputs = withContext(Dispatchers.Default) { refs.associate { it.key to it.item.providerIds } }
+        val epoch = resourceRetry to identityRetry
+        val previous = if (identityEpoch == epoch) identities.filterKeys { identityInputs[it] == inputs[it] } else emptyMap()
+        identityInputs = inputs; identityEpoch = epoch
+        episodeIdentities(work, refs, previous) { app.catalog.episodeIdentity(work, it, refresh = resourceRetry > 0 || identityRetry > 0) }
+            .collect { identities = it }
+    }
+    val allResources by produceState<List<ServerItem>>(emptyList(), batches) {
+        value = withContext(Dispatchers.Default) { batches.flatMap { it.episodes }.distinctBy { it.key } }
+    }
+    val allCatalog by produceState<List<CatalogEpisode>>(emptyList(), directory.pages) {
+        value = withContext(Dispatchers.Default) { directory.pages.values.flatten() }
+    }
+    val mapped by produceState(EpisodeResources(emptyMap(), emptyList()), canonical, directory, batches, progress, identities, localMappings) {
+        val work = canonical ?: run { value = EpisodeResources(emptyMap(), emptyList()); return@produceState }
+        value = withContext(Dispatchers.Default) { ResourceMapping.episodes(work, directory.pages.values.flatten(),
+            batches.map { batch -> batch.copy(episodes = batch.episodes.map { it.withPlaybackProgress(progress) }) },
+            (work.seasons.map { it.number }.toSet() + directory.seasons) - directory.pages.keys, identities, localMappings) }
     }
     val episodes by produceState<List<EpisodeRow>>(emptyList(), canonical, catalogEpisodes, serverEpisodes, seasonNumber, mapped, progress) {
       value = withContext(Dispatchers.Default) {
@@ -184,10 +211,18 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         }
     }
     }
-    LaunchedEffect(episodes, anchor?.id, batches) {
+    LaunchedEffect(episodes, anchor?.id, batches, mapped, directory.pages, allCatalog) {
         if (anchorApplied || currentKey != null) return@LaunchedEffect
         val opened = anchor ?: batches.flatMap { it.episodes }.firstOrNull { it.server == server && it.item.id == episodeId }?.item
         if (opened != null) {
+            if (canonical != null) {
+                val target = allCatalog.firstOrNull { ep -> mapped.matched[ep.id].orEmpty().any { it.server == server && it.item.id == opened.id } }
+                    ?: return@LaunchedEffect
+                anchorApplied = true
+                seasonNumber = target.season
+                currentKey = episodeSlot(target.season, target.number, target.id)
+                return@LaunchedEffect
+            }
             anchorApplied = true
             if (opened.parentIndexNumber != null && opened.parentIndexNumber != seasonNumber) seasonNumber = opened.parentIndexNumber
             currentKey = episodes.firstOrNull { row -> row.resources.any { it.server == server && it.item.id == opened.id } }?.key
@@ -218,6 +253,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     val trackEntry = remember { FocusRequester() }
     var marking by remember { mutableStateOf<ServerItem?>(null) }
     var unsorted by rememberSaveable { mutableStateOf(false) }
+    var mappingsOpen by remember { mutableStateOf(false) }
+    var mappingSource by remember { mutableStateOf<ServerItem?>(null) }
     if (s == null || canonical == null && !fallbackReady) {
         LoadState(error, onRetry = { vm.refresh(replace = true); resourceRetry++ }, onServers = { nav.go(Route.Servers) }); return
     }
@@ -248,10 +285,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     val cast = remember(canonical?.cast, ref.key, ref.item.people) {
         canonical?.let { catalogCastCards(nav, it.cast) } ?: serverCastCards(app, nav, ref)
     }
-    // 未归类 (SeriesUnsorted): server entries of this series that no catalogue episode took.
-    val unknown = remember(mapped.unmatched, seasonNumber, seasons) {
-        mapped.unmatched.filter { r -> r.item.parentIndexNumber == seasonNumber || seasons.none { it.number == r.item.parentIndexNumber } }
-    }
+    // One whole-series list; changing season must not hide entries or reclassify other seasons.
+    val unknown = mapped.unmatched
     if (unsorted && unknown.isEmpty()) unsorted = false
     // 为你推荐 of the series itself, not of the focused episode (ui-spec §2.14).
     val tmdbId = (resourceWork?.ref ?: s.tmdb()?.let { id -> CatalogId("tmdb", "tv", id) })?.takeIf { r -> r.source == "tmdb" }
@@ -274,6 +309,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     if (accordion.active !in accordion.order) accordion.active = SECTION_EPISODES
     accordion.header = playButton
     val today = remember { java.time.LocalDate.now().toString() }
+    if (mappingsOpen && canonical != null) EpisodeMappingDialog(canonical, allCatalog, allResources, identities, localMappings, seasonNumber, mappingSource,
+        onDismiss = { mappingsOpen = false; mappingSource = null })
     BackdropProvider(display.backdrop, SERIES_SCRIMS) {
       Box(Modifier.fillMaxSize()) {
         // Section changes align the context row; inner card focus must not move the whole page.
@@ -296,6 +333,14 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                 // 剧集 never collapses: the season row and the current episode stay in place (ui-spec §2.14).
                 DetailBlock(accordion, SECTION_EPISODES) {
                   Column(Modifier.padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+                    if (canonical != null) Row(Modifier.fillMaxWidth().padding(horizontal = 80.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        if (mapped.awaitingIdentity.isNotEmpty()) Text("正在核对 ${mapped.awaitingIdentity.size} 条单集身份…", fontSize = 18.sp, color = Z.textSecondary)
+                        val unavailable = identities.values.count { it.state == EpisodeIdentityState.Unavailable }
+                        if (unavailable > 0) GlassButton("$unavailable 条身份待确认 · 重试", { identityRetry++ })
+                        Spacer(Modifier.weight(1f))
+                        GlassButton("季集映射", { mappingSource = null; mappingsOpen = true })
+                    }
                     val segments = seasons.map { Segment(it.title) } + listOfNotNull(if (unknown.isNotEmpty()) Segment("未归类", unknown.size.toString()) else null)
                     if (segments.size > 1) SegmentedWell(segments, if (unsorted) seasons.size else seasons.indexOfFirst { it.number == seasonNumber }.coerceAtLeast(0),
                         { i ->
@@ -308,7 +353,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                         Text(if (loading) "正在加载剧集目录…" else "这一季还没有剧集", fontSize = 21.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 80.dp))
                     }
                     if (unsorted) {
-                        UnsortedRow(nav, unknown, mapped.reasons, accordion.entry(SECTION_EPISODES))
+                        UnsortedRow(nav, unknown, mapped.reasons, accordion.entry(SECTION_EPISODES)) { mappingSource = it; mappingsOpen = true }
                     } else {
                     LazyRow(modifier = Modifier.horizontalRow(enter = currentCard.takeIf { shown != null }), state = rowState,
                         contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 30.dp), horizontalArrangement = Arrangement.spacedBy(30.dp)) {
@@ -342,7 +387,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                 }
                 if (hasVersions) {
                     CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), summary = {
-                        SummaryText(selected?.let(::versionSummary) ?: if (versions.searching > 0) "正在查找资源…" else "这一集暂无可播放的版本")
+                        selected?.let { VersionSummary(it, tracks(it)) }
+                            ?: SummaryText(if (versions.searching > 0) "正在查找资源…" else "这一集暂无可播放的版本")
                     }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
                             VersionSection(versions, selected, { picked = it }, { preview = it }, { play(context, it.ref, it.item.resumeMs, it.source.id, tracks(it), versions.alternatesTo(it)) }, entry = accordion.entry(SECTION_VERSIONS))
@@ -417,7 +463,7 @@ internal fun episodeStatus(resources: List<ServerItem>, airDate: String?, today:
  * reason, and the entry's name; under the focused one an information card with 播放 and 详情.
  */
 @Composable
-private fun UnsortedRow(nav: Nav, items: List<ServerItem>, reasons: Map<String, String>, entry: FocusRequester) {
+private fun UnsortedRow(nav: Nav, items: List<ServerItem>, reasons: Map<String, String>, entry: FocusRequester, onMap: (ServerItem) -> Unit) {
     val context = LocalContext.current
     val app = context.zmby
     var focusedKey by remember { mutableStateOf(items.firstOrNull()?.key) }
@@ -455,6 +501,7 @@ private fun UnsortedRow(nav: Nav, items: List<ServerItem>, reasons: Map<String, 
                 line("未归入原因", reasons[r.key])
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     GlassButton("播放", { play(context, r, r.item.resumeMs) }, glyph = Glyph.Play, label = "播放未归类 ${r.key}")
+                    GlassButton("映射季集", { onMap(r) }, label = "映射季集 ${r.key}")
                     GlassButton("详情", { nav.go(Route.Detail(r.server, r.item.id, resourceOnly = true)) }, label = "未归类详情 ${r.key}")
                 }
             }

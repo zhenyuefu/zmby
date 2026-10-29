@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
@@ -29,6 +30,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,12 +60,17 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
 import androidx.tv.material3.Text
 import app.zmby.data.ServerItem
+import app.zmby.aggregate.Keys
+import app.zmby.aggregate.VersionPrefs
+import app.zmby.aggregate.VersionRanker
 import app.zmby.emby.BaseItemDto
 import app.zmby.media.episodeCode
 import app.zmby.media.episodeName
 import app.zmby.media.formatDuration
 import app.zmby.media.heroBadges
 import app.zmby.media.workTitleOf
+import app.zmby.playback.TrackChoice
+import app.zmby.playback.TrackPreference
 import app.zmby.ui.components.Badge
 import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.Scrims
@@ -74,6 +81,7 @@ import app.zmby.ui.components.blurredBackdropRequest
 import app.zmby.ui.components.logoCacheKey
 import app.zmby.ui.components.logoRequest
 import app.zmby.ui.components.prefetch
+import app.zmby.ui.rememberResumeTick
 import app.zmby.ui.theme.Z
 import app.zmby.zmby
 import coil.compose.AsyncImage
@@ -81,8 +89,10 @@ import coil.imageLoader
 import coil.memory.MemoryCache
 import coil.request.Disposable
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.min
@@ -296,9 +306,28 @@ fun HeroPages(carousel: HeroCarousel, details: Map<String, BaseItemDto>) {
 
 @Composable
 private fun HeroInfo(ref: ServerItem, full: BaseItemDto?, label: String?) {
-    val library = LocalContext.current.zmby.library
+    val app = LocalContext.current.zmby
+    val library = app.library
     val item = ref.item
     val isEpisode = item.type == "Episode"
+    val pattern by app.settings.versionPattern.flow.collectAsState()
+    val quality by app.settings.quality.flow.collectAsState()
+    val nonDisc by app.settings.preferNonDisc.flow.collectAsState()
+    val audioLanguage by app.settings.audioLanguage.flow.collectAsState()
+    val resumeTick = rememberResumeTick()
+    // Only this item's known sources; do not mix capabilities from different versions or servers.
+    val badges by key(ref.key, full) {
+        produceState<List<String>>(emptyList(), pattern, quality, nonDisc, audioLanguage, resumeTick) {
+            value = withContext(Dispatchers.Default) {
+                val manual = library.pickedVersion(Keys.work(ref.server, full ?: item) + episodeSuffix(full ?: item))
+                val source = VersionRanker.bestSource(ref.server, full?.mediaSources.orEmpty(), VersionPrefs(
+                    manual = manual, pattern = VersionPrefs.pattern(pattern), quality = quality, preferNonDisc = nonDisc,
+                ))
+                val audio = source?.let { TrackPreference.choose(it, TrackChoice(), audioLanguage, TrackPreference.SERVER).audio }
+                heroBadges(source, audio)
+            }
+        }
+    }
     Column(Modifier.padding(start = 80.dp).width(880.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         // Where the title came from (Main.dc.html: 19/600 at 68 % above the Logo).
         Text(label.orEmpty(), fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = Z.textSecondary, maxLines = 1, modifier = Modifier.height(24.dp))
@@ -312,7 +341,7 @@ private fun HeroInfo(ref: ServerItem, full: BaseItemDto?, label: String?) {
                 formatDuration(item.runtimeMs),
             )
             Text(meta.joinToString("  ·  "), fontSize = 22.sp, color = Z.textPrimary.copy(alpha = 0.78f), maxLines = 1)
-            heroBadges(full?.mediaSources?.firstOrNull()).forEach { Badge(it, fontSize = 16) }
+            badges.forEach { Badge(it, fontSize = 16) }
         }
         val overview = (full ?: item).overview
         Box(Modifier.height(74.dp)) {

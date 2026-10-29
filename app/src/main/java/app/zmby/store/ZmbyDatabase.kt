@@ -19,8 +19,9 @@ import androidx.room.migration.Migration
         VersionSummary::class, ListCache::class, ListItem::class,
         FavoriteRow::class, FavoriteInstanceRow::class, FavoriteWriteRow::class, WatchlistRow::class,
         SegmentMarker::class, DataSourceRow::class, SyncState::class, PlayHistoryRow::class, app.zmby.catalog.CatalogCache::class,
+        EpisodeMappingRule::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -34,6 +35,7 @@ abstract class ZmbyDatabase : RoomDatabase() {
     abstract fun watchlist(): WatchlistDao
     abstract fun sources(): SourceDao
     abstract fun playHistory(): PlayHistoryDao
+    abstract fun episodeMappings(): EpisodeMappingDao
 
     companion object {
         const val NAME = "zmby.db"
@@ -75,7 +77,15 @@ abstract class ZmbyDatabase : RoomDatabase() {
         }
 
         /** Every migration, oldest first. */
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS episode_mapping (id TEXT NOT NULL, work_key TEXT NOT NULL, server_id TEXT NOT NULL, series_id TEXT NOT NULL, source_season INTEGER NOT NULL, first_episode INTEGER NOT NULL, last_episode INTEGER NOT NULL, target_season INTEGER NOT NULL, `offset` INTEGER NOT NULL, item_id TEXT, target_episode_id TEXT, PRIMARY KEY(id))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_episode_mapping_work_key ON episode_mapping (work_key)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_episode_mapping_server_id ON episode_mapping (server_id)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 
         fun open(context: Context): ZmbyDatabase =
             Room.databaseBuilder(context, ZmbyDatabase::class.java, NAME)
