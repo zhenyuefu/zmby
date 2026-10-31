@@ -1,0 +1,83 @@
+AGENTS.md
+  s_85eb84322a6b0d::t_d90626abae399b 41
+PUBLIC_MANIFEST.sha256
+  s_85eb84322a6b0d::t_2628dad719c76d 2,6,8,21,23,40-41,102-103,106,108-109,115,118,120,123-124,127,131,133,139-140,143,147-148,163,173,175,222,225-226,233,241-243,245-248
+README.md
+  s_85eb84322a6b0d::t_ae97c5b7e90a16 15,17,46,62-64,93,95
+app/build.gradle.kts
+  s_85eb84322a6b0d::t_b5472167dad841 28-29
+app/src/main/java/app/zmby/ZmbyApp.kt
+  s_85eb84322a6b0d::t_f4ed805f02d105 58,349-358
+app/src/main/java/app/zmby/aggregate/FanOut.kt
+  s_85eb84322a6b0d::t_b435ffe9790238 63-74
+app/src/main/java/app/zmby/catalog/CatalogResources.kt
+  s_85eb84322a6b0d::t_c30697990c8745 7-8,107,189-199
+app/src/main/java/app/zmby/catalog/EpisodeIdentity.kt
+  s_85eb84322a6b0d::t_8a4b30f5f752be 11,14-15,38,42-43,45-49,53,72-78,80-88,91-93
+app/src/main/java/app/zmby/ui/components/Artwork.kt
+  s_85eb84322a6b0d::t_b924a896116f19 27-28,111,122,158-159,162,165,168,190,192-193
+app/src/main/java/app/zmby/ui/components/BackdropLuminance.kt
+  s_85eb84322a6b0d::t_1b2bb17e43095b 1-40
+app/src/main/java/app/zmby/ui/components/DetailGlass.kt
+  s_85eb84322a6b0d::t_a44c43b0ef98b2 1-93
+app/src/main/java/app/zmby/ui/components/Glass.kt
+  s_85eb84322a6b0d::t_cfa6dd775d4fd2 33,39,58-59,79-82,85-86,90,95,98,114-115,120-122,137,140-150,159,176-180,195,198,212,272,282,299-300,305-318,335
+app/src/main/java/app/zmby/ui/components/Icons.kt
+  s_85eb84322a6b0d::t_c3b17315299229 56
+app/src/main/java/app/zmby/ui/screens/Accordion.kt
+  s_85eb84322a6b0d::t_a1d0da4721aa17 62,205,210,360,369
+app/src/main/java/app/zmby/ui/screens/CastRow.kt
+  s_85eb84322a6b0d::t_7b898c77727e96 61,66
+app/src/main/java/app/zmby/ui/screens/CatalogVersions.kt
+  s_85eb84322a6b0d::t_7c3bd509dca7de 29-30,40-52,54,58,90,98
+app/src/main/java/app/zmby/ui/screens/DetailBlocks.kt
+  s_85eb84322a6b0d::t_9803b4feadb2b2 27,50-51,91,93,98,100-101,202,215
+app/src/main/java/app/zmby/ui/screens/DetailHeading.kt
+  s_85eb84322a6b0d::t_598fa7166a7141 1-118
+app/src/main/java/app/zmby/ui/screens/DetailScreen.kt
+  s_85eb84322a6b0d::t_e01ab2355e87c7 33,111,157-159,167,177,193,195,207,209,267,277-284,300,309-310,316,330-331
+app/src/main/java/app/zmby/ui/screens/HomeHero.kt
+  s_85eb84322a6b0d::t_9f421ff1e55602 75-76,285-296
+app/src/main/java/app/zmby/ui/screens/HomeScreen.kt
+  s_85eb84322a6b0d::t_0f09d3b2545ec7 203,221
+app/src/main/java/app/zmby/ui/screens/QuickEpisodeDialog.kt
+  s_85eb84322a6b0d::t_7563283ef70273 1-75
+app/src/main/java/app/zmby/ui/screens/RecommendationsBlock.kt
+  s_85eb84322a6b0d::t_5fc5072fa7cd33 45,141,145,157-158
+app/src/main/java/app/zmby/ui/screens/SeriesScreen.kt
+  s_85eb84322a6b0d::t_b0f14231b31532 4,15,38,44,121,137,171-172,180,183,192-196,239-241,246-247,253,264-265,276,278-280,295-303,310,332-336,338,346,351,359,365-369,372-380,387-388,457,459-461,503-504,507,512,557,567,581-582,588-589,597-598,600-601
+app/src/main/java/app/zmby/ui/screens/Versions.kt
+  s_85eb84322a6b0d::t_6b65cd48e5f5cf 98,421,555,560,591
+app/src/main/java/app/zmby/ui/screens/WatchedButton.kt
+  s_85eb84322a6b0d::t_4d9d5f53e86956 1-41
+app/src/test/java/app/zmby/aggregate/FanOutTest.kt
+  s_85eb84322a6b0d::t_55daf101913be6 18-36
+app/src/test/java/app/zmby/catalog/CatalogResourcesTest.kt
+  s_85eb84322a6b0d::t_8080b40d998caa 11-28
+app/src/test/java/app/zmby/catalog/EpisodeIdentityTest.kt
+  s_85eb84322a6b0d::t_4f29ed743f5415 8,15-44
+app/src/test/java/app/zmby/ui/BackdropLuminanceTest.kt
+  s_85eb84322a6b0d::t_e8f7e5514f413f 1-26
+app/src/test/java/app/zmby/ui/DetailHeadingTest.kt
+  s_85eb84322a6b0d::t_a96a91173482d9 1-49
+app/src/test/java/app/zmby/ui/DetailMetadataLoaderTest.kt
+  s_85eb84322a6b0d::t_db2cdf51954d5e 13-21
+app/src/test/java/app/zmby/ui/VersionCardsTest.kt
+  s_85eb84322a6b0d::t_440508a1e512b4 66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "746e3f0a5533af7727438adc111f3bfc9bb188f2",
+  "prompts": {},
+  "sessions": {
+    "s_85eb84322a6b0d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18dda-c5bd-7871-991f-c527a7196767",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    }
+  }
+}
