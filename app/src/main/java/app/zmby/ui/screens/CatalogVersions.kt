@@ -26,26 +26,36 @@ internal fun rememberCatalogVersions(
     /** The version picked by hand last time (server, media source id); it comes first, as in [rememberVersions]. */
     manual: Pair<String, String>? = null,
     onRefresh: (() -> Unit)? = null,
+    lookUp: Boolean = true,
+    directoryPending: Boolean = false,
 ): VersionsState {
     val app = LocalContext.current.zmby
     val servers by app.registry.servers.collectAsState()
     val progress by app.recentProgress.collectAsState()
     val rows by app.sources.rows.collectAsState()
     val allowed = remember(servers, rows, resources, initial) { (app.sources.servers(SourceFeature.Aggregate) + resources.map { it.server } + listOfNotNull(initial?.server)).distinct() }
-    var results by remember(work.ref.key, episode?.id) { mutableStateOf<Map<String, Outcome<List<Version>>>>(emptyMap()) }
-    var attempt by remember(work.ref.key, episode?.id) { mutableIntStateOf(0) }
-    var pending by remember(work.ref.key, episode?.id) { mutableStateOf<List<String>>(emptyList()) }
     val lookupKey = remember(work.ref, work.ids, episode?.id) {
         catalogVersionKey(work, episode)
     }
-    LaunchedEffect(work.ref.key, work.ids, episode?.id, resources, allowed, attempt, refresh, initial) {
+    val targets = if (work.ref.kind == "movie") allowed else resources.map { it.server }.distinct()
+    val contexts = remember(resources, initial, targets) { targets.associateWith { server ->
+        listOf(resources.filter { it.server == server }.map { it.key }.sorted(),
+            initial?.takeIf { it.server == server }?.let { listOf(it.key, it.item.providerIds) })
+    } }
+    // The resource scope is part of state identity: late directory answers must not show stale mappings.
+    val cached = remember(lookupKey, targets, contexts) {
+        app.fanOut.cached<List<Version>>(targets, FanOut.SEARCH_TIMEOUT_MS, lookupKey, FanOut.RESOURCE_CACHE_MS) { contexts[it] }
+    }
+    var results by remember(lookupKey, targets, contexts) { mutableStateOf<Map<String, Outcome<List<Version>>>>(cached) }
+    var attempt by remember(lookupKey) { mutableIntStateOf(0) }
+    var pending by remember(lookupKey, targets, contexts) { mutableStateOf(targets.filter { it !in cached }) }
+    LaunchedEffect(lookupKey, resources, allowed, attempt, refresh, initial, lookUp) {
         if (work.ref.kind == "tv" && episode == null) { results = emptyMap(); pending = emptyList(); return@LaunchedEffect }
-        val targets = if (work.ref.kind == "movie") allowed else resources.map { it.server }.distinct()
+        if (!lookUp) return@LaunchedEffect
         results = results.filterKeys { it in targets }
         pending = targets
         app.fanOut.run(targets, FanOut.SEARCH_TIMEOUT_MS, share = lookupKey, cacheMs = FanOut.RESOURCE_CACHE_MS,
-            context = { server -> listOf(resources.filter { it.server == server }.map { it.key }.sorted(),
-                initial?.takeIf { it.server == server }?.let { listOf(it.key, it.item.providerIds) }) }) { server ->
+            context = { contexts[it] }) { server ->
             val status = app.registry.get(server) ?: return@run emptyList<Version>()
             val items = if (work.ref.kind == "movie") {
                 val direct = initial?.takeIf { it.server == server && ResourceMapping.same(work.item(), it.item) }?.item
@@ -77,8 +87,7 @@ internal fun rememberCatalogVersions(
     val pattern by app.settings.versionPattern.flow.collectAsState()
     val quality by app.settings.quality.flow.collectAsState()
     val nonDisc by app.settings.preferNonDisc.flow.collectAsState()
-    val targets = if (work.ref.kind == "movie") allowed else resources.map { it.server }.distinct()
-    return remember(servers, results, targets, pending, pattern, quality, nonDisc, manual, onRefresh, lookupKey, progress, episode) {
+    return remember(servers, results, targets, pending, pattern, quality, nonDisc, manual, onRefresh, lookupKey, progress, episode, directoryPending) {
         val groups = results.values.filterIsInstance<Outcome.Ok<List<Version>>>().mapNotNull { o ->
             val status = servers.firstOrNull { it.id == o.server } ?: return@mapNotNull null
             if (o.value.isEmpty()) null else VersionGroup(status, o.value.map { Version(status, it.ref.withPlaybackProgress(progress).item, it.source, episode) }, "作品与季集已匹配")
@@ -86,7 +95,7 @@ internal fun rememberCatalogVersions(
         val prefs = VersionPrefs(manual = manual, pattern = VersionPrefs.pattern(pattern), quality = quality, preferNonDisc = nonDisc)
         val ordered = rankCatalogVersions(groups.flatMap { it.versions }, prefs)
         val failed = results.values.filter { it !is Outcome.Ok }.map { it.server }
-        VersionsState(groups, pending.size, ordered.firstOrNull(), failed, ordered = ordered, retry = {
+        VersionsState(groups, pending.size.coerceAtLeast(if (directoryPending) 1 else 0), ordered.firstOrNull(), failed, ordered = ordered, retry = {
             failed.forEach { app.registry.retry(it) }; attempt++
         }, refresh = {
             targets.forEach(app.registry::retry)

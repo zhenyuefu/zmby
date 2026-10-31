@@ -55,6 +55,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -343,6 +344,16 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             val order = registry.all.associate { it.id to it.order }
             store.copiesOfWork(key, server).sortedBy { order[it.server] ?: Int.MAX_VALUE }.map { it.item }
         }
+    }
+
+    /** An explicit user action updates only this server's item, then the local progress views. */
+    suspend fun setWatched(ref: ServerItem, played: Boolean) = withContext(Dispatchers.IO) {
+        val data = library.setPlayed(ref.server, ref.item.id, played).copy(
+            played = played, playbackPositionTicks = 0, lastPlayedDate = java.time.Instant.now().toString(),
+        )
+        _recentProgress.update { (it - ref.key + (ref.key to data)).entries.toList().takeLast(128).associate { row -> row.toPair() } }
+        store.recordProgress(ref.server, ref.item.id, data.playbackPositionTicks, data.played)
+        if (played) watchlist.removeStarted(listOf(ref.copy(item = ref.item.copy(userData = data))))
     }
 
     /** After a playback ended with [outcome] (the stop report is on its way to the server). */

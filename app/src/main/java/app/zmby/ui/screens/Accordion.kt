@@ -59,6 +59,7 @@ import app.zmby.ui.FocusMemory
 import app.zmby.ui.LocalNavEntry
 import app.zmby.ui.rememberRetained
 import app.zmby.ui.theme.Z
+import app.zmby.ui.components.detailGlass
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -201,12 +202,12 @@ class Accordion(first: String) {
      * A block without its default element (版本 with only 「n 台未响应」) takes its first control;
      * one with no control at all is passed over in the direction of travel.
      */
-    fun open(to: String, delta: Int = 1) {
+    fun open(to: String, delta: Int = 1, focusKey: String? = null) {
         val scope = scope ?: return
         navigation?.cancel()
         val token = ++generation
         handoff = to
-        val remembered = lastKeys[to]
+        val remembered = focusKey ?: lastKeys[to]
         val source = memory?.lastKey
         navigation = scope.launch {
             try {
@@ -356,7 +357,7 @@ private fun BlockFrame(accordion: Accordion, key: String, animateHeight: Boolean
     }
 }
 
-private val MiniShape = RoundedCornerShape(24.dp)
+private val MiniShape = RoundedCornerShape(26.dp)
 
 @Composable
 private fun MiniBar(title: String, count: String?, height: Dp, summary: @Composable RowScope.() -> Unit) {
@@ -365,7 +366,7 @@ private fun MiniBar(title: String, count: String?, height: Dp, summary: @Composa
             .padding(horizontal = 80.dp, vertical = 10.dp)
             .fillMaxWidth()
             .height(height)
-            .background(Color.White.copy(alpha = 0.04f), MiniShape)
+            .detailGlass(MiniShape)
             .padding(horizontal = 28.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(24.dp),

@@ -8,6 +8,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CatalogResourcesTest {
+    @Test fun `a compatible server returning only one requested parent is retried for omitted parents`() = runBlocking {
+        val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "Series", ids = mapOf("Tmdb" to "10"))
+        val show = BaseItemDto("queried", type = "Series", providerIds = work.ids)
+        val queries = mutableListOf<List<String>>()
+        val source = object : VersionSource by NamedSource(emptyList(), listOf(show)) {
+            override suspend fun episodePage(server: String, seriesId: String, seasonId: String, start: Int, limit: Int) = ItemsResult(
+                listOf("alias-a", "alias-b").map { parent -> BaseItemDto("episode:$parent", type = "Episode", seriesId = parent, indexNumber = 1) }, 2)
+            override suspend fun identities(server: String, ids: List<String>): List<BaseItemDto> {
+                queries += ids
+                return listOf(show.copy(id = ids.first()))
+            }
+        }
+        val batches = (CatalogResources(source, FanOut(health)).series(listOf("a"), work).toList().single() as Outcome.Ok).value
+        assertEquals(listOf(listOf("alias-a", "alias-b"), listOf("alias-b")), queries)
+        assertTrue(batches.all { it.verified })
+        val mapped = ResourceMapping.episodes(work, listOf(CatalogEpisode("101", 1, 1, "One")), batches)
+        assertEquals(setOf("episode:alias-a", "episode:alias-b"), mapped.matched["101"]!!.map { it.item.id }.toSet())
+    }
     private class NamedSource(private val candidates: List<BaseItemDto>, private val identified: List<BaseItemDto> = emptyList(),
         private val episodeParent: String? = null, private val parentIdentities: List<BaseItemDto> = emptyList()) : VersionSource {
         var queries = 0

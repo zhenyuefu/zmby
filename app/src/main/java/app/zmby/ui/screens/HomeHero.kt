@@ -72,6 +72,8 @@ import app.zmby.media.workTitleOf
 import app.zmby.playback.TrackChoice
 import app.zmby.playback.TrackPreference
 import app.zmby.ui.components.Badge
+import app.zmby.ui.components.BackdropSlice
+import app.zmby.ui.components.rememberBlurredBackdrop
 import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.Scrims
 import app.zmby.ui.components.TitleLogo
@@ -276,6 +278,18 @@ fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims) {
                 }
                 Box(Modifier.fillMaxSize().drawWithCache { onDrawBehind { with(scrims) { draw(size) } } })
             }
+        }
+    }
+}
+
+/** Glass uses both visible pages and reads the shared animation position during drawing. */
+@Composable
+fun heroGlassSlices(carousel: HeroCarousel): List<BackdropSlice> {
+    val library = LocalContext.current.zmby.library
+    return carousel.pages.map { i ->
+        key(i) {
+            val image = rememberBlurredBackdrop(carousel.itemAt(i)?.let { library.backdrop(it) })
+            remember(carousel, i, image) { BackdropSlice(image) { i - carousel.position.value } }
         }
     }
 }

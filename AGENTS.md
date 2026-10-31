@@ -38,6 +38,6 @@ zmby 是 Kotlin + Jetpack Compose 的 Android TV Emby 多服务器客户端，�
 
 - 非平凡改动在同一变更中更新其权威正文；已有归属就更新，不额外创建重复 ADR。
 - 本地可用时先用 CE type=note / `node .agents/bin/agent-notes.js related <关键词>` 检索，read 核验后确定归属。
-- 六种 kind 按用途选择，小主题不强制拆分。使用 new --kind、show/write、transition；具体格式见治理说明。
+- 按用途选 kind；proposal 写方案取舍，plan 仅在需独立跟踪任务时拆分并引用方案，小主题不强制拆分。
 - 保持证据范围与实现状态区别，归档和 rejected 决策冻结。修改本地 Notes 后，结束前 `node .agents/bin/agent-notes.js verify` 必须通过。
 <!-- agent-notes:end -->

@@ -4,6 +4,8 @@ import app.zmby.aggregate.*
 import app.zmby.data.ServerItem
 import app.zmby.emby.BaseItemDto
 import app.zmby.store.EpisodeMappingRule
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 /** Stable resource addresses remain server + item; catalogue addresses can never be played. */
 data class ResourceBatch(val server: String, val episodes: List<ServerItem>, val verified: Boolean)
@@ -102,7 +104,7 @@ object ResourceMapping {
                 }
                 continue
             }
-            if (needsIdentity) {
+            if (needsIdentity && identity?.state != EpisodeIdentityState.NotFound) {
                 extra(if (identity?.state == EpisodeIdentityState.Unavailable) "单集身份暂时无法核验" else "单集外部 ID 未找到对应目录")
                 continue
             }
@@ -184,7 +186,17 @@ class CatalogResources(private val source: VersionSource, private val fanOut: Fa
         // Verify those parents explicitly instead of treating an unqueried ID as an identity conflict.
         val known = (candidates + originals).map { it.id }.toSet()
         val parentIds = output.mapNotNull { it.item.seriesId }.distinct().filter { it !in known }
-        val parents = if (parentIds.isEmpty()) emptyList() else source.identities(server, parentIds)
+        val parents = if (parentIds.isEmpty()) emptyList() else source.identities(server, parentIds).toMutableList().apply {
+            // Compatible servers can silently return only the first of several Ids (even with
+            // TotalRecordCount=1). Recheck only omitted parents, never infer their identity.
+            if (parentIds.size > 1) {
+                val missing = parentIds.filter { id -> none { it.id == id } }
+                for (chunk in missing.chunked(4)) coroutineScope {
+                    val answers = chunk.map { id -> async { source.identities(server, listOf(id)) } }
+                    answers.forEach { addAll(it.await()) }
+                }
+            }
+        }
         val verifiedIds = matches.map { it.id }.toSet() + listOfNotNull(nameCandidates.singleOrNull()?.id) +
             parents.filter { it.id in parentIds && ResourceMapping.same(work.item(), it) }.map { it.id }
         output.groupBy { it.item.seriesId in verifiedIds }.map { (verified, rows) -> ResourceBatch(server, rows, verified) }

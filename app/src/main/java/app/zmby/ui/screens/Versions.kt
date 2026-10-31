@@ -95,7 +95,7 @@ import app.zmby.ui.components.Segment
 import app.zmby.ui.components.SegmentedWell
 import app.zmby.ui.components.SelectableRow
 import app.zmby.ui.components.TitleLogo
-import app.zmby.ui.components.groupCard
+import app.zmby.ui.components.detailGlass
 import app.zmby.ui.components.secondaryText
 import app.zmby.ui.play
 import app.zmby.ui.rememberInitialFocus
@@ -418,7 +418,7 @@ private fun ServerVersionCard(
     modifier: Modifier,
 ) {
     val server = group.server
-    Column(modifier.groupCard(CardShape).padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(modifier.detailGlass(CardShape).padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         ServerCardHead(server, "${group.versions.size} 个版本", group.note)
         // 线路 · 延迟: switching changes the server's line everywhere; timed-out lines stay selectable.
         val lines = server.config.lines
@@ -552,12 +552,12 @@ internal fun TrackSection(v: Version, chapters: Int, runtimeTicks: Long?, choice
         // Measure the file card once, then give both lazy track lists exactly that height.
         // Intrinsic sizing cannot be used with lazy lists, and measuring all tracks defeats laziness.
         Layout(modifier = Modifier.fillMaxWidth(), content = {
-            Column(Modifier.groupCard(CardShape).padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.detailGlass(CardShape).padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 TrackList("音轨", audio, twoLine = true, probed = probed, selected = audioOn, keyPrefix = "audio:${v.key}", entry = entry) { r ->
                     onChoice(choice.copy(audio = r.embyIndex))
                 }
             }
-            Column(Modifier.groupCard(CardShape).padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.detailGlass(CardShape).padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 TrackList("字幕", subRows, twoLine = false, probed = probed, selected = subOn, keyPrefix = "sub:${v.key}", unusable = unusable, entry = entry.takeIf { audio.isEmpty() }) { r ->
                     onChoice(choice.copy(subtitle = r.embyIndex))
                 }
@@ -588,7 +588,7 @@ internal fun TrackSection(v: Version, chapters: Int, runtimeTicks: Long?, choice
 @Composable
 private fun FileCard(v: Version, rows: List<KeyValue>, modifier: Modifier) {
     Focusable({}, modifier, shape = CardShape, focusedScale = 1f, outline = 3.dp, shadow = 0.dp, label = "文件信息") {
-        Column(Modifier.fillMaxWidth().groupCard(CardShape).padding(28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(Modifier.fillMaxWidth().detailGlass(CardShape).padding(28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("文件", fontSize = 22.sp, fontWeight = FontWeight.Bold)
             v.source.fileName?.let { Text(it, fontSize = 17.sp, lineHeight = 25.sp, fontFamily = Mono, maxLines = 3, overflow = TextOverflow.Ellipsis) }
             rows.forEach { row ->

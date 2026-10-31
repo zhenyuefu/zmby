@@ -42,6 +42,7 @@ import app.zmby.ui.Nav
 import app.zmby.ui.Route
 import app.zmby.ui.components.PosterCard2x3
 import app.zmby.ui.components.RowTitle
+import app.zmby.ui.components.detailTextShadow
 import app.zmby.ui.components.horizontalRow
 import app.zmby.ui.open
 import app.zmby.zmby
@@ -137,10 +138,11 @@ internal fun recommendationTitle(rec: Recommendation): String =
  */
 @Composable
 internal fun RecommendationsBlock(nav: Nav, recs: List<Recommendation>, entry: FocusRequester) {
+    val textShadow = detailTextShadow()
     val app = LocalContext.current.zmby
     val servers by app.registry.servers.collectAsState()
     Column(Modifier.padding(vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        Box(Modifier.padding(horizontal = 80.dp)) { RowTitle("为你推荐", trailing = "${recs.size} 部") }
+        Box(Modifier.padding(horizontal = 80.dp)) { RowTitle("为你推荐", trailing = "${recs.size} 部", textShadow = textShadow) }
         LazyRow(Modifier.horizontalRow(), contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
             itemsIndexed(recs, key = { _, r -> r.key }, contentType = { _, _ -> "recommendation" }) { i, rec ->
                 val open = {
@@ -152,6 +154,8 @@ internal fun RecommendationsBlock(nav: Nav, recs: List<Recommendation>, entry: F
                     title = recommendationTitle(rec),
                     onClick = { open() },
                     width = 240.dp,
+                    restingShadow = 18.dp,
+                    captionShadow = textShadow,
                     topEnd = if (rec.hasResource) "${rec.versions} 个版本" else null,
                     subtitle = recommendationCaption(rec),
                     focusKey = "rec:${rec.key}",

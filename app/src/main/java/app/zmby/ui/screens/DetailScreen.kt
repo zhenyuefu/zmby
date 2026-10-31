@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -107,11 +108,9 @@ import app.zmby.aggregate.Keys
 import app.zmby.aggregate.tmdb
 import app.zmby.catalog.CatalogId
 import app.zmby.data.ServerItem
+import app.zmby.data.withPlaybackProgress
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
-
-/** Detail.dc.html: left→right 0.97 → 0.8 (40 %) → 0.15 (75 %); bottom scrim from 360, solid for its lower half. */
-internal val DETAIL_SCRIMS = Scrims(listOf(0f to 0.97f, 0.4f to 0.8f, 0.75f to 0.15f), bottomFrom = 360f / 1080f, bottomSolid = 0.5f)
 
 @Composable
 fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean = false, provider: app.zmby.catalog.CatalogId? = null) {
@@ -155,7 +154,9 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     // the default version (VersionRanker) is selected. While focus is on the version cards, the
     // focused one previews its tracks.
     var picked by remember(it.id) { mutableStateOf<Version?>(null) }
-    val selected = picked?.let { p -> versions.all.firstOrNull { v -> v.key == p.key } } ?: versions.default
+    val progress by app.recentProgress.collectAsState()
+    val chosen = picked?.let { p -> versions.all.firstOrNull { v -> v.key == p.key } } ?: versions.default
+    val selected = chosen?.let { it.copy(item = it.ref.withPlaybackProgress(progress).item) }
     var preview by remember(it.id) { mutableStateOf<Version?>(null) }
     val shown = preview ?: selected
     // Track picks per version (Emby stream indexes); a version without a pick uses the preferences or the server's defaults.
@@ -163,9 +164,9 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     fun pickKey(v: Version?) = v?.key
     fun tracksFor(v: Version?) = picks[pickKey(v)] ?: TrackChoice()
     val scroll = rememberScrollState()
+    val heading = rememberDetailHeading(scroll, gap = 22f)
     val scope = rememberCoroutineScope()
     val accordion = rememberAccordion(SECTION_VERSIONS, scroll)
-    val density = androidx.compose.ui.platform.LocalDensity.current.density
 
     var marking by remember { mutableStateOf<ServerItem?>(null) }
     val cast = remember(canonical?.cast, ref.key, ref.item.people) {
@@ -173,7 +174,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     }
     val hasVersions = it.type in setOf("Movie", "Video", "Episode") || lookupWork != null || versions.all.isNotEmpty() || versions.searching > 0 || versions.unresponsive.isNotEmpty()
     // 为你推荐 (ui-spec §2.14): keyed by the work's external identity when it has one.
-    val tmdbId = (lookupWork?.ref ?: it.tmdb()?.let { id -> CatalogId("tmdb", "movie", id) })?.takeIf { r -> r.source == "tmdb" }
+    val tmdbId = detailRecommendationId(it, lookupWork?.ref)
     val recKey = tmdbId?.let { r -> "movie:tmdb:${r.id}" } ?: Keys.work(ref.server, ref.item)
     val recCopies = remember(cached?.ref?.key, versions.instances.map { c -> c.key }) { (listOfNotNull(cached?.ref) + versions.instances).distinctBy { c -> c.key } }
     val recs = rememberRecommendations(recKey, recCopies, tmdbId, tick).orEmpty()
@@ -189,22 +190,23 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     accordion.header = headerPlay
     val playRef = selected?.ref
     val resume = playRef?.item?.let { resumeMsOf(it) } ?: 0L
-    BackdropProvider(display.backdrop, DETAIL_SCRIMS) {
+    BackdropProvider(display.backdrop, rememberDetailScrims(heading)) {
       Box(Modifier.fillMaxSize()) {
-        // The backdrop scrolls away with the page, as in the design (it is the top 1080 of a taller page).
+        BackdropLayer(Modifier.fillMaxSize(), blurProgress = { heading.backdropProgress })
         // Section changes align the context row; inner card focus must not move the whole page.
         @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
         androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides detailPageScrollSpec) {
         Box(Modifier.fillMaxSize().verticalScroll(scroll)) {
           @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
           androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides defaultScrollSpec) {
-            BackdropLayer(Modifier.fillMaxWidth().height(1080.dp))
             Column(Modifier.fillMaxWidth()) {
                 // The version that plays: its own item (another server's copy has its own resume point).
                 DetailHeader(
                     ref,
                     display,
+                    heading = heading,
                     playItem = playRef?.item,
+                    watchedRef = playRef ?: ref.takeUnless { it.server == "catalog" },
                     instances = versions.instances,
                     onPlay = { startMs -> playRef?.let { play(context, it, startMs, selected?.source?.id, tracksFor(selected), versions.alternatesTo(selected)) } },
                     // Back on the header: scroll all the way up so the title shows again, not just the buttons.
@@ -261,9 +263,8 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
           }
         }
         }
-        val compact by remember { androidx.compose.runtime.derivedStateOf { scroll.value > 300 * density } }
         CompactHeader(
-            compact,
+            heading,
             display,
             detailMeta(it, display),
             if (playRef == null) null else if (resume > 0) "继续播放 · ${formatClock(resume)}" else "播放",
@@ -271,6 +272,14 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
         marking?.let { m -> SegmentMarksPanel(m.server, m.item, onDismiss = { marking = null }) }
       }
     }
+}
+
+/** Episode provider IDs identify files, never a movie or series recommendation endpoint. */
+internal fun detailRecommendationId(item: BaseItemDto, canonical: CatalogId? = null): CatalogId? {
+    if (item.type !in setOf("Movie", "Series")) return null
+    return canonical?.takeIf { it.source == "tmdb" } ?: item.tmdb()
+        ?.takeIf { it.toLongOrNull()?.let { id -> id > 0 } == true }
+        ?.let { CatalogId("tmdb", if (item.type == "Movie") "movie" else "tv", it) }
 }
 
 internal const val SECTION_EPISODES = "episodes"
@@ -288,35 +297,23 @@ internal fun detailMeta(item: BaseItemDto, display: DetailDisplay): String = lis
 ).joinToString(" · ")
 
 @Composable
-private fun DetailHeader(ref: ServerItem, display: DetailDisplay, playItem: BaseItemDto?, instances: List<ServerItem>, onPlay: (Long) -> Unit, onFocused: () -> Unit, onMarks: () -> Unit, availability: String = "暂无资源", onRetry: () -> Unit = {}, playRequester: FocusRequester? = null, onDown: () -> Unit = {}) {
+private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: DetailHeadingState, playItem: BaseItemDto?, watchedRef: ServerItem?, instances: List<ServerItem>, onPlay: (Long) -> Unit, onFocused: () -> Unit, onMarks: () -> Unit, availability: String = "暂无资源", onRetry: () -> Unit = {}, playRequester: FocusRequester? = null, onDown: () -> Unit = {}) {
     val app = LocalContext.current.zmby
-    val library = app.library
     val item = ref.item
     val scope = rememberCoroutineScope()
-    var played by remember(item.id, item.userData) { mutableStateOf(item.userData?.played == true) }
     val favorites by app.favorites.items.collectAsState()
     val favorite = remember(favorites, ref.key) { app.favorites.isFavorite(ref) }
-    val isEpisode = item.type == "Episode"
     Column(
         Modifier
             .padding(start = 80.dp, top = 140.dp)
-            .width(900.dp)
+            .width(1760.dp)
+            .graphicsLayer { alpha = 1f - heading.frame.progress }
             .onFocusChanged { if (it.hasFocus) onFocused() }
             .headerDown(onDown)
             .focusGroup(),
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
-        TitleLogo(display.logo, display.title, maxWidth = 520.dp, maxHeight = 150.dp)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            val meta = listOfNotNull(
-                if (isEpisode) listOfNotNull(item.seriesName, episodeCode(item)).joinToString(" ") else null,
-                display.year?.toString(),
-                display.genres.take(2).joinToString(" · ").ifEmpty { null },
-                formatDuration(display.runtimeMs),
-            )
-            Text(meta.joinToString("  ·  "), fontSize = 22.sp, color = Z.textPrimary.copy(alpha = 0.78f), maxLines = 1)
-            display.rating?.let { r -> Badge("${if (display.ratingTmdb) "TMDB" else "评分"} %.1f".format(r), fill = true) }
-        }
+        DetailHeadingSlots(heading)
         if (!display.overview.isNullOrBlank()) {
             Text(display.overview, fontSize = 23.sp, lineHeight = 37.sp, color = Z.textPrimary.copy(alpha = 0.75f), maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(820.dp))
         }
@@ -330,10 +327,8 @@ private fun DetailHeader(ref: ServerItem, display: DetailDisplay, playItem: Base
                 label = "detailPlay:${item.id}",
             )
             if (resume > 0) GlassButton("从头播放", { onPlay(0) })
-            if (ref.server != "catalog") GlassIconButton(Glyph.Check, label = if (played) "已看（取消）" else "标记为已看", onClick = {
-                scope.launch { runCatching { library.setPlayed(ref.server, item.id, !played) }.onSuccess { played = it.played } }
-            })
-            if (ref.server != "catalog") GlassIconButton(if (favorite) Glyph.Check else Glyph.Plus, label = if (favorite) "已收藏" else "加入收藏", onClick = {
+            watchedRef?.let { WatchedButton(it) }
+            if (ref.server != "catalog") GlassIconButton(Glyph.Heart, on = favorite, label = if (favorite) "已收藏" else "加入收藏", onClick = {
                 scope.launch { app.favorites.toggle(ref, (listOf(ref) + instances).distinctBy { it.key }) }
             })
             // 待看 next to 收藏 (favorites spec); white when the work is on the list.

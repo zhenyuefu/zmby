@@ -8,8 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class EpisodeIdentityState { Pending, Matched, NotFound, Conflict, Unavailable }
 data class EpisodeIdentity(val state: EpisodeIdentityState, val episodeId: String? = null)
@@ -32,18 +35,22 @@ suspend fun resolveEpisodeIdentity(
     work: CatalogWork,
     item: BaseItemDto,
     find: suspend (provider: String, id: String) -> List<EpisodeIdentityHit>,
-): EpisodeIdentity {
+): EpisodeIdentity = coroutineScope {
     val targets = mutableSetOf<String>()
     var conflict = false
     var failed = false
-    for ((provider, id) in secondaryEpisodeIds(work, item)) {
-        val hits = try { find(provider, id) }
+    val answers = secondaryEpisodeIds(work, item).map { (provider, id) -> async {
+        try { find(provider, id) }
         catch (e: CancellationException) { throw e }
-        catch (_: Exception) { failed = true; continue }
+        catch (_: Exception) { null }
+    } }
+    for (answer in answers) {
+        val hits = answer.await()
+        if (hits == null) { failed = true; continue }
         if (hits.any { it.showId != work.ref.id }) conflict = true
         targets += hits.filter { it.showId == work.ref.id }.map { it.episodeId }
     }
-    return when {
+    when {
         conflict || targets.size > 1 -> EpisodeIdentity(EpisodeIdentityState.Conflict)
         targets.size == 1 -> EpisodeIdentity(EpisodeIdentityState.Matched, targets.single())
         failed -> EpisodeIdentity(EpisodeIdentityState.Unavailable)
@@ -62,16 +69,27 @@ fun episodeIdentities(
         work.ref.source == "tmdb" && secondaryEpisodeIds(work, it.item).isNotEmpty() &&
             episodeProviderId(it.item, "tmdb").let { id -> id == null || id == work.ref.id }
     }
-    var state = needed.associate { it.key to (cached[it.key]?.takeIf { r -> r.state !in setOf(EpisodeIdentityState.Pending, EpisodeIdentityState.Unavailable) }
-        ?: EpisodeIdentity(EpisodeIdentityState.Pending)) }
+    val groups = needed.groupBy { secondaryEpisodeIds(work, it.item) }.values.toList()
+    fun completed(identity: EpisodeIdentity) = identity.state !in setOf(EpisodeIdentityState.Pending, EpisodeIdentityState.Unavailable)
+    var state = groups.flatMap { refs ->
+        val saved = refs.firstNotNullOfOrNull { cached[it.key]?.takeIf(::completed) }
+            ?: EpisodeIdentity(EpisodeIdentityState.Pending)
+        refs.map { it.key to saved }
+    }.toMap()
     emit(state)
-    for (chunk in needed.filter { state[it.key]?.state == EpisodeIdentityState.Pending }.chunked(4)) {
-        coroutineScope {
-            val results = chunk.map { ref -> ref.key to async { resolve(ref.item) } }
-            for ((key, result) in results) {
-                state = state + (key to result.await())
-                emit(state)
+    val queue = groups.filter { state[it.first().key]?.state == EpisodeIdentityState.Pending }
+    val next = AtomicInteger()
+    channelFlow {
+        repeat(minOf(4, queue.size)) {
+            launch {
+                while (true) {
+                    val refs = queue.getOrNull(next.getAndIncrement()) ?: break
+                    send(refs.map { it.key } to resolve(refs.first().item))
+                }
             }
         }
+    }.collect { (keys, identity) ->
+        state = state + keys.associateWith { identity }
+        emit(state)
     }
 }.flowOn(Dispatchers.Default)

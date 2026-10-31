@@ -24,6 +24,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -106,6 +108,7 @@ private fun CardFrame(
     label: String? = null,
     focusKey: String? = null,
     dim: Float = 1f,
+    restingShadow: Dp = 0.dp,
     art: @Composable BoxScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(22.dp)
@@ -116,7 +119,7 @@ private fun CardFrame(
                     .width(width)
                     .height(height)
                     // A faded card would show its shadow through the artwork.
-                    .then(if (focused && dim >= 1f) Modifier.shadow(40.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.7f), spotColor = Color.Black.copy(alpha = 0.7f)) else Modifier)
+                    .then(if (focused && dim >= 1f) Modifier.shadow(40.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.7f), spotColor = Color.Black.copy(alpha = 0.7f)) else if (restingShadow > 0.dp && dim >= 1f) Modifier.shadow(restingShadow, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.35f), spotColor = Color.Black.copy(alpha = 0.35f)) else Modifier)
                     .clip(shape)
                     .then(if (focused) Modifier.border(4.dp, Z.focusFill, shape) else Modifier),
             ) {
@@ -152,15 +155,17 @@ fun PosterCard2x3(
     focusKey: String? = null,
     /** Opacity of the poster and caption (only on TMDB, no resource); the focus outline stays opaque. */
     dim: Float = 1f,
+    restingShadow: Dp = 0.dp,
+    captionShadow: Shadow = Shadow.None,
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
-    CardFrame(onClick, width, width * 3 / 2, onFocus, label = title, focusKey = focusKey, dim = dim, modifier = modifier, caption = {
+    CardFrame(onClick, width, width * 3 / 2, onFocus, label = title, focusKey = focusKey, dim = dim, modifier = modifier, restingShadow = restingShadow, caption = {
         Column {
             if (imageUrl != null) {
-                Text(title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = TextStyle(shadow = captionShadow), fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (subtitle != null) {
-                Text(subtitle, fontSize = 18.sp, color = Z.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                Text(subtitle, style = TextStyle(shadow = captionShadow), fontSize = 18.sp, color = Z.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }) {
@@ -182,9 +187,9 @@ fun PosterCard2x3(
 
 /** Section heading used above rows. */
 @Composable
-fun RowTitle(text: String, size: Int = 30, trailing: String? = null) {
+fun RowTitle(text: String, size: Int = 30, trailing: String? = null, textShadow: Shadow = Shadow.None) {
     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text(text, fontSize = size.sp, fontWeight = FontWeight.Bold)
-        if (trailing != null) Text(trailing, fontSize = 20.sp, color = Z.textSecondary)
+        Text(text, style = TextStyle(shadow = textShadow), fontSize = size.sp, fontWeight = FontWeight.Bold)
+        if (trailing != null) Text(trailing, style = TextStyle(shadow = textShadow), fontSize = 20.sp, color = Z.textSecondary)
     }
 }

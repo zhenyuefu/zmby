@@ -63,7 +63,7 @@ class VersionCardsTest {
     }
 
     @Test fun `a catalog lookup keeps the version picked by hand`() {
-        // Z9X 8K, 无瑕修女: Synology's REMUX picked by hand, the page reopened on AlphaTV-PRO's copy.
+        // Reopen another server's copy after choosing a REMUX on the first server.
         val alpha = Version(server("alpha", 0), film.copy(id = "a"), MediaSourceInfo("bluray"))
         val synology = Version(server("synology", 1), film.copy(id = "s"), MediaSourceInfo("remux"))
         assertEquals(listOf(alpha, synology), rankCatalogVersions(listOf(synology, alpha), VersionPrefs()))

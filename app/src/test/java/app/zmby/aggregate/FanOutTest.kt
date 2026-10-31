@@ -15,6 +15,25 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class FanOutTest {
+    @Test fun `memory peek uses the same server scope expiry and invalidation as shared lookups`() = runBlocking {
+        var now = 0L
+        var scope = "original"
+        val fan = FanOut(Book(FailureTracker()), clock = { now }, cacheContext = { scope })
+        fun peek(context: String = "file-a") = fan.cached<String>(listOf("a"), 1000, "episode", 500) { context }
+        assertTrue(peek().isEmpty())
+        fan.run(listOf("a"), 1000, share = "episode", cacheMs = 500, context = { "file-a" }) { "versions" }.toList()
+        assertEquals("versions", peek()["a"]?.value)
+        assertTrue(peek("file-b").isEmpty())
+        scope = "changed-login"
+        assertTrue(peek().isEmpty())
+        scope = "original"
+        now = 500
+        assertTrue(peek().isEmpty())
+        now = 0
+        fan.run(listOf("a"), 1000, share = "episode", cacheMs = 500, context = { "file-a" }) { "new" }.toList()
+        fan.invalidate("episode", listOf("a"))
+        assertTrue(peek().isEmpty())
+    }
     private class Book(val tracker: FailureTracker) : HealthBook {
         override fun isCooling(serverId: String) = tracker.isCooling(serverId)
         override fun onSuccess(serverId: String) = tracker.success(serverId)

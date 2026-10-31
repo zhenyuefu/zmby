@@ -10,6 +10,15 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DetailMetadataLoaderTest {
+    @Test fun `resource detail never treats an episode ID or missing TMDB value as a movie ID`() {
+        for (id in listOf("None", "null", "unknown", "0", "-1", "12345")) {
+            val episode = BaseItemDto("file", type = "Episode", providerIds = mapOf("Tmdb" to id))
+            assertNull(detailRecommendationId(episode))
+            assertNull(detailRecommendationId(episode, CatalogId("tmdb", "tv", "10")))
+            if (id != "12345") assertNull(detailRecommendationId(episode.copy(type = "Movie")))
+        }
+        assertEquals(CatalogId("tmdb", "movie", "10"), detailRecommendationId(BaseItemDto("movie", type = "Movie", providerIds = mapOf("Tmdb" to "10"))))
+    }
     private val item = BaseItemDto("server-item",type="Series",name="Server name",providerIds=mapOf("Tmdb" to "10"))
     private val ref = CatalogId("tmdb","tv","10")
     private val work = CatalogWork(ref,"Provider title")

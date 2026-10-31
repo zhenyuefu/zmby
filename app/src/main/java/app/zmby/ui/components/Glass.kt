@@ -30,11 +30,13 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -53,6 +55,8 @@ import android.content.Context
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import coil.size.Size as CoilSize
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import coil.transform.Transformation
 
 /*
@@ -72,20 +76,26 @@ data class Scrims(
     val bottomFrom: Float = 1f / 3f,
     /** Fraction of the bottom scrim (from its bottom) that is solid page colour. */
     val bottomSolid: Float = 0.5f,
+    val bottomStops: List<Pair<Float, Float>>? = null,
+    /** Detail pages fade their directional scrims into uniform dimming as they scroll. */
+    val strength: () -> Float = { 1f },
+    val dim: () -> Float = { 0f },
 ) {
     fun DrawScope.draw(area: Size, alpha: Float = 1f) {
+        drawRect(Color.Black, size = area, alpha = dim() * alpha)
+        val directional = strength() * alpha
         drawRect(
             Brush.horizontalGradient(*horizontal.map { (stop, a) -> stop to Z.bg.copy(alpha = a) }.toTypedArray(), endX = area.width),
             size = area,
-            alpha = alpha,
+            alpha = directional,
         )
         val top = area.height * bottomFrom
         val h = area.height - top
         drawRect(
-            Brush.verticalGradient(0f to Color.Transparent, (1f - bottomSolid) to Z.bg, 1f to Z.bg, startY = top, endY = area.height),
+            Brush.verticalGradient(*(bottomStops ?: listOf(0f to 0f, (1f - bottomSolid) to 1f, 1f to 1f)).map { (stop, a) -> stop to Z.bg.copy(alpha = a) }.toTypedArray(), startY = top, endY = area.height),
             topLeft = Offset(0f, top),
             size = Size(area.width, h),
-            alpha = alpha,
+            alpha = directional,
         )
     }
 }
@@ -101,9 +111,14 @@ class Backdrop(
     val scrims: Scrims,
     val visible: () -> Float = { 1f },
     val shift: () -> Float = { 0f },
+    val slices: List<BackdropSlice>? = null,
+    val luminance: BackdropLuminance? = null,
 ) {
     internal var coordinates: LayoutCoordinates? = null
 }
+
+/** A blurred page at the same horizontal position (in screen widths) as its sharp backdrop. */
+class BackdropSlice(val image: ImageBitmap?, val offset: () -> Float)
 
 /**
  * Dynamic, not static: the backdrop changes whenever the home hero turns to another title, and a
@@ -119,10 +134,20 @@ fun BackdropProvider(
     scrims: Scrims,
     visible: () -> Float = { 1f },
     shift: () -> Float = { 0f },
+    slices: List<BackdropSlice>? = null,
     content: @Composable () -> Unit,
 ) {
-    val blurred = rememberBlurredBackdrop(url)
-    val backdrop = remember(url, blurred, scrims, visible, shift) { Backdrop(url, blurred, scrims, visible, shift) }
+    val blurred = if (slices == null) rememberBlurredBackdrop(url) else null
+    val luminance by produceState<BackdropLuminance?>(null, blurred) {
+        value = withContext(Dispatchers.Default) {
+            blurred?.asAndroidBitmap()?.let { bitmap ->
+                val pixels = IntArray(bitmap.width * bitmap.height)
+                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                BackdropLuminance.fromPixels(pixels, bitmap.width, bitmap.height)
+            }
+        }
+    }
+    val backdrop = remember(url, blurred, scrims, visible, shift, slices, luminance) { Backdrop(url, blurred, scrims, visible, shift, slices, luminance) }
     CompositionLocalProvider(LocalBackdrop provides backdrop, content = content)
 }
 
@@ -131,7 +156,7 @@ fun BackdropProvider(
  * [layer] replaces the single image (the home hero's sliding pages); it draws its own scrims.
  */
 @Composable
-fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.() -> Unit)? = null) {
+fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.() -> Unit)? = null, blurProgress: (() -> Float)? = null) {
     val backdrop = LocalBackdrop.current ?: return
     if (layer != null) {
         Box(modifier.onGloballyPositioned { backdrop.coordinates = it }, content = layer)
@@ -148,6 +173,11 @@ fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.()
     ) {
         if (backdrop.url != null) {
             Artwork(backdrop.url, Modifier.fillMaxSize())
+            if (blurProgress != null && backdrop.blurred != null) {
+                Box(Modifier.fillMaxSize().drawWithCache {
+                    onDrawBehind { drawCover(backdrop.blurred, size, blurProgress()) }
+                })
+            }
             Box(Modifier.fillMaxSize().drawWithCache { onDrawBehind { with(backdrop.scrims) { draw(size) } } })
         }
     }
@@ -162,9 +192,10 @@ fun BackdropScreen(
     visible: () -> Float = { 1f },
     shift: () -> Float = { 0f },
     layer: (@Composable BoxScope.() -> Unit)? = null,
+    slices: List<BackdropSlice>? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    BackdropProvider(url, scrims, visible, shift) {
+    BackdropProvider(url, scrims, visible, shift, slices) {
         Box(modifier.fillMaxSize()) {
             BackdropLayer(Modifier.fillMaxSize(), layer)
             content()
@@ -178,7 +209,7 @@ fun BackdropScreen(
  * copy until the new one is ready, so the glass never flashes without its slice.
  */
 @Composable
-private fun rememberBlurredBackdrop(url: String?): ImageBitmap? {
+fun rememberBlurredBackdrop(url: String?): ImageBitmap? {
     val context = LocalContext.current
     val cached = remember(url) { url?.let { blurredFromMemory(context, it) } }
     val image by produceState(cached, url) {
@@ -238,6 +269,7 @@ enum class GlassTone { Glass, On }
 fun Modifier.glass(shape: Shape, tone: GlassTone = GlassTone.Glass, shadow: Boolean = true): Modifier = composed {
     val backdrop = LocalBackdrop.current
     val image = backdrop?.blurred
+    val slices = backdrop?.slices
     var offset by remember { mutableStateOf(Offset.Zero) }
     val on = tone == GlassTone.On
     this
@@ -247,7 +279,7 @@ fun Modifier.glass(shape: Shape, tone: GlassTone = GlassTone.Glass, shadow: Bool
             else Modifier.shadow(10.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.3f), spotColor = Color.Black.copy(alpha = 0.3f)),
         )
         .then(
-            if (image != null && !on) {
+            if ((image != null || slices != null) && !on) {
                 Modifier.onGloballyPositioned { c ->
                     backdrop.coordinates?.takeIf { it.isAttached && c.isAttached }?.let { offset = it.localPositionOf(c, Offset.Zero) }
                 }
@@ -264,14 +296,26 @@ fun Modifier.glass(shape: Shape, tone: GlassTone = GlassTone.Glass, shadow: Bool
             val innerShade = Brush.verticalGradient(0.7f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.10f))
             onDrawBehind {
                 clipPath(path) {
-                    val seen = if (image != null && !on) backdrop.visible() else 0f
-                    if (image != null && seen > 0f) {
+                    val seen = if (backdrop != null && !on) backdrop.visible() else 0f
+                    if (backdrop != null && seen > 0f && (image != null || slices != null)) {
                         val area = backdrop.coordinates?.size?.let { Size(it.width.toFloat(), it.height.toFloat()) } ?: size
                         // A lens: the slice behind the glass, magnified a little around the glass centre.
                         scale(LENS, pivot = Offset(size.width / 2, size.height / 2)) {
                             translate(-offset.x, -offset.y + backdrop.shift()) {
-                                drawCover(image, area, seen)
-                                with(backdrop.scrims) { draw(area, seen) }
+                                if (slices != null) {
+                                    for (slice in slices) {
+                                        translate(slice.offset() * area.width, 0f) {
+                                            clipRect(0f, 0f, area.width, area.height) {
+                                                drawRect(Z.bg, size = area, alpha = seen)
+                                                slice.image?.let { drawCover(it, area, seen) }
+                                                with(backdrop.scrims) { draw(area, seen) }
+                                            }
+                                        }
+                                    }
+                                } else if (image != null) {
+                                    drawCover(image, area, seen)
+                                    with(backdrop.scrims) { draw(area, seen) }
+                                }
                             }
                         }
                     }
@@ -288,7 +332,7 @@ fun Modifier.glass(shape: Shape, tone: GlassTone = GlassTone.Glass, shadow: Bool
 private const val LENS = 1.06f
 
 /** Draws [image] scaled to cover [area] (ContentScale.Crop, centred), like the sharp backdrop. */
-private fun DrawScope.drawCover(image: ImageBitmap, area: Size, alpha: Float = 1f) {
+internal fun DrawScope.drawCover(image: ImageBitmap, area: Size, alpha: Float = 1f) {
     val s = maxOf(area.width / image.width, area.height / image.height)
     val w = image.width * s
     val h = image.height * s

@@ -58,12 +58,12 @@ import kotlinx.coroutines.launch
  * when there is none — never an empty circle (same rule as the title Logo).
  */
 @Composable
-internal fun Avatar(name: String, url: String?, size: Dp, focused: Boolean, letterSize: Int) {
+internal fun Avatar(name: String, url: String?, size: Dp, focused: Boolean, letterSize: Int, restingShadow: Dp = 0.dp) {
     var loaded by remember(url) { mutableStateOf(false) }
     Box(
         Modifier
             .size(size)
-            .then(if (focused) Modifier.shadow(36.dp, CircleShape, clip = false, ambientColor = Color.Black, spotColor = Color.Black) else Modifier)
+            .then(if (focused) Modifier.shadow(36.dp, CircleShape, clip = false, ambientColor = Color.Black, spotColor = Color.Black) else if (restingShadow > 0.dp) Modifier.shadow(restingShadow, CircleShape, clip = false, ambientColor = Color.Black.copy(alpha = 0.4f), spotColor = Color.Black.copy(alpha = 0.4f)) else Modifier)
             .clip(CircleShape)
             .then(if (focused) Modifier.border(4.dp, Z.focusFill, CircleShape) else Modifier),
         contentAlignment = Alignment.Center,

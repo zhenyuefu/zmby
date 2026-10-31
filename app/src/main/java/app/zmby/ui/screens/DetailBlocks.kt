@@ -1,12 +1,5 @@
 package app.zmby.ui.screens
 
-import androidx.core.graphics.scale
-import androidx.core.graphics.get
-import android.graphics.Bitmap
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,12 +21,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,9 +46,9 @@ import app.zmby.ui.Route
 import app.zmby.ui.components.Focusable
 import app.zmby.ui.components.Glyph
 import app.zmby.ui.components.Icon
-import app.zmby.ui.components.LocalBackdrop
 import app.zmby.ui.components.RowTitle
-import app.zmby.ui.components.TitleLogo
+import app.zmby.ui.components.detailTextShadow
+import app.zmby.ui.components.groupCard
 import app.zmby.ui.components.horizontalRow
 import app.zmby.ui.theme.Z
 import app.zmby.zmby
@@ -97,16 +88,17 @@ internal fun serverCastCards(app: app.zmby.ZmbyApp, nav: Nav, ref: ServerItem): 
 /** 演职人员: 160-wide cells (140 avatar, name, role) in one row, always with their text; [entry] on the first. */
 @Composable
 internal fun CastBlock(cards: List<CastCard>, entry: FocusRequester) {
+    val textShadow = detailTextShadow()
     Column(Modifier.padding(vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Box(Modifier.padding(horizontal = 80.dp)) { RowTitle("演职人员", trailing = "共 ${cards.size} 人") }
+        Box(Modifier.padding(horizontal = 80.dp)) { RowTitle("演职人员", trailing = "共 ${cards.size} 人", textShadow = textShadow) }
         LazyRow(Modifier.horizontalRow(), contentPadding = PaddingValues(horizontal = 80.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             itemsIndexed(cards, key = { _, c -> c.key }, contentType = { _, _ -> "person" }) { i, c ->
                 Focusable(c.open, Modifier.width(160.dp).then(if (i == 0) Modifier.focusRequester(entry) else Modifier), origin = TransformOrigin(0.5f, 0f), outline = 0.dp, shadow = 0.dp, focusKey = c.key, label = c.name) { focused ->
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Avatar(c.name, c.image, 140.dp, focused, 52)
+                        Avatar(c.name, c.image, 140.dp, focused, 52, restingShadow = 18.dp)
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(c.name, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (c.role.isNotBlank()) Text(c.role, fontSize = 18.sp, color = Z.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(c.name, style = TextStyle(shadow = textShadow), fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (c.role.isNotBlank()) Text(c.role, style = TextStyle(shadow = textShadow), fontSize = 18.sp, color = Z.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -207,7 +199,7 @@ private fun SubtitleChipRow(chips: List<SubtitleChip>) {
 private fun Chip(c: SubtitleChip) {
     val shape = RoundedCornerShape(percent = 50)
     Row(
-        Modifier.height(32.dp).background(if (c.current) Color.White else Color.White.copy(alpha = 0.08f), shape).padding(horizontal = 12.dp),
+        Modifier.height(32.dp).then(if (c.current) Modifier.background(Color.White, shape) else Modifier.groupCard(shape, Color.White.copy(alpha = 0.10f))).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -220,49 +212,7 @@ private fun Chip(c: SubtitleChip) {
 
 @Composable
 private fun MoreChip(n: Int) {
-    Box(Modifier.height(32.dp).background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(percent = 50)).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.height(32.dp).groupCard(RoundedCornerShape(percent = 50), Color.White.copy(alpha = 0.10f)).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
         Text("+$n", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.88f))
-    }
-}
-
-/** The average colour of a (blurred) backdrop, for the compact header's gradient. */
-internal fun averageColor(image: ImageBitmap?): Color? = image?.let {
-    runCatching {
-        val one = it.asAndroidBitmap().scale(1, 1, true)
-        Color(one[0, 0])
-    }.getOrNull()
-}
-
-/**
- * The compact header (DetailRecs.dc.html top): once focus has left the header and the page scrolled
- * down, a fixed 140-high bar with a small Logo (at most 64 high, else the title in 30/800), the meta
- * line and, on the right, the play button's text (not focusable). Its gradient runs from the
- * backdrop's main colour to the page colour.
- */
-@Composable
-internal fun CompactHeader(visible: Boolean, display: DetailDisplay, meta: String, playLabel: String?) {
-    val backdrop = LocalBackdrop.current?.blurred
-    val tint = remember(backdrop) { averageColor(backdrop) } ?: Color(0xFF2B2419)
-    AnimatedVisibility(visible, enter = fadeIn(tween(200)), exit = fadeOut(tween(200))) {
-        Box(
-            Modifier.fillMaxWidth().height(140.dp)
-                .background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.9f), Z.bg.copy(alpha = 0.95f))))
-                .background(Brush.verticalGradient(0.99f to Color.Transparent, 1f to Color.White.copy(alpha = 0.06f))),
-        ) {
-            Row(
-                Modifier.padding(start = 80.dp, end = 80.dp, top = 36.dp).height(68.dp).fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
-            ) {
-                Box(Modifier.widthIn(max = 420.dp), contentAlignment = Alignment.CenterStart) {
-                    TitleLogo(display.logo, display.title, maxWidth = 300.dp, maxHeight = 64.dp, compact = true)
-                }
-                Text(meta, fontSize = 20.sp, color = Color.White.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                if (playLabel != null) {
-                    Icon(Glyph.Play, size = 20.dp, color = Color.White.copy(alpha = 0.7f))
-                    Text(playLabel, fontSize = 19.sp, color = Color.White.copy(alpha = 0.7f), maxLines = 1)
-                }
-            }
-        }
     }
 }

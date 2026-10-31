@@ -135,7 +135,6 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
     val shownAt = rememberShownAt()
     // The hero carousel lives here: its pages are the home backdrop, drawn under the top bar.
     val carousel = rememberRetained("heroCarousel") { HeroCarousel() }
-    val heroBackdrop = if (tab == 0) carousel.current?.let { library.backdrop(it) } else null
     val backdropVisible = remember(carousel) { { carousel.backdropVisible } }
     val backdropShift = remember(carousel) { { -carousel.scrolled } }
     val vm = screenModel("home") { HomeViewModel(app) }
@@ -201,7 +200,7 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
 
     CompositionLocalProvider(LocalSideNavBlock provides sideBlock) {
     BackdropScreen(
-        heroBackdrop,
+        null,
         HOME_SCRIMS,
         modifier = Modifier.onPreviewKeyEvent { e ->
             if (e.type == KeyEventType.KeyDown && e.key != Key.Back) exitConfirmation.reset()
@@ -219,6 +218,7 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
         visible = backdropVisible,
         shift = backdropShift,
         layer = if (tab == 0) ({ HeroBackdrop(carousel, HOME_SCRIMS) }) else null,
+        slices = if (tab == 0) heroGlassSlices(carousel) else null,
     ) {
         val openSearch = { nav.go(Route.Search) }
         when (tab) {

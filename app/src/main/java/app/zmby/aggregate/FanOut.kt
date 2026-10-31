@@ -60,6 +60,18 @@ class FanOut(
         keys.forEach { inFlight.remove(it)?.valid = false }
     }
 
+    /** Memory-only read for the first UI frame; uses exactly the same scope and expiry as run. */
+    fun <T> cached(servers: List<String>, timeoutMs: Long, share: Any, cacheMs: Long,
+        context: (String) -> Any? = { null }): Map<String, Outcome.Ok<T>> = synchronized(inFlight) {
+        servers.distinct().mapNotNull { server ->
+            val key = RequestKey(share, server, timeoutMs, listOf(cacheContext(server), context(server)))
+            val saved = cache[key] ?: return@mapNotNull null
+            if (clock() - saved.at !in 0 until cacheMs) { cache.remove(key); return@mapNotNull null }
+            @Suppress("UNCHECKED_CAST")
+            server to (saved.result as Outcome.Ok<T>)
+        }.toMap()
+    }
+
     private suspend fun <T> one(server: String, timeoutMs: Long, share: Any?, cacheMs: Long, context: Any?, call: suspend (String) -> T): Outcome<T> {
         if (share == null) return if (health.isCooling(server)) Outcome.Skipped(server) else execute(server, timeoutMs, call)
         val key = RequestKey(share, server, timeoutMs, listOf(cacheContext(server), context))

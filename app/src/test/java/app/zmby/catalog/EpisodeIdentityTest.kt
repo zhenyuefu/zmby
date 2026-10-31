@@ -5,12 +5,43 @@ import app.zmby.emby.BaseItemDto
 import app.zmby.store.EpisodeMappingRule
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.last
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 
 class EpisodeIdentityTest {
+    @Test fun `no external episode result falls back to a verified numbered slot but errors and conflicts do not`() {
+        val ref = ref(season = 3, ids = mapOf("Tvdb" to "2"))
+        assertEquals(listOf(ref), map(listOf(ref), mapOf(ref.key to EpisodeIdentity(EpisodeIdentityState.NotFound))).matched["301"])
+        for (state in listOf(EpisodeIdentityState.Unavailable, EpisodeIdentityState.Conflict)) {
+            assertTrue(map(listOf(ref), mapOf(ref.key to EpisodeIdentity(state))).matched.isEmpty())
+        }
+        assertTrue(map(listOf(ref(season = 4)), mapOf(ref.key to EpisodeIdentity(EpisodeIdentityState.NotFound))).matched.isEmpty())
+    }
+
+    @Test fun `copies of the same external identity across servers share one lookup and cached answers`() = runBlocking {
+        val copies = (1..6).map { ref(server = "s$it", ids = mapOf("Imdb" to "tt1")) }
+        var calls = 0
+        val answer = EpisodeIdentity(EpisodeIdentityState.Matched, "301")
+        val result = episodeIdentities(work, copies) { calls++; answer }.last()
+        assertEquals(1, calls)
+        assertEquals(copies.associate { it.key to answer }, result)
+        assertEquals(result, episodeIdentities(work, copies, mapOf(copies.first().key to answer)) { error("must reuse identity") }.last())
+    }
+
+    @Test fun `a slow first identity does not hold up later results or the next queued identity`() = runBlocking {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val refs = (1..5).map { ref(id = "$it", ids = mapOf("Imdb" to "tt$it")) }
+        val states = episodeIdentities(work, refs) { item ->
+            if (item.id == "1") gate.await()
+            EpisodeIdentity(EpisodeIdentityState.NotFound)
+        }.onEach { state ->
+            if (state[refs.last().key]?.state == EpisodeIdentityState.NotFound) gate.complete(Unit)
+        }.toList()
+        assertTrue(states.any { it[refs.first().key]?.state == EpisodeIdentityState.Pending && it[refs.last().key]?.state == EpisodeIdentityState.NotFound })
+    }
     private val work = CatalogWork(CatalogId("tmdb", "tv", "10"), "Test", ids = mapOf("Tmdb" to "10"))
     private val catalog = listOf(CatalogEpisode("301", 3, 1, "One"), CatalogEpisode("302", 3, 2, "Two"))
     private fun ref(server: String = "a", id: String = "file", season: Int = 4, number: Int = 1, ids: Map<String, String> = emptyMap()) =
