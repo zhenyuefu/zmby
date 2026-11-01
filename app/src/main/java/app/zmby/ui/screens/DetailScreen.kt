@@ -78,7 +78,8 @@ import app.zmby.ui.components.BackdropProvider
 import app.zmby.ui.components.Badge
 import app.zmby.ui.components.Focusable
 import app.zmby.ui.components.GlassButton
-import app.zmby.ui.components.GlassIconButton
+import app.zmby.ui.components.ActionDivider
+import app.zmby.ui.components.ActionFeedbackHost
 import app.zmby.ui.components.Glyph
 import app.zmby.ui.components.HealthDot
 import app.zmby.ui.components.RowTitle
@@ -151,24 +152,28 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     val ref = cached?.ref ?: ServerItem("catalog",it)
     val display = canonical?.display() ?: app.display(ref)
     // OK on a version selects it (the header's play button and the cards below use it); until then
-    // the default version (VersionRanker) is selected. While focus is on the version cards, the
+    // the last successfully played version, then VersionRanker's default, is selected. While focus is on the version cards, the
     // focused one previews its tracks.
     var picked by remember(it.id) { mutableStateOf<Version?>(null) }
     val progress by app.recentProgress.collectAsState()
-    val chosen = picked?.let { p -> versions.all.firstOrNull { v -> v.key == p.key } } ?: versions.default
+    val lastPlayed = remember(versions.all, tick) { app.playbackMemory.latest(versions.all.map { it.ref }) }
+    val chosen = picked?.let { p -> versions.all.firstOrNull { v -> v.key == p.key } }
+        ?: versions.all.firstOrNull { v -> v.ref.server == lastPlayed?.server && v.item.id == lastPlayed.itemId && lastPlayed.selection.restore(v.source) != null }
+        ?: versions.default
     val selected = chosen?.let { it.copy(item = it.ref.withPlaybackProgress(progress).item) }
     var preview by remember(it.id) { mutableStateOf<Version?>(null) }
     val shown = preview ?: selected
     // Track picks per version (Emby stream indexes); a version without a pick uses the preferences or the server's defaults.
     var picks by rememberRetained("picks", it.id) { mutableStateOf<Map<String, TrackChoice>>(emptyMap()) }
     fun pickKey(v: Version?) = v?.key
-    fun tracksFor(v: Version?) = picks[pickKey(v)] ?: TrackChoice()
+    fun tracksFor(v: Version?) = picks[pickKey(v)] ?: v?.let { app.playbackMemory.tracksFor(it.ref, it.source) } ?: TrackChoice()
     val scroll = rememberScrollState()
     val heading = rememberDetailHeading(scroll, gap = 22f)
     val scope = rememberCoroutineScope()
     val accordion = rememberAccordion(SECTION_VERSIONS, scroll)
 
     var marking by remember { mutableStateOf<ServerItem?>(null) }
+    val danmu = rememberDanmuPanel()
     val cast = remember(canonical?.cast, ref.key, ref.item.people) {
         if (canonical != null) catalogCastCards(nav, canonical.cast) else serverCastCards(app, nav, ref)
     }
@@ -191,7 +196,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     val playRef = selected?.ref
     val resume = playRef?.item?.let { resumeMsOf(it) } ?: 0L
     BackdropProvider(display.backdrop, rememberDetailScrims(heading)) {
-      Box(Modifier.fillMaxSize()) {
+      ActionFeedbackHost(Modifier.fillMaxSize()) {
         BackdropLayer(Modifier.fillMaxSize(), blurProgress = { heading.backdropProgress })
         // Section changes align the context row; inner card focus must not move the whole page.
         @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -212,6 +217,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                     // Back on the header: scroll all the way up so the title shows again, not just the buttons.
                     onFocused = { accordion.showHeader() },
                     onMarks = { marking = playRef },
+                    danmuRef = playRef, danmu = danmu,
                     availability = if (versions.searching > 0) "正在查找资源…" else if (versions.unresponsive.isNotEmpty()) "资源状态待确认 · 重试" else "暂无资源",
                     onRetry = versions.retry,
                     playRequester = headerPlay,
@@ -229,7 +235,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                                 library.rememberVersion(Keys.work(server, it), v.server.id, v.source.id)
                             }, onPreview = { v -> preview = v }, onPlay = { v ->
                                 play(context, v.ref, v.item.resumeMs, v.source.id, tracksFor(v), versions.alternatesTo(v))
-                            }, entry = accordion.entry(SECTION_VERSIONS))
+                            }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
                         }
                     }
                 } else {
@@ -240,7 +246,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                         TrackSummary(v, tracksFor(v))
                     }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
-                            TrackSection(v, chapters = v.item.chapters.size, runtimeTicks = v.item.runTimeTicks, choice = tracksFor(v), entry = accordion.entry(SECTION_TRACKS)) { c ->
+                            TrackSection(v, chapters = v.item.chapters.size, runtimeTicks = v.item.runTimeTicks, choice = tracksFor(v), entry = accordion.entry(SECTION_TRACKS), hold = holdHint(accordion.order, SECTION_TRACKS)) { c ->
                                 picks = picks + (pickKey(v)!! to c)
                             }
                         }
@@ -270,6 +276,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
             if (playRef == null) null else if (resume > 0) "继续播放 · ${formatClock(resume)}" else "播放",
         )
         marking?.let { m -> SegmentMarksPanel(m.server, m.item, onDismiss = { marking = null }) }
+        DanmuPanelHost(danmu)
       }
     }
 }
@@ -297,12 +304,9 @@ internal fun detailMeta(item: BaseItemDto, display: DetailDisplay): String = lis
 ).joinToString(" · ")
 
 @Composable
-private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: DetailHeadingState, playItem: BaseItemDto?, watchedRef: ServerItem?, instances: List<ServerItem>, onPlay: (Long) -> Unit, onFocused: () -> Unit, onMarks: () -> Unit, availability: String = "暂无资源", onRetry: () -> Unit = {}, playRequester: FocusRequester? = null, onDown: () -> Unit = {}) {
+private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: DetailHeadingState, playItem: BaseItemDto?, watchedRef: ServerItem?, instances: List<ServerItem>, onPlay: (Long) -> Unit, onFocused: () -> Unit, onMarks: () -> Unit, danmuRef: ServerItem?, danmu: DanmuPanelState, availability: String = "暂无资源", onRetry: () -> Unit = {}, playRequester: FocusRequester? = null, onDown: () -> Unit = {}) {
     val app = LocalContext.current.zmby
     val item = ref.item
-    val scope = rememberCoroutineScope()
-    val favorites by app.favorites.items.collectAsState()
-    val favorite = remember(favorites, ref.key) { app.favorites.isFavorite(ref) }
     Column(
         Modifier
             .padding(start = 80.dp, top = 140.dp)
@@ -327,18 +331,16 @@ private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: Detai
                 label = "detailPlay:${item.id}",
             )
             if (resume > 0) GlassButton("从头播放", { onPlay(0) })
-            watchedRef?.let { WatchedButton(it) }
-            if (ref.server != "catalog") GlassIconButton(Glyph.Heart, on = favorite, label = if (favorite) "已收藏" else "加入收藏", onClick = {
-                scope.launch { app.favorites.toggle(ref, (listOf(ref) + instances).distinctBy { it.key }) }
-            })
-            // 待看 next to 收藏 (favorites spec); white when the work is on the list.
-            val watchEntries by app.watchlist.entries.collectAsState()
-            val inWatchlist = remember(watchEntries, ref.key) { app.watchlist.contains(ref) }
-            if (ref.server != "catalog") GlassIconButton(Glyph.Bookmark, label = if (inWatchlist) "已在待看" else "加入待看", on = inWatchlist, onClick = {
-                app.toggleWatchlist(scope, ref, (listOf(ref) + instances).distinctBy { it.key })
-            })
+            // Then the icon buttons in their fixed order (ui-spec §2.15); unavailable ones stay in place, dimmed.
+            ActionDivider()
+            WatchedAction(watchedRef)
+            val copies = (listOf(ref) + instances).distinctBy { it.key }
+            FavoriteAction(ref, copies)
+            WatchlistAction(ref, copies)
             // 本地手动标记: 片头结束 and 片尾开始 for skipping.
-            if (playItem != null) GlassIconButton(Glyph.Marks, label = "片头片尾", onClick = onMarks)
+            MarksAction(enabled = playItem != null, onClick = onMarks)
+            // 弹幕 (ui-spec §2.19): last, after 片头片尾.
+            DanmuAction(danmuRef, danmu)
         }
     }
 }

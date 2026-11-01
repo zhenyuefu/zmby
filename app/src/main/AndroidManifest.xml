@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 播放浮层 (ui-spec §2.16): skip buttons, the next-episode card and 弹幕 over the system player. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -47,5 +50,9 @@
             android:exported="false"
             android:screenOrientation="landscape"
             tools:ignore="DiscouragedApi" />
+
+        <service
+            android:name=".overlay.OverlayService"
+            android:exported="false" />
     </application>
 </manifest>

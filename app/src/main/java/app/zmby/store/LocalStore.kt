@@ -40,6 +40,7 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
     val watchlist = db.watchlist()
     val sources = db.sources()
     val episodeMappings = EpisodeMappings(db)
+    val watchingHidden = db.watchingHidden()
 
     // ---- items
 
@@ -202,6 +203,15 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
         works.upsertInstances(listOf(row.copy(itemJson = json.encodeToString(BaseItemDto.serializer(), item.copy(userData = data)))))
     }
 
+    /** 在看 移除: the resume point is gone, the last played date (the work's activity) stays. */
+    suspend fun clearProgress(server: String, itemId: String) {
+        val row = works.instance(server, itemId) ?: return
+        works.setUserData(server, itemId, 0, row.played)
+        val item = decode(row)?.item ?: return
+        val data = (item.userData ?: app.zmby.emby.UserItemData()).copy(playbackPositionTicks = 0, playedPercentage = null)
+        works.upsertInstances(listOf(row.copy(positionTicks = 0, itemJson = json.encodeToString(BaseItemDto.serializer(), item.copy(userData = data)))))
+    }
+
     // ---- favourites (favorites spec; FavoriteLogic decides, this only persists)
 
     suspend fun loadFavorites(): FavoritesState? {
@@ -249,7 +259,7 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
     suspend fun deleteServer(server: String) {
         works.deleteServerInstances(server)
         lists.deleteServerItems(server)
-        for (prefix in listOf("resume:$server", "nextup:$server", "latest:$server", "browse:$server", "views:$server", "seasons:$server", "episodes:$server", "person:$server")) {
+        for (prefix in listOf("resume:$server", "nextup:$server", "played:$server", "watchseries:$server", "watcheps:$server", "latest:$server", "browse:$server", "views:$server", "seasons:$server", "episodes:$server", "person:$server")) {
             lists.deleteListsLike(prefix)
             lists.deleteItemsLike(prefix)
         }

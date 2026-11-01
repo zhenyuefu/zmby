@@ -40,22 +40,30 @@ enum class Glyph(val path: String, val filled: Boolean = false) {
     Clock("M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M12 7v5l3 2"),
     Info("M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M12 11v6M12 7.5v.5"),
     Skip("M5 5l9 7-9 7zM18 5v14"),
-    Heart("M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"),
+    Heart("M12 20.5s-7.5-4.6-7.5-10.4A4.4 4.4 0 0 1 12 7.3a4.4 4.4 0 0 1 7.5 2.8c0 5.8-7.5 10.4-7.5 10.4z"),
     Chart("M5 20V11M12 20V5M19 20v-6"),
     Grip("M5 9h14M5 15h14"),
-    Bookmark("M7 4h10v16l-5-4-5 4z"),
+    Bookmark("M6.5 3.5h11v17l-5.5-3.8-5.5 3.8z"),
     Sort("M7 4v16M4 17l3 3 3-3M17 20V4M14 7l3-3 3 3"),
     Filter("M4 5h16l-6 8v6l-4-2v-4z"),
-    // Refresh (观影统计, retry), and the manual segment marks on the detail page.
+    // Refresh (我的, retry), and the manual segment marks on the detail page.
     Refresh("M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"),
-    Marks("M4 6h16M4 18h16M8 3v6M16 15v6"),
+    Marks("M3 12h18M7 7v10M17 7v10"),
     // 侧边栏 (MainSidebar.dc.html).
     Home("M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"),
+    // 在看: a play sign in a circle.
+    PlayCircle("M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M10 8.5v7l5.5-3.5z"),
     Film("M6 4h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM3 9h18M8 4v5M16 4v5"),
     Tv("M6 6h12a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3zM8 2l4 4 4-4"),
     Episodes("M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"),
     Servers("M5 4h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM5 13h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z"),
     Close("M6 6l12 12M18 6L6 18"),
+    // 我的 (MainSidebar.dc.html): a head and shoulders.
+    Person("M16 8a4 4 0 1 1-8 0a4 4 0 1 1 8 0M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"),
+    // 季集映射 (Series.dc.html): two opposed arrows.
+    Swap("M4 7h11l-3-3M20 17H9l3 3"),
+    // 弹幕 (DanmuPanel.dc.html): a speech bubble with two lines.
+    Danmu("M4 5h16v11H9l-5 4zM8 9h8M8 12.5h5"),
 }
 
 private val parsed = HashMap<Glyph, Path>()
@@ -63,12 +71,13 @@ private val parsed = HashMap<Glyph, Path>()
 private fun pathOf(glyph: Glyph): Path = parsed.getOrPut(glyph) { PathParser().parsePathString(glyph.path).toPath() }
 
 @Composable
-fun Icon(glyph: Glyph, size: Dp = 26.dp, color: Color = LocalContentColor.current, strokeWidth: Float = 2.2f) {
+fun Icon(glyph: Glyph, size: Dp = 26.dp, color: Color = LocalContentColor.current, strokeWidth: Float = 2.2f, fill: Boolean = glyph.filled) {
     Canvas(Modifier.size(size)) {
         val u = this.size.width / 24f
         scale(u, u, pivot = androidx.compose.ui.geometry.Offset.Zero) {
-            if (glyph.filled) drawPath(pathOf(glyph), color)
-            else drawPath(pathOf(glyph), color, style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            if (fill) drawPath(pathOf(glyph), color)
+            // A line glyph drawn solid (收藏, 待看 turned on) keeps its outline so the shape stays the same size.
+            if (!glyph.filled) drawPath(pathOf(glyph), color, style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
     }
 }

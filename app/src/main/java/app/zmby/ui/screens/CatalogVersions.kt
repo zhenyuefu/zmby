@@ -49,6 +49,13 @@ internal fun rememberCatalogVersions(
     var results by remember(lookupKey, targets, contexts) { mutableStateOf<Map<String, Outcome<List<Version>>>>(cached) }
     var attempt by remember(lookupKey) { mutableIntStateOf(0) }
     var pending by remember(lookupKey, targets, contexts) { mutableStateOf(targets.filter { it !in cached }) }
+    LaunchedEffect(work, results) {
+        withContext(Dispatchers.Default) {
+            results.values.filterIsInstance<Outcome.Ok<List<Version>>>().forEach { result -> result.value.forEach { v ->
+                app.danmuQueries.remember(v.server.id, v.item.id, work, v.canonicalEpisode, v.item.seriesId)
+            } }
+        }
+    }
     LaunchedEffect(lookupKey, resources, allowed, attempt, refresh, initial, lookUp) {
         if (work.ref.kind == "tv" && episode == null) { results = emptyMap(); pending = emptyList(); return@LaunchedEffect }
         if (!lookUp) return@LaunchedEffect

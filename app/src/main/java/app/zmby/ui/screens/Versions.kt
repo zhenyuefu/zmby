@@ -86,7 +86,8 @@ import app.zmby.ui.components.BackdropProvider
 import app.zmby.ui.components.Badge
 import app.zmby.ui.components.Focusable
 import app.zmby.ui.components.GlassButton
-import app.zmby.ui.components.GlassIconButton
+import app.zmby.ui.components.KeyCap
+import app.zmby.ui.components.StatusPill
 import app.zmby.ui.components.Glyph
 import app.zmby.ui.components.HealthDot
 import app.zmby.ui.components.RowTitle
@@ -130,8 +131,9 @@ data class Version(val server: ServerStatus, val item: BaseItemDto, val source: 
 internal fun sourceNumberNote(v: Version): String? {
     val ep = v.canonicalEpisode ?: return null
     if (v.item.parentIndexNumber == ep.season && v.item.indexNumber == ep.number) return null
-    val target = ep.number?.let { "第 ${ep.season} 季 第 $it 集" } ?: ep.title
-    return "片源：${unsortedCode(v.item) ?: "编号缺失"} · 目录：$target"
+    val target = ep.number?.let { "第 ${ep.season} 季第 $it 集" } ?: ep.title
+    val source = v.item.indexNumber?.let { e -> v.item.parentIndexNumber?.let { "第 $it 季第 $e 集" } ?: "第 $e 集" } ?: "编号缺失"
+    return "片源：$source · 目录：$target"
 }
 
 internal fun uniqueVersions(versions: List<Version>): List<Version> = versions.distinctBy { it.key }
@@ -297,6 +299,35 @@ internal fun versionCards(
 }
 
 /** The work key of an episode is its series' key plus season and episode. */
+/** 版本's refresh pill (ui-spec §2.15): 刷新, 刷新中… after a press until the lookup settles, or 「n 台未响应 · 重试」. */
+internal enum class RefreshState {
+    Idle, Refreshing, Unresponsive;
+
+    fun label(unresponsive: Int): String = when (this) {
+        Idle -> "刷新"
+        Refreshing -> "刷新中…"
+        Unresponsive -> "$unresponsive 台未响应 · 重试"
+    }
+}
+
+internal fun refreshState(refreshing: Boolean, searching: Int, unresponsive: Int): RefreshState = when {
+    refreshing && searching > 0 || refreshing && unresponsive == 0 -> RefreshState.Refreshing
+    unresponsive > 0 && searching == 0 -> RefreshState.Unresponsive
+    else -> RefreshState.Idle
+}
+
+/** 「长按 [↑] 剧集　长按 [↓] 音轨与字幕」 with key caps; nothing when there is no neighbour. */
+@Composable
+internal fun HoldHintRow(hold: HoldHint) {
+    if (hold.up == null && hold.down == null) return
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val hint = Color.White.copy(alpha = 0.68f)
+        hold.up?.let { Text("长按", fontSize = 17.sp, color = hint); KeyCap("↑"); Text(it, fontSize = 17.sp, color = hint) }
+        if (hold.up != null && hold.down != null) Spacer(Modifier.width(10.dp))
+        hold.down?.let { Text("长按", fontSize = 17.sp, color = hint); KeyCap("↓"); Text(it, fontSize = 17.sp, color = hint) }
+    }
+}
+
 internal fun episodeSuffix(item: BaseItemDto): String =
     if (item.type == "Episode") ":s%02d:e%02d".format(item.parentIndexNumber ?: 0, item.indexNumber ?: 0) else ""
 
@@ -317,6 +348,8 @@ internal fun VersionSection(
     downTarget: FocusRequester? = null,
     /** The block's default element (ui-spec §2.14): the selected version's row, else the first shown. */
     entry: FocusRequester? = null,
+    /** Where holding ↑ and ↓ goes from here (the neighbouring blocks). */
+    hold: HoldHint = HoldHint(null, null),
 ) {
     val app = LocalContext.current.zmby
     val scope = rememberCoroutineScope()
@@ -325,8 +358,15 @@ internal fun VersionSection(
     var tier by remember(state.default?.tier) { mutableStateOf(state.default?.tier ?: tiers.firstOrNull() ?: QualityTier.OTHER) }
     if (tier !in tiers && tiers.isNotEmpty()) tier = tiers.first()
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        Row(Modifier.padding(horizontal = 80.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            RowTitle("版本", trailing = "长按 ↑↓ 切换栏")
+        // One card per server, in server order; versions on the same server stack inside it.
+        val cards = state.groups.mapNotNull { g -> g.copy(versions = g.versions.filter { it.tier == tier }).takeIf { it.versions.isNotEmpty() } }
+        // 版本 → 画质 → 查找状态 → (hold hints) → 刷新 (SeriesVersions.dc.html).
+        var refreshing by remember { mutableStateOf(false) }
+        LaunchedEffect(refreshing, state.searching > 0) {
+            if (refreshing && state.searching == 0) { kotlinx.coroutines.delay(400); refreshing = false }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 80.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            RowTitle("版本")
             if (tiers.isNotEmpty()) {
                 SegmentedWell(
                     items = tiers.map { t -> Segment(t.label, versions.count { it.tier == t }.toString()) },
@@ -336,16 +376,21 @@ internal fun VersionSection(
                 )
             }
             if (state.searching > 0) {
-                Text("还在查找 ${state.searching} 台", fontSize = 20.sp, color = Z.textTertiary)
-            } else if (state.unresponsive.isNotEmpty()) {
-                // The servers that could not answer, in one focusable pill: OK asks them again.
-                GlassButton("${state.unresponsive.size} 台未响应", state.retry, height = 52.dp, horizontalPadding = 26.dp, fontSize = 20, label = "未响应的服务器 重试")
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HealthDot(Health.Warn, size = 10.dp)
+                    Text("还在查找 ${state.searching} 台", fontSize = 19.sp, color = Color.White.copy(alpha = 0.75f), maxLines = 1)
+                }
             }
-            GlassButton(if (state.searching > 0) "刷新中…" else "刷新", { if (state.searching == 0) state.refresh() },
-                glyph = Glyph.Refresh, height = 52.dp, horizontalPadding = 26.dp, fontSize = 20, label = "刷新版本")
+            Spacer(Modifier.weight(1f))
+            HoldHintRow(hold)
+            // One pill whose content changes, so focus stays on it when 重试 turns into 刷新.
+            val r = refreshState(refreshing, state.searching, state.unresponsive.size)
+            StatusPill(r.label(state.unresponsive.size), {
+                if (r == RefreshState.Unresponsive) state.retry() else { refreshing = true; state.refresh() }
+            }, glyph = Glyph.Refresh, busy = r == RefreshState.Refreshing, warn = r == RefreshState.Unresponsive, focusKey = "versions:refresh",
+                // Without a version card the pill is what entering the block lands on (it sits far right).
+                modifier = if (cards.isEmpty() && entry != null) Modifier.focusRequester(entry) else Modifier)
         }
-        // One card per server, in server order; versions on the same server stack inside it.
-        val cards = state.groups.mapNotNull { g -> g.copy(versions = g.versions.filter { it.tier == tier }).takeIf { it.versions.isNotEmpty() } }
         val selectedGroup = cards.indexOfFirst { g -> g.versions.any { it.key == selected?.key } }.coerceAtLeast(0)
         val cardScroll = rememberRetained("versionCardsScroll", tier) { LazyListState(selectedGroup) }
         var cardsFocused by remember { mutableStateOf(false) }
@@ -458,7 +503,10 @@ private fun ServerVersionCard(
                             modifier = entry?.invoke(v)?.let { Modifier.focusRequester(it) } ?: Modifier,
                             tile = true,
                             selected = isSelected(v),
-                            padding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+                            // 已选 is a 2 px white inner ring, focus the white fill (SeriesVersions.dc.html).
+                            showCheck = false,
+                            selectedRing = true,
+                            padding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
                             onFocus = { onFocusVersion(v) },
                             label = "${server.name} ${versionTitle(v.source)}",
                             focusKey = "version:${v.key}",
@@ -479,7 +527,7 @@ private fun ServerVersionCard(
                                         badges.forEach { Badge(it) }
                                     }
                                 }
-                                sourceNumberNote(v)?.let { Text(it, fontSize = 16.sp, color = secondaryText(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                                sourceNumberNote(v)?.let { Text(it, fontSize = 15.sp, color = secondaryText(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                             }
                         }
                     }
@@ -535,7 +583,7 @@ internal fun rememberEffectiveTracks(v: Version, choice: TrackChoice): Effective
 
 /** 音轨与字幕: audio, subtitle and file cards for one version (columns 1 : 1 : 1.2). */
 @Composable
-internal fun TrackSection(v: Version, chapters: Int, runtimeTicks: Long?, choice: TrackChoice, entry: FocusRequester? = null, onChoice: (TrackChoice) -> Unit) {
+internal fun TrackSection(v: Version, chapters: Int, runtimeTicks: Long?, choice: TrackChoice, entry: FocusRequester? = null, hold: HoldHint = HoldHint(null, null), onChoice: (TrackChoice) -> Unit) {
     val tracks = rememberEffectiveTracks(v, choice)
     val unusable = tracks.unusable
     val audio = remember(v.source) { audioRows(v.source) }
@@ -548,7 +596,11 @@ internal fun TrackSection(v: Version, chapters: Int, runtimeTicks: Long?, choice
         fileRows(v.source, chapters, runtimeTicks) + KeyValue("服务器", "${v.server.name} · ${v.server.lineName}")
     }
     Column(Modifier.padding(horizontal = 80.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        RowTitle("音轨与字幕", trailing = "长按 ↓ 下一栏 · 长按 ↑ 上一栏")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            RowTitle("音轨与字幕")
+            Spacer(Modifier.weight(1f))
+            HoldHintRow(hold)
+        }
         // Measure the file card once, then give both lazy track lists exactly that height.
         // Intrinsic sizing cannot be used with lazy lists, and measuring all tracks defeats laziness.
         Layout(modifier = Modifier.fillMaxWidth(), content = {
@@ -666,9 +718,10 @@ private fun androidx.compose.foundation.layout.ColumnScope.TrackList(
 }
 
 @Composable
-private fun BoxScope.ListScrollIndicator(state: LazyListState) {
+internal fun BoxScope.ListScrollIndicator(state: LazyListState) {
     // Read scroll position during drawing, without recomposing the cards on every scroll frame.
-    Box(Modifier.align(Alignment.CenterEnd).width(4.dp).fillMaxHeight().drawBehind {
+    // 5 px track at 14 % white, thumb at 75 %, only when the list overflows (ui-spec §2.15).
+    Box(Modifier.align(Alignment.CenterEnd).padding(end = 2.dp, top = 4.dp, bottom = 4.dp).width(5.dp).fillMaxHeight().drawBehind {
         val info = state.layoutInfo
         if (!state.canScrollBackward && !state.canScrollForward) return@drawBehind
         val visible = info.visibleItemsInfo
@@ -678,7 +731,7 @@ private fun BoxScope.ListScrollIndicator(state: LazyListState) {
         val itemSize = (visible.sumOf { it.size } / visible.size.toFloat() + info.mainAxisItemSpacing).coerceAtLeast(1f)
         val thumb = (size.height * viewport / (total * itemSize)).coerceIn(24.dp.toPx().coerceAtMost(size.height), size.height)
         val progress = (first.index + (info.viewportStartOffset - first.offset) / itemSize) / (total - viewport / itemSize).coerceAtLeast(1f)
-        drawRoundRect(Color.White.copy(alpha = 0.12f), cornerRadius = CornerRadius(size.width))
-        drawRoundRect(Color.White.copy(alpha = 0.6f), topLeft = Offset(0f, (size.height - thumb) * progress.coerceIn(0f, 1f)), size = Size(size.width, thumb), cornerRadius = CornerRadius(size.width))
+        drawRoundRect(Color.White.copy(alpha = 0.14f), cornerRadius = CornerRadius(size.width))
+        drawRoundRect(Color.White.copy(alpha = 0.75f), topLeft = Offset(0f, (size.height - thumb) * progress.coerceIn(0f, 1f)), size = Size(size.width, thumb), cornerRadius = CornerRadius(size.width))
     })
 }

@@ -24,6 +24,7 @@ data class CatalogWork(
     val poster: String? = null, val backdrop: String? = null, val logo: String? = null,
     val seasons: List<CatalogSeason> = emptyList(), val cast: List<CatalogPerson> = emptyList(),
     val ids: Map<String, String> = emptyMap(),
+    val aliases: List<String> = emptyList(),
 ) {
     fun item() = BaseItemDto(id = "catalog:${ref.key}", name = title, originalTitle = originalTitle,
         type = if (ref.kind == "movie") "Movie" else "Series", productionYear = year, providerIds = ids)

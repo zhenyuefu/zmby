@@ -50,6 +50,9 @@ import app.zmby.ui.components.GlassButton
 import app.zmby.log.ZLog
 import app.zmby.playback.TrackPreference
 import app.zmby.segments.CreditsSkip
+import app.zmby.segments.SkipMode
+import app.zmby.overlay.OverlayPermission
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import app.zmby.data.CacheLimits
 import coil.imageLoader
 import app.zmby.data.QualityPreference
@@ -161,7 +164,7 @@ private fun General(nav: Nav) {
     val steps = remember(percent) { (listOf(70, 80, 85, 90, 95) + percent).distinct().sorted() }
     SettingsGroup("播放进度") {
         ChoiceSetting("看完阈值", steps.map { "$it%" }, steps.indexOf(percent), { settings.setWatchedPercent(steps[it]) })
-        ValueSetting("观影统计", null, onClick = { nav.go(Route.Stats) }, glyph = Glyph.Chart)
+        ValueSetting("我的", null, onClick = { nav.go(Route.Me) }, glyph = Glyph.Person)
     }
 }
 
@@ -177,14 +180,25 @@ private fun Playback(nav: Nav) {
         if (offerNext) ToggleSetting("自动播放下一集", countdown, { settings.upNextCountdown.set(!countdown) })
         ToggleSetting("播放失败自动换源", failover, { settings.autoFailover.set(!failover) })
     }
+    val overlay = overlaySetting()
+    Danmu(overlay)
     val skipIntro by settings.skipIntro.flow.collectAsState()
     val skipRecap by settings.skipRecap.flow.collectAsState()
     val skipCredits by settings.skipCredits.flow.collectAsState()
+    val creditsMode by settings.skipCreditsMode.flow.collectAsState()
     val rows by app.sources.rows.collectAsState()
+    // 显示按钮 needs the overlay; without it the skip happens by itself (ui-spec §2.16).
+    val buttonNote = if (overlay) null else "需要打开播放浮层，否则按自动跳过处理"
+    val modes = SkipMode.entries.map { it.label }
     SettingsGroup("片头片尾") {
-        ToggleSetting("跳过片头", skipIntro, { settings.skipIntro.set(!skipIntro) })
-        ToggleSetting("跳过回顾", skipRecap, { settings.skipRecap.set(!skipRecap) })
+        ChoiceSetting("跳过片头", modes, skipIntro.ordinal, { settings.skipIntro.set(SkipMode.entries[it]) }, sub = buttonNote.takeIf { skipIntro == SkipMode.Button })
+        ChoiceSetting("跳过回顾", modes, skipRecap.ordinal, { settings.skipRecap.set(SkipMode.entries[it]) }, sub = buttonNote.takeIf { skipRecap == SkipMode.Button })
         ChoiceSetting("跳过片尾", CreditsSkip.entries.map { it.label }, skipCredits.ordinal, { settings.skipCredits.set(CreditsSkip.entries[it]) })
+        if (skipCredits != CreditsSkip.Off) {
+            val creditModes = listOf(SkipMode.Auto, SkipMode.Button)
+            ChoiceSetting("片尾跳过方式", creditModes.map { it.label }, creditModes.indexOf(creditsMode).coerceAtLeast(0), { settings.skipCreditsMode.set(creditModes[it]) },
+                sub = buttonNote.takeIf { creditsMode == SkipMode.Button })
+        }
         rows.size
         ValueSetting(SourceFeature.Segments.label, app.sources.label(SourceFeature.Segments), onClick = { nav.go(Route.DataSource(SourceFeature.Segments)) })
     }
@@ -201,6 +215,86 @@ private fun Playback(nav: Nav) {
             if (draft.isNotBlank() && VersionPrefs.pattern(draft) == null) Text("这个正则无效，不会生效", fontSize = 18.sp, color = Z.warn, modifier = Modifier.padding(top = 8.dp))
         }
     }
+}
+
+/**
+ * 播放浮层 (ui-spec §2.16): switching it on opens 「允许显示在其他应用的上层」 when zmby is not
+ * allowed yet; the row says what is missing and checks again when the user comes back. Returns
+ * whether the overlay will actually be used.
+ */
+@Composable
+private fun overlaySetting(): Boolean {
+    val context = LocalContext.current
+    val settings = context.zmby.settings
+    val on by settings.playbackOverlay.flow.collectAsState()
+    var granted by remember { mutableStateOf(OverlayPermission.granted(context)) }
+    LifecycleResumeEffect(Unit) {
+        granted = OverlayPermission.granted(context)
+        onPauseOrDispose { }
+    }
+    fun openSystem() {
+        runCatching { context.startActivity(OverlayPermission.settingsIntent(context)) }
+            .onFailure { ZLog.w("Settings", "overlay permission page unavailable", it) }
+    }
+    SettingsGroup("播放浮层") {
+        ToggleSetting("播放浮层", on, {
+            settings.playbackOverlay.set(!on)
+            if (!on && !OverlayPermission.granted(context)) openSystem()
+        }, sub = "播放时在系统播放器上方显示跳过按钮与下一集卡")
+        if (on && !granted) {
+            ValueSetting("需要授权", "去设置", onClick = ::openSystem, sub = "在「允许显示在其他应用的上层」列表里找到 zmby 并允许")
+        }
+    }
+    return on && granted
+}
+
+/**
+ * 弹幕 (danmu design): drawn on the playback overlay from a dandanplay-compatible server the user
+ * types; nothing is built in. AppId and AppSecret only for the official, signed API.
+ */
+@Composable
+private fun Danmu(overlay: Boolean) {
+    val context = LocalContext.current
+    val settings = context.zmby.settings
+    val on by settings.danmu.flow.collectAsState()
+    val mode by settings.danmuMode.flow.collectAsState()
+    val rows by settings.danmuRows.flow.collectAsState()
+    val opacity by settings.danmuOpacity.flow.collectAsState()
+    val base by settings.danmuApiBase.flow.collectAsState()
+    val appId by settings.danmuAppId.flow.collectAsState()
+    val secret by settings.danmuAppSecret.flow.collectAsState()
+    val zidoo = remember { app.zmby.zidoo.ZidooIntents.installedPlayer(context)?.subtitles == app.zmby.zidoo.ZidooPlayer.SubtitleDelivery.LocalStrm }
+    val note = danmuNote(mode, overlay, base.isNotBlank(), zidoo)
+    SettingsGroup("弹幕") {
+        ToggleSetting("显示弹幕", on, { settings.danmu.set(!on) }, sub = note ?: "按片名与季集号从弹幕服务器匹配")
+        if (on) {
+            val modes = app.zmby.data.DanmuMode.entries
+            ChoiceSetting("显示方式", modes.map { it.label }, mode.ordinal, { settings.danmuMode.set(modes[it]) }, sub = danmuModeSub(mode))
+            val rowChoices = (1..5).toList()
+            ChoiceSetting("行数", rowChoices.map { "$it 行" }, rowChoices.indexOf(rows).coerceAtLeast(0), { settings.danmuRows.set(rowChoices[it]) })
+            val opacityChoices = listOf(100, 75, 50)
+            ChoiceSetting("不透明度", opacityChoices.map { "$it%" }, opacityChoices.indexOf(opacity).coerceAtLeast(0), { settings.danmuOpacity.set(opacityChoices[it]) })
+            Column(Modifier.padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Field("弹幕服务器（弹弹play 兼容）", base, { settings.danmuApiBase.set(it.trim()) }, KeyboardType.Uri, placeholder = "https://example.com")
+                Field("AppId（官方接口才需要）", appId, { settings.danmuAppId.set(it.trim()) }, KeyboardType.Ascii)
+                Field("AppSecret（官方接口才需要）", secret, { v -> ZLog.secret(v.trim()); settings.danmuAppSecret.set(v.trim()) }, KeyboardType.Password, secret = true, last = true)
+            }
+        }
+    }
+}
+
+/** Why 弹幕 will not show as set, or null when nothing is missing. */
+internal fun danmuNote(mode: app.zmby.data.DanmuMode, overlay: Boolean, address: Boolean, zidooPlayer: Boolean): String? = when {
+    !address -> "填写弹幕服务器后生效"
+    mode == app.zmby.data.DanmuMode.Subtitle && !zidooPlayer -> if (overlay) "没有芝杜系统播放器，改用浮层显示" else "需要芝杜系统播放器"
+    mode == app.zmby.data.DanmuMode.Overlay && !overlay -> "需要打开播放浮层"
+    else -> null
+}
+
+/** What each 显示方式 means for the user. */
+internal fun danmuModeSub(mode: app.zmby.data.DanmuMode): String = when (mode) {
+    app.zmby.data.DanmuMode.Overlay -> "zmby 画在播放器上方，需要播放浮层"
+    app.zmby.data.DanmuMode.Subtitle -> "作为第二路字幕交给播放器；第一次需在播放器菜单里打开双字幕模式，并在字幕2里选 danmu"
 }
 
 @Composable
@@ -224,11 +318,12 @@ private fun Tracks() {
 @Composable
 private fun HomeRows(nav: Nav) {
     val settings = LocalContext.current.zmby.settings
-    val nextUp by settings.showNextUpRow.flow.collectAsState()
+    val nextUp by settings.watchingIncludesNextUp.flow.collectAsState()
     val latest by settings.showLatestRow.flow.collectAsState()
     val watchlist by settings.showWatchlistRow.flow.collectAsState()
     SettingsGroup("首页") {
-        ToggleSetting("「下一集」行", nextUp, { settings.showNextUpRow.set(!nextUp) })
+        // 继续观看 and 下一集 are one 在看 row now (ui-spec §2.18): one switch, for whether it includes 下一集.
+        ToggleSetting("「在看」包含下一集", nextUp, { settings.watchingIncludesNextUp.set(!nextUp) })
         ToggleSetting("「最新添加」行", latest, { settings.showLatestRow.set(!latest) })
         ToggleSetting("「待看」行", watchlist, { settings.showWatchlistRow.set(!watchlist) })
     }

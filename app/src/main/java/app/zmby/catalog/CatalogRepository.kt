@@ -15,6 +15,29 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
     suspend fun cached(ref: CatalogId): CatalogWork? = withContext(Dispatchers.IO) {
         cache.get(viewKey(ref))?.let { runCatching { api.json.decodeFromString(CatalogWork.serializer(), it.json) }.getOrNull() }
     }
+
+    /** Identity-scoped alternate names for danmu matching; never a fuzzy catalogue lookup. */
+    suspend fun danmuAliases(ref: CatalogId): List<String> = withContext(Dispatchers.IO) {
+        if (ref.source == "bangumi") {
+            val body = api.bgm("subjects/${ref.id}").obj()
+            return@withContext (listOfNotNull(body.str("name_cn"), body.str("name")) +
+                body.rows("infobox").filter { it.str("key") == "别名" }.flatMap { info ->
+                    (info["value"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.str("v") }
+                }).distinct()
+        }
+        if (!configured) return@withContext emptyList()
+        val body = api.tmdb("${ref.kind}/${ref.id}", mapOf("language" to textLanguage(), "append_to_response" to "translations,alternative_titles"))
+        names(body, if (ref.kind == "movie") "title" else "name")
+    }
+
+    private fun names(body: JsonObject, field: String): List<String> {
+        val translated = body.child("translations").rows("translations")
+            .sortedBy { if (it.str("iso_639_1") == "zh") 0 else if (it.str("iso_639_1") == "en") 1 else 2 }
+            .mapNotNull { it.child("data").str(field) }
+        val alternative = body.child("alternative_titles").let { it.rows("titles") + it.rows("results") }
+            .mapNotNull { it.str("title") }
+        return (translated + listOfNotNull(body.str(field), body.str("original_$field")) + alternative).filter { it.isNotBlank() }.distinct()
+    }
     suspend fun work(ref: CatalogId): CatalogWork = withContext(Dispatchers.IO) {
         val result = if (ref.source == "tmdb") tmdb(ref) else bangumi(ref)
         cache.put(CatalogCache(viewKey(ref), api.json.encodeToString(CatalogWork.serializer(), result), System.currentTimeMillis()))
@@ -73,6 +96,17 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
 
     private fun recsKey(workKey: String) = "recs:v1:$workKey:${textLanguage()}"
 
+    /** 我的 › 追剧日历 as last built (local first; local-data spec 追剧日历的数据). */
+    suspend fun storedAiring(): app.zmby.stats.StoredAiring? = withContext(Dispatchers.IO) {
+        cache.get(airingKey())?.let { runCatching { api.json.decodeFromString(app.zmby.stats.StoredAiring.serializer(), it.json) }.getOrNull() }
+    }
+
+    suspend fun storeAiring(airing: app.zmby.stats.StoredAiring) = withContext(Dispatchers.IO) {
+        cache.put(CatalogCache(airingKey(), api.json.encodeToString(app.zmby.stats.StoredAiring.serializer(), airing), airing.fetchedAt))
+    }
+
+    private fun airingKey() = "airing:v1:${textLanguage()}"
+
     private fun brief(row: JsonObject, hint: String? = null): CatalogWork? {
         val kind = row.str("media_type") ?: hint ?: return null
         val id = row.str("id") ?: return null
@@ -113,7 +147,8 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
             art(ArtworkLanguage.choose(images.rows("backdrops"), posterLanguage(), original, neutral = true), "w1280"),
             art(ArtworkLanguage.choose(images.rows("logos"), logoLanguage(), original), "w500"),
             body.rows("seasons").mapNotNull { s -> s.num("season_number")?.let { CatalogSeason(it, s.str("name") ?: "第 $it 季", s.num("episode_count") ?: 0, s.str("air_date")) } },
-            cast.groupBy { it.key }.values.map { people -> people.first().copy(role = people.map { it.role }.filter { it.isNotBlank() }.distinct().joinToString(" · ")) }, ids)
+            cast.groupBy { it.key }.values.map { people -> people.first().copy(role = people.map { it.role }.filter { it.isNotBlank() }.distinct().joinToString(" · ")) }, ids,
+            aliases = names(body, titleField))
     }
     suspend fun episodes(work: CatalogWork, season: Int): List<CatalogEpisode> = withContext(Dispatchers.IO) {
         if (work.ref.source == "tmdb") {

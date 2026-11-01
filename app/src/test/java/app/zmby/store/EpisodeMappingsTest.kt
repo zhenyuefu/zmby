@@ -62,4 +62,20 @@ class EpisodeMappingsTest {
             assertEquals("302", rows.single { it.itemId == "file" }.targetEpisodeId)
         } finally { db.close() }
     }
+
+    @Test fun `saving with replace swaps overlapping ranges in one step and leaves others`() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, ZmbyDatabase::class.java).allowMainThreadQueries().build()
+        try {
+            val mappings = EpisodeMappings(db)
+            mappings.save(rule())
+            mappings.save(rule("later", 6, 10))
+            val wider = rule("wider", 3, 7)
+            assertTrue(wider.overlaps(rule()) && wider.overlaps(rule("later", 6, 10)))
+            assertFalse(wider.overlaps(rule("other-server").copy(serverId = "b")))
+            mappings.save(wider, replace = true)
+            assertEquals(listOf("wider"), mappings.observe("tmdb:tv:10").first().map { it.id })
+            mappings.save(rule("apart", 8, 9))
+            assertEquals(2, mappings.observe("tmdb:tv:10").first().size)
+        } finally { db.close() }
+    }
 }

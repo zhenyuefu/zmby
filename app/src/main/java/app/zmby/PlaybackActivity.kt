@@ -32,11 +32,25 @@ import app.zmby.playback.PlaybackMonitor
 import app.zmby.playback.SubtitlePrepareException
 import app.zmby.playback.SubtitleSelectionVerifier
 import app.zmby.playback.TrackChoice
+import app.zmby.playback.SavedPlayback
 import app.zmby.playback.TrackLanguages
 import app.zmby.playback.Alternate
 import app.zmby.playback.relayReturnAction
 import app.zmby.playback.RelayReturnAction
 import app.zmby.playback.Failover
+import app.zmby.playback.DanmuSubtitle
+import app.zmby.playback.LocalStrm
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import app.zmby.data.DanmuMode
+import app.zmby.danmu.DanmuAss
+import app.zmby.playback.TrackPreference
+import app.zmby.overlay.OverlayPermission
+import app.zmby.overlay.DanmuLayer
+import app.zmby.overlay.PlaybackOverlay
+import app.zmby.overlay.UpNextCard
+import app.zmby.overlay.UpNextChoice
 import app.zmby.segments.SegmentSkipper
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -72,6 +86,8 @@ class PlaybackActivity : ComponentActivity() {
     private val next = mutableStateOf<BaseItemDto?>(null)
     /** Offered when the chosen external subtitle could not be prepared. */
     private val playWithoutSubtitle = mutableStateOf<(() -> Unit)?>(null)
+    /** Shown once before the first 播放器字幕 playback: how to switch the player's second subtitle on. */
+    private val dualGuide = mutableStateOf<kotlinx.coroutines.CompletableDeferred<Unit>?>(null)
     private var current: BaseItemDto? = null
     /** The server the item belongs to; progress and the next episode come from it. */
     private var server: String = ""
@@ -101,7 +117,10 @@ class PlaybackActivity : ComponentActivity() {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     val upNext = next.value
-                    if (upNext != null) {
+                    val guide = dualGuide.value
+                    if (guide != null) {
+                        DanmuDualGuide { guide.complete(Unit) }
+                    } else if (upNext != null) {
                         NextEpisodePrompt(upNext)
                     } else {
                         Text(message.value, fontSize = 30.sp, color = if (failed.value) Z.warn else Z.textSecondary)
@@ -138,6 +157,32 @@ class PlaybackActivity : ComponentActivity() {
             val sourceId = intent.getStringExtra(EXTRA_SOURCE_ID)
             tried += Failover.key(server, sourceId)
             start(item, requestedStartMs, sourceId, tracks)
+        }
+    }
+
+    /**
+     * 播放器字幕 (danmu design): an app cannot switch the Zidoo player's second subtitle on, so the
+     * first time the user is told how; the player then keeps it for every 弹幕 playback (one video name).
+     */
+    @androidx.compose.runtime.Composable
+    private fun DanmuDualGuide(onStart: () -> Unit) {
+        androidx.activity.compose.BackHandler(onBack = onStart)
+        Column(
+            Modifier.width(1100.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            Text("用播放器字幕显示弹幕", fontSize = 40.sp, fontWeight = FontWeight.Black)
+            Text("弹幕作为第二路字幕交给播放器。第一次需要在播放器里打开双字幕：", fontSize = 24.sp, color = Z.textSecondary)
+            for ((n, step) in DANMU_DUAL_STEPS.withIndex()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${n + 1}", fontSize = 24.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.16f), androidx.compose.foundation.shape.CircleShape).padding(horizontal = 14.dp, vertical = 4.dp))
+                    Text(step, fontSize = 26.sp)
+                }
+            }
+            Text("设置一次即可，之后用这种方式播放会自动显示弹幕。主字幕照常在「字幕1」里。", fontSize = 22.sp, color = Z.textSecondary)
+            GlassButton("知道了，开始播放", onStart, Modifier.focusRequester(rememberInitialFocus(Unit)), glyph = Glyph.Play)
         }
     }
 
@@ -204,6 +249,8 @@ class PlaybackActivity : ComponentActivity() {
         switching = false
         val percent = app.settings.watchedPercent.value
         val playServer = server
+        // 播放浮层 (ui-spec §2.16): only when switched on and allowed; otherwise skips stay automatic.
+        val overlayOn = app.settings.playbackOverlay.value && OverlayPermission.granted(this)
         // 片头片尾: looked up beside the preparation and never waited for (local-data spec).
         val plan = app.appScope.async(Dispatchers.IO) {
             runCatching { app.segmentPlan(playServer, item, item.runtimeMs) }
@@ -212,9 +259,31 @@ class PlaybackActivity : ComponentActivity() {
         }
         val skipper = app.appScope.async {
             plan.await()?.takeIf { it.isNotEmpty() }?.let {
-                SegmentSkipper.of(it, episode = item.type == "Episode", intro = app.settings.skipIntro.value, recap = app.settings.skipRecap.value, credits = app.settings.skipCredits.value)
+                SegmentSkipper.of(
+                    it, episode = item.type == "Episode",
+                    intro = app.settings.skipIntro.value, recap = app.settings.skipRecap.value,
+                    credits = app.settings.skipCredits.value, creditsMode = app.settings.skipCreditsMode.value,
+                    buttons = overlayOn,
+                )
             }
         }
+
+        // 弹幕: matched and loaded beside the preparation (danmu design). 播放器字幕 bakes them into
+        // an ASS for com.zidoo.player (local STRM); any other player, or the overlay mode, draws them
+        // on the overlay once ready.
+        val danmuEndpoint = app.danmuEndpoint()
+        val danmuRows = app.settings.danmuRows.value
+        val delivery = ZidooIntents.installedPlayer(this)?.subtitles ?: ZidooPlayer.SubtitleDelivery.IntentExtras
+        val danmuWanted = app.settings.danmu.value && danmuEndpoint.enabled
+        val danmuAsSubtitle = danmuWanted && danmuSubtitleMode(app.settings.danmuMode.value, delivery)
+        if (danmuWanted && app.settings.danmuMode.value == DanmuMode.Subtitle && !danmuAsSubtitle) {
+            ZLog.i(TAG, "弹幕 as subtitle needs com.zidoo.player; ${if (overlayOn) "using the overlay" else "no 弹幕 this time"}")
+        }
+        val danmuOnOverlay = danmuWanted && !danmuAsSubtitle && overlayOn
+        val danmu = if (danmuAsSubtitle || danmuOnOverlay) app.appScope.async(Dispatchers.IO) {
+            val query = app.danmuQueries.query(playServer, item)
+            app.danmu.load(danmuEndpoint, "$playServer:${item.id}", item, danmuRows, query, app.danmuQueries::enrich)
+        } else null
 
         lifecycleScope.launch {
             val prepared = try {
@@ -224,13 +293,19 @@ class PlaybackActivity : ComponentActivity() {
                     subtitles = target?.subtitles ?: ZidooPlayer.SubtitleDelivery.IntentExtras,
                     audioLanguage = languages?.audio ?: app.settings.audioLanguage.value,
                     subtitleLanguage = languages?.subtitle ?: app.settings.subtitleLanguage.value,
+                    danmu = if (danmuAsSubtitle && danmu != null) DanmuSubtitle(
+                        comments = { danmu.await() },
+                        config = DanmuAss.Config.of(danmuRows, app.settings.danmuOpacity.value),
+                    ) else null,
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 skipper.cancel()
+                danmu?.cancel()
                 throw e
             } catch (e: SubtitlePrepareException) {
                 ZLog.w(TAG, "subtitle prepare failed for ${item.id}", e)
                 skipper.cancel()
+                danmu?.cancel()
                 if (retry == null) {
                     playWithoutSubtitle.value = { start(item, startMs, sourceId, tracks.copy(subtitle = ZidooTracks.SUBTITLE_OFF), languages) }
                 }
@@ -238,10 +313,32 @@ class PlaybackActivity : ComponentActivity() {
             } catch (e: Exception) {
                 ZLog.w(TAG, "prepare failed for ${item.id}", e)
                 skipper.cancel()
+                danmu?.cancel()
                 if (switchToNext(item, "无法获取播放地址")) return@launch
                 return@launch fail("无法获取播放地址：${e.userMessage()}")
             }
             carried = prepared.languages
+            if (prepared.local?.baseName == LocalStrm.DANMU_BASE && !app.settings.danmuDualGuideSeen.value) {
+                val confirmed = kotlinx.coroutines.CompletableDeferred<Unit>()
+                dualGuide.value = confirmed
+                try {
+                    confirmed.await()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    app.releaseLocal(prepared.local)
+                    prepared.releaseRelay()
+                    skipper.cancel()
+                    throw e
+                } finally {
+                    dualGuide.value = null
+                }
+                app.settings.danmuDualGuideSeen.set(true)
+            }
+            val overlay = if (overlayOn) PlaybackOverlay(
+                applicationContext, app.appScope, skipper,
+                upNext = upNextCard(item, playServer, prepared.languages),
+                countdown = app.settings.upNextCountdown.value,
+                danmu = danmu?.takeIf { danmuOnOverlay }?.let { DanmuLayer(applicationContext, app.appScope, it, danmuRows, app.settings.danmuOpacity.value) },
+            ) else null
             val zidoo = ZidooIntents.installedPlayer(this@PlaybackActivity)
             val useZidoo = zidoo != null
             val playerIntent = if (zidoo != null) {
@@ -251,8 +348,19 @@ class PlaybackActivity : ComponentActivity() {
             }
             val monitor = PlaybackMonitor(app.zidooStatus, prepared.reporter, prepared.startPositionMs, prepared.runtimeMs, percent, skipper = skipper,
                 acceptsStatus = { status -> prepared.statusPaths.any { matchesPlaybackPath(status.path, it) } },
+                onStarted = {
+                    prepared.selection?.let { selection ->
+                        val saved = SavedPlayback(playServer, item.id, selection, System.currentTimeMillis())
+                        app.appScope.launch(Dispatchers.IO) { app.playbackMemory.remember(saved) }
+                    }
+                },
+                session = app.playSessions.sink(playServer, item),
+                overlay = overlay,
+                reportScope = app.appScope,
             )
+            overlay?.seek = { target -> monitor.seekFromOverlay(target) }
             app.activePlayback?.let { old ->
+                old.overlay?.close()
                 old.watchJob.cancel()
                 app.releaseLocal(old.local)
                 old.prepared.releaseRelay()
@@ -260,14 +368,17 @@ class PlaybackActivity : ComponentActivity() {
             val local = prepared.local
             val job = app.appScope.launch {
                 if (!useZidoo) return@launch
-                if (local != null) {
+                // The 弹幕 file is a second external subtitle: the check would take it for the chosen one.
+                if (local != null && local.extras.isEmpty()) {
                     val strings = ZidooIntents.playerStrings(app, zidoo)
                     launch { SubtitleSelectionVerifier(app.zidooStatus, app.zidooStatus, strings).verify(local.strm.name) }
                 }
                 monitor.watch()
             }
             launchedAt = android.os.SystemClock.elapsedRealtime()
-            app.activePlayback = ActivePlayback(monitor, job, local, prepared, server, item, launchedAt)
+            app.activePlayback = ActivePlayback(monitor, job, local, prepared, server, item, launchedAt, overlay)
+            // Started while this screen is in front: a foreground service may not start later.
+            overlay?.open()
             message.value = "正在播放：${item.displayTitle}"
             ZLog.i(
                 TAG,
@@ -279,6 +390,7 @@ class PlaybackActivity : ComponentActivity() {
             } catch (e: RuntimeException) {
                 ZLog.e(TAG, "no player for ${prepared.launch.mimeType}", e)
                 job.cancel()
+                overlay?.close()
                 app.activePlayback = null
                 app.releaseLocal(local)
                 prepared.releaseRelay()
@@ -297,6 +409,9 @@ class PlaybackActivity : ComponentActivity() {
         app.activePlayback = null
         if (active == null) return finish()
         // Cleanup must survive an activity recreation while the cancelled poll is finishing.
+        val overlayChoice = active.overlay?.choice ?: UpNextChoice.None
+        val overlayNext = active.overlay?.card?.episode
+        active.overlay?.close()
         withContext(kotlinx.coroutines.NonCancellable) {
             active.watchJob.cancelAndJoin()
             app.releaseLocal(active.local)
@@ -349,12 +464,18 @@ class PlaybackActivity : ComponentActivity() {
             // Give the stop report a moment so the screen underneath reloads the new resume point.
             val done = withTimeoutOrNull(REPORT_WAIT_MS) { outcome.await() }
             if (item?.type != "Episode" || done?.watched != true || !app.settings.offerNextEpisode.value) return@launch finish()
-            val upNext = runCatching { app.library.nextEpisode(ServerItem(server, item)) }
+            val upNext = overlayNext ?: runCatching { app.library.nextEpisode(ServerItem(server, item)) }
                 .onFailure { ZLog.w(TAG, "next episode lookup failed", it) }
                 .getOrNull()
             if (upNext == null) return@launch finish()
+            if (overlayChoice == UpNextChoice.PlayNow) {
+                // 立即播放 on the overlay's card: already chosen, no second prompt.
+                ZLog.i(TAG, "play next episode ${upNext.id} ${episodeCode(upNext)} (chosen on the overlay)")
+                return@launch playNext(upNext)
+            }
             ZLog.i(TAG, "offer next episode ${upNext.id} ${episodeCode(upNext)}")
-            countdown.value = if (app.settings.upNextCountdown.value) UP_NEXT_SECONDS else null
+            val count = app.settings.upNextCountdown.value && overlayChoice != UpNextChoice.Cancelled
+            countdown.value = if (count) UP_NEXT_SECONDS else null
             next.value = upNext
         }
     }
@@ -382,6 +503,37 @@ class PlaybackActivity : ComponentActivity() {
         return true
     }
 
+    /**
+     * The overlay's next-episode card (ui-spec §2.16 `PlayerNext`): looked up while this episode plays,
+     * on the same server, with the languages this playback uses. Null for films or with Up Next off.
+     */
+    private fun upNextCard(item: BaseItemDto, playServer: String, languages: TrackLanguages?): kotlinx.coroutines.Deferred<UpNextCard?>? {
+        val app = zmby
+        if (item.type != "Episode" || !app.settings.offerNextEpisode.value) return null
+        return app.appScope.async(Dispatchers.IO) {
+            val ep = runCatching { app.library.nextEpisode(ServerItem(playServer, item)) }
+                .onFailure { ZLog.w(TAG, "next episode lookup for the overlay failed", it) }
+                .getOrNull() ?: return@async null
+            UpNextCard(
+                episode = ep,
+                title = listOfNotNull(episodeCode(ep), episodeName(ep)).joinToString(" · ").ifBlank { ep.displayTitle },
+                imageUrl = app.library.landscapeImage(ServerItem(playServer, ep)),
+                meta = listOfNotNull(app.registry.get(playServer)?.name, languages?.let(::languageLine)).joinToString(" · "),
+            )
+        }
+    }
+
+    private fun languageLine(l: TrackLanguages): String? {
+        fun name(code: String) = TrackPreference.LANGUAGES.firstOrNull { it.first == code }?.second
+        val audio = name(l.audio)
+        val subtitle = if (l.subtitle == TrackPreference.OFF) "无字幕" else name(l.subtitle)?.let { "${it}字幕" }
+        return listOfNotNull(audio, subtitle).joinToString(" · ").takeIf { it.isNotBlank() }
+    }
+
+    /** 播放器字幕 only works with a player that takes a local subtitle beside a .strm (com.zidoo.player). */
+    private fun danmuSubtitleMode(mode: DanmuMode, delivery: ZidooPlayer.SubtitleDelivery): Boolean =
+        mode == DanmuMode.Subtitle && delivery == ZidooPlayer.SubtitleDelivery.LocalStrm
+
     private fun fail(text: String) {
         ZLog.w(TAG, "playback screen shows: $text")
         message.value = text
@@ -401,6 +553,11 @@ class PlaybackActivity : ComponentActivity() {
         private const val EXTRA_ALTERNATES = "alternates"
         private const val REPORT_WAIT_MS = 3_000L
         private const val UP_NEXT_SECONDS = 10
+        /** The player's own menu path (danmu2ass research §2). */
+        val DANMU_DUAL_STEPS = listOf(
+            "播放时按遥控器的「菜单」键，进入「字幕」，打开「双字幕模式」",
+            "在「字幕2」里选择名字带「danmu」的字幕",
+        )
         /** Long enough to read which version it switched to. */
         private const val SWITCH_NOTICE_MS = 1_800L
 

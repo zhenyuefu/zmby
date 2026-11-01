@@ -53,6 +53,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import app.zmby.Diagnostics
+import app.zmby.aggregate.WatchCard
 import app.zmby.data.Library
 import app.zmby.data.InputField
 import app.zmby.data.LibraryView
@@ -67,6 +68,7 @@ import app.zmby.media.remainingLabel
 import app.zmby.ui.Nav
 import app.zmby.ui.Route
 import app.zmby.ui.components.BackdropScreen
+import app.zmby.ui.components.ActionFeedbackHost
 import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.GlassSurface
 import app.zmby.ui.components.Glyph
@@ -110,6 +112,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import app.zmby.ui.LocalNavEntry
 
+/** How many 在看 cards the home row shows before 「全部 ›」. */
+private const val HOME_WATCHING = 12
+
 /** Top of the focusable content, just under the top bar (which ends at 110 on the design grid). */
 private val CONTENT_TOP = 120.dp
 
@@ -121,7 +126,7 @@ data class BrowseTarget(val server: String, val libraryId: String, val types: St
 
 /**
  * The home tabs (首页, 电影, 剧集, 收藏, 待看) under one screen, switched from the side bar (ui-spec
- * §2.1, 2026-10-26): Left at a row's start opens the bar; Menu also opens it on 首页.
+ * §2.1, 2026-10-26): Left at a row's start opens the bar; Menu opens it on 首页 except on 在看 cards.
  * Back closes the bar, and two consecutive Back presses on 首页 confirm exit.
  */
 @Composable
@@ -139,6 +144,9 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
     val backdropShift = remember(carousel) { { -carousel.scrolled } }
     val vm = screenModel("home") { HomeViewModel(app) }
     val source by vm.source.collectAsStateWithLifecycle()
+    val watching by vm.watching.collectAsStateWithLifecycle()
+    var watchingMenu by remember { mutableStateOf<WatchCard?>(null) }
+    var removedWatching by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var picking by remember { mutableStateOf(false) }
     var tokenInput by remember { mutableStateOf(false) }
     var browseTarget by rememberRetained("browseTarget") { mutableStateOf<BrowseTarget?>(null) }
@@ -151,6 +159,21 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
     LaunchedEffect(enterPage) { if (enterPage > 0) entry.requestWhenReady() }
     val memory = LocalNavEntry.current?.focus
     val focusManager = LocalFocusManager.current
+
+    fun closeWatchingMenu() {
+        watchingMenu = null
+        memory?.beginRestore()
+    }
+    LaunchedEffect(watching) {
+        val (key, index) = removedWatching ?: return@LaunchedEffect
+        if (watching.any { it.key == key }) return@LaunchedEffect
+        removedWatching = null
+        val neighbor = watching.take(HOME_WATCHING).getOrNull(index.coerceAtMost(HOME_WATCHING - 1).coerceAtMost(watching.lastIndex))
+        if (neighbor != null && memory != null) {
+            memory.lastKey = "watching:${neighbor.key}"
+            memory.beginRestore()
+        } else entry.requestWhenReady()
+    }
 
     fun closeSide() {
         sideOpen = false
@@ -170,7 +193,7 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
             nav.go(
                 when (item) {
                     SideNavItem.Search -> Route.Search
-                    SideNavItem.Stats -> Route.Stats
+                    SideNavItem.Me -> Route.Me
                     SideNavItem.Servers -> Route.Servers
                     else -> Route.Settings
                 },
@@ -199,14 +222,18 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
     }
 
     CompositionLocalProvider(LocalSideNavBlock provides sideBlock) {
+    ActionFeedbackHost(Modifier.fillMaxSize()) {
     BackdropScreen(
         null,
         HOME_SCRIMS,
         modifier = Modifier.onPreviewKeyEvent { e ->
             if (e.type == KeyEventType.KeyDown && e.key != Key.Back) exitConfirmation.reset()
-            // Capture Menu before the home cards' watchlist shortcuts, including its key-up/repeats.
+            // 在看 has its own actions. Other home cards keep the sidebar Menu shortcut.
             if (tab == 0 && sideBlock.intValue == 0 && e.key == Key.Menu) {
-                if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) sideOpen = true
+                if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) {
+                    val card = watching.firstOrNull { "watching:${it.key}" == memory?.lastKey }
+                    if (card != null && !sideOpen) watchingMenu = card else sideOpen = true
+                }
                 true
             } else false
         }.onKeyEvent { e ->
@@ -226,11 +253,12 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
                 val series = lib.item.collectionType == "tvshows"
                 browseTarget = BrowseTarget(lib.server, lib.item.id, if (series) "Series" else "Movie")
                 onTab(if (series) 2 else 1)
-            })
+            }, onWatching = { memory?.lastKey = null; onTab(WATCHING_TAB); enterPage++ }, onWatchingMenu = { watchingMenu = it })
             1 -> BrowseScreen(nav, "Movie", browseTarget?.takeIf { it.types == "Movie" }, search, entry) { browseTarget = null }
             2 -> BrowseScreen(nav, "Series", browseTarget?.takeIf { it.types == "Series" }, search, entry) { browseTarget = null }
             3 -> FavoritesGrid(nav, search, entry)
             4 -> WatchlistGrid(nav, search, entry)
+            WATCHING_TAB -> WatchingPage(nav, search, entry, onHome = { memory?.lastKey = null; onTab(0); enterPage++ })
         }
         if (tab == 0) {
             HomeTopBar(
@@ -252,8 +280,12 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
             )
         }
         if (tokenInput) PhoneInputDialog(InputField.TmdbToken, onDismiss = ::closePanel, onRemote = { tokenInput = false; nav.go(Route.Settings) })
+        WatchingMenuHost(watchingMenu, nav, vm, onClose = ::closeWatchingMenu, onRemove = { card ->
+            removedWatching = card.key to watching.indexOfFirst { it.key == card.key }.coerceAtLeast(0)
+        })
         if (!sideOpen) SideNavHint()
-        SideNav(sideOpen, tab, onPick = ::pick, onDismiss = ::closeSide)
+        SideNav(sideOpen, tab, onPick = ::pick, onDismiss = ::closeSide, watching = watching.size)
+    }
     }
     }
 }
@@ -288,18 +320,17 @@ private fun HomeTopBar(servers: List<ServerStatus>, source: String, search: Focu
 }
 
 @Composable
-private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: FocusRequester, entry: FocusRequester, onLibrary: (ServerItem) -> Unit) {
+private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: FocusRequester, entry: FocusRequester, onLibrary: (ServerItem) -> Unit, onWatching: () -> Unit, onWatchingMenu: (WatchCard) -> Unit) {
     val context = LocalContext.current
     val app = context.zmby
     val library = app.library
     val tick = rememberResumeTick()
     val vm = screenModel("home") { HomeViewModel(app) }
     val rows by vm.rows.collectAsStateWithLifecycle()
-    val resume = rows.resume
+    val openWatching = rememberWatchingPlayback(nav)
+    val watching by vm.watching.collectAsStateWithLifecycle()
     val latest = rows.latest
-    val nextUp = rows.nextUp
     val settings = app.settings
-    val showNextUp by settings.showNextUpRow.flow.collectAsStateWithLifecycle()
     val showLatest by settings.showLatestRow.flow.collectAsStateWithLifecycle()
     val rotates by settings.heroRotates.flow.collectAsStateWithLifecycle()
     // Shown from the store at once; entering home and coming back from the player ask the servers again.
@@ -356,7 +387,7 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: Fo
     val servers = serverList
 
     val activity = context as? android.app.Activity
-    val shown = featured.isNotEmpty() || resume.isNotEmpty()
+    val shown = featured.isNotEmpty() || watching.isNotEmpty()
     LaunchedEffect(shown) { if (shown && activity != null) Diagnostics.homeShown(activity) }
 
     val scope = rememberCoroutineScope()
@@ -405,7 +436,7 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: Fo
                     // Nothing cached and nothing from the servers (P4 离线与错误处理): say why and offer a retry.
                     val enabled = serverList.filter { it.enabled }
                     val allOff = enabled.isNotEmpty() && enabled.all { it.health == Health.Off }
-                    val nothing = resume.isEmpty() && nextUp.isEmpty() && latest.isEmpty()
+                    val nothing = watching.isEmpty() && latest.isEmpty()
                     if (nothing && (allOff || rows.loaded)) {
                         HomeEmpty(
                             if (allOff) "暂时连不上任何服务器" else "这些服务器上还没有可显示的内容",
@@ -426,38 +457,21 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: Fo
             }
            }
           }
-            if (resume.isNotEmpty()) item(key = "resume", contentType = "row") {
+            // 在看 (ui-spec §2.18): the first cards of the 在看 page, then 「全部 ›」 to it.
+            if (watching.isNotEmpty()) item(key = "watching", contentType = "row") {
                 Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                    Box(Modifier.padding(start = 80.dp)) { RowTitle("继续观看") }
+                    Box(Modifier.padding(start = 80.dp)) { RowTitle("在看") }
                     LazyRow(
                         modifier = Modifier.horizontalRow(),
                         contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 48.dp),
                         horizontalArrangement = Arrangement.spacedBy(36.dp),
                     ) {
-                        items(resume, key = { it.key }, contentType = { "resume" }) { ref ->
-                            ResumeCard(ref, onClick = { nav.open(ref) }, focusKey = "resume:${ref.key}")
+                        items(watching.take(HOME_WATCHING), key = { it.key }, contentType = { "watching" }) { card ->
+                            WatchingRowCard(card, onClick = { openWatching(card) }, onMenu = { onWatchingMenu(card) }, focusKey = "watching:${card.key}")
                         }
-                    }
-                }
-            }
-            if (showNextUp && nextUp.isNotEmpty()) item(key = "nextup", contentType = "row") {
-                Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                    Box(Modifier.padding(start = 80.dp)) { RowTitle("下一集") }
-                    LazyRow(
-                        modifier = Modifier.horizontalRow(),
-                        contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 48.dp),
-                        horizontalArrangement = Arrangement.spacedBy(36.dp),
-                    ) {
-                        items(nextUp, key = { it.key }, contentType = { "nextup" }) { ref ->
-                            val item = ref.item
-                            MediaCard16x9(
-                                imageUrl = library.landscapeImage(ref),
-                                onClick = { nav.open(ref) },
-                                title = workTitleOf(item),
-                                topStart = library.status(ref.server)?.name,
-                                focusKey = "nextup:${ref.key}",
-                            ) {
-                                Text(listOfNotNull(episodeCode(item), item.name).joinToString(" · "), fontSize = 19.sp, color = Z.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        item(key = "watching:all", contentType = "more") {
+                            Box(Modifier.height(225.dp), contentAlignment = Alignment.Center) {
+                                GlassButton("全部 ›", onWatching, label = "在看 全部")
                             }
                         }
                     }
@@ -561,24 +575,6 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: Fo
 
 /** "科幻 · 冒险": genres joined by a middle dot (never a slash). */
 internal fun genresLabel(item: BaseItemDto): String? = item.genres.take(2).joinToString(" · ").ifEmpty { null }
-
-@Composable
-private fun ResumeCard(ref: ServerItem, onClick: () -> Unit, focusKey: String) {
-    val library = LocalContext.current.zmby.library
-    val item = ref.item
-    val isEpisode = item.type == "Episode"
-    MediaCard16x9(
-        imageUrl = library.landscapeImage(ref),
-        onClick = onClick,
-        title = workTitleOf(item),
-        topStart = library.status(ref.server)?.name,
-        progress = progressFraction(item),
-        focusKey = focusKey,
-    ) {
-        val caption = listOfNotNull(if (isEpisode) episodeCode(item) else null, remainingLabel(item)).joinToString(" · ")
-        Text(caption, fontSize = 19.sp, color = Z.textSecondary, maxLines = 1)
-    }
-}
 
 /**
  * A home row (or the top bar) drawn into its own offscreen layer (P4 perf). The Z9X 8K redraws the

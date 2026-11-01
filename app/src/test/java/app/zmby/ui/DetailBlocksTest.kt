@@ -41,7 +41,7 @@ class DetailBlocksTest {
         val noCodec = v.copy(source = source.copy(mediaStreams = listOf(source.mediaStreams.first(), MediaStream(1, "Audio"))))
         assertEquals("家里 NAS · 2160p REMUX · HDR10 · 内网", versionSummary(noCodec))
         val corrected = v.copy(item = v.item.copy(parentIndexNumber = 4, indexNumber = 1), canonicalEpisode = app.zmby.catalog.CatalogEpisode("301", 3, 1, "One"))
-        assertEquals("片源：第 4 季 第 1 集 · 目录：第 3 季 第 1 集", app.zmby.ui.screens.sourceNumberNote(corrected))
+        assertEquals("片源：第 4 季第 1 集 · 目录：第 3 季第 1 集", app.zmby.ui.screens.sourceNumberNote(corrected))
         assertEquals(4, corrected.item.parentIndexNumber)
     }
 

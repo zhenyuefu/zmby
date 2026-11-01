@@ -6,12 +6,10 @@ import app.zmby.emby.BaseItemDto
 import app.zmby.log.ZLog
 import app.zmby.store.Freshness
 import app.zmby.store.LocalStore
-import app.zmby.store.StoreKeys
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -20,47 +18,19 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 data class HomeRows(
-    val resume: List<ServerItem>,
-    val nextUp: List<ServerItem>,
+    /** 在看 (ui-spec §2.18): one card per work, the same list as the 在看 page. */
+    val watching: List<WatchCard>,
     val latest: List<ServerItem>,
     /** How many servers have the work behind a 最新添加 card, by [ServerItem.key]. */
     val latestCopies: Map<String, Int> = emptyMap(),
     /** Some row has been fetched before (cached or now), so empty rows mean empty. */
     val loaded: Boolean = false,
 ) {
-    companion object { val EMPTY = HomeRows(emptyList(), emptyList(), emptyList()) }
+    companion object { val EMPTY = HomeRows(emptyList(), emptyList()) }
 }
 
 /** Pure merging of the home rows, separate from fetching so it can be tested. */
 object HomeMerge {
-    /** A film's identity across servers: external IDs only (a wrong merge would hide a resume point). */
-    fun filmKey(i: BaseItemDto): String? = i.tmdb()?.let { "tmdb:$it" } ?: i.imdb()?.let { "imdb:$it" }
-
-    /**
-     * 继续观看 across servers (aggregation spec): newest LastPlayedDate first, one entry per work.
-     * Films dedupe on external IDs; episodes on their series' identity ([seriesKey], which may look
-     * the series up) plus season and episode — asked only when two servers could collide.
-     */
-    suspend fun resume(hits: List<Hit>, seriesKey: suspend (Hit) -> String?): List<ServerItem> {
-        val sorted = hits.sortedWith(compareByDescending<Hit> { it.item.userData?.lastPlayedDate.orEmpty() }.thenBy { it.order })
-        // Episodes from different servers that might be the same: same normalized series name and S/E.
-        val collide = sorted.filter { it.item.type == "Episode" }
-            .groupBy { Triple(Titles.normalize(it.item.seriesName), it.item.parentIndexNumber, it.item.indexNumber) }
-            .filterValues { g -> g.map { it.server }.distinct().size > 1 }
-            .values.flatten().toSet()
-        val seen = HashSet<String>()
-        val out = mutableListOf<ServerItem>()
-        for (h in sorted) {
-            val key = when {
-                h.item.type == "Episode" && h in collide -> Keys.episode(seriesKey(h), h.item.parentIndexNumber, h.item.indexNumber)
-                h.item.type == "Movie" -> filmKey(h.item)
-                else -> null
-            } ?: Keys.local(h.server, h.item)
-            if (seen.add(key)) out += h.ref
-        }
-        return out
-    }
-
     /** 最新添加 across servers: merged into works (strong IDs only), newest first; [copies] counts servers. */
     fun latest(hits: List<Hit>, limit: Int = 40): Pair<List<ServerItem>, Map<String, Int>> {
         val merged = Merger.merge(hits)
@@ -70,15 +40,6 @@ object HomeMerge {
             merged.unmerged.map { Row(it, 1, it.item.dateCreated.orEmpty()) }
         val sorted = rows.sortedWith(compareByDescending<Row> { it.added }.thenBy { it.lead.order }).take(limit)
         return sorted.map { it.lead.ref } to sorted.associate { it.lead.ref.key to it.servers }
-    }
-
-    /** 下一集: per server, minus series already in 继续观看 on that server. */
-    fun nextUp(hits: List<Hit>, resume: List<ServerItem>): List<ServerItem> {
-        val inResume = resume.mapNotNull { r -> r.item.seriesId?.let { r.server to it } }.toSet()
-        return hits.sortedWith(compareBy<Hit> { it.order }.thenBy { it.rank })
-            .filter { h -> (h.server to h.item.seriesId) !in inResume && resume.none { it.key == h.ref.key } }
-            .map { it.ref }
-            .distinctBy { it.key }
     }
 }
 
@@ -98,51 +59,46 @@ data class HomeServers(val watch: List<String>, val latest: List<String>, val or
 
 /**
  * The home rows (ui-spec §2.1), local first (local-data spec): [rows] merges what the store holds
- * for each server's 继续观看, 下一集 and 最新添加 and changes as the store does; [refresh] asks the
+ * for 在看 ([WatchingFeed]) and each server's 最新添加 and changes as the store does; [refresh] asks the
  * servers through [fanOut] (8-second list timeout) and writes their answers to the store. A slow or
  * failed server keeps its last rows; nothing is cleared.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class HomeFeed(private val library: Library, private val fanOut: FanOut, private val store: LocalStore) {
-    /** Series identities looked up this run ("server:seriesId" → key). */
-    private val seriesKeys = ConcurrentHashMap<String, String>()
+    val watching = WatchingFeed(library, fanOut, store)
 
     fun rows(servers: HomeServers): Flow<HomeRows> {
-        val keys = servers.watch.flatMap { listOf(resumeKey(it), nextUpKey(it)) } + servers.latest.map(::latestKey)
-        return store.listsFlow(keys).map { lists ->
-            fun hits(key: (String) -> String, ids: List<String>) = ids.flatMap { s ->
-                lists[key(s)]?.items.orEmpty().mapIndexed { i, r -> Hit(r, servers.order[s] ?: Int.MAX_VALUE, i) }
-            }
-            val resumeRows = HomeMerge.resume(hits(::resumeKey, servers.watch), ::localSeriesKey)
-            val (latestRows, counts) = HomeMerge.latest(hits(::latestKey, servers.latest))
+        val keys = servers.latest.map(::latestKey)
+        val latest = store.listsFlow(keys).map { lists ->
+            val hits = servers.latest.flatMap { s -> lists[latestKey(s)]?.items.orEmpty().mapIndexed { i, r -> Hit(r, servers.order[s] ?: Int.MAX_VALUE, i) } }
+            HomeMerge.latest(hits) to lists.values.any { it.fetchedAt > 0 }
+        }
+        val watchKeys = servers.watch.map(WatchingFeed::resumeKey)
+        return kotlinx.coroutines.flow.combine(latest, watching.cards(servers.watch, servers.order), store.listsFlow(watchKeys)) { (l, loaded), cards, watchLists ->
             HomeRows(
-                resume = resumeRows,
-                nextUp = HomeMerge.nextUp(hits(::nextUpKey, servers.watch), resumeRows),
-                latest = latestRows,
-                latestCopies = counts,
-                loaded = lists.values.any { it.fetchedAt > 0 },
+                watching = cards,
+                latest = l.first,
+                latestCopies = l.second,
+                loaded = loaded || watchLists.values.any { it.fetchedAt > 0 },
             )
         }.flowOn(Dispatchers.Default)
     }
 
     /**
-     * Asks the servers again: 继续观看 and 下一集 every time (local-data spec: entering home, back from
+     * Asks the servers again: 在看 every time (local-data spec: entering home, back from
      * the player), 最新添加 only when older than ten minutes unless [force]. Returns each server's
      * fresh 最新添加 (for its pinyin probe).
      */
     suspend fun refresh(servers: HomeServers, force: Boolean = false, now: Long = System.currentTimeMillis()): Map<String, List<BaseItemDto>> = coroutineScope {
         val latestDue = servers.latest.filter { force || Freshness.due(Freshness.Kind.Latest, store.list(latestKey(it))?.fetchedAt, now) }
         val fresh = ConcurrentHashMap<String, List<BaseItemDto>>()
-        val resume = launch { collect(servers.watch, "resume") { s -> library.resume(s) }.forEach { (s, items) -> store.putList(resumeKey(s), s, items) } }
-        launch { collect(servers.watch, "next up") { s -> library.nextUp(s) }.forEach { (s, items) -> store.putList(nextUpKey(s), s, items) } }
+        launch { watching.refresh(servers.watch) }
         launch {
             collect(latestDue, "latest") { s -> library.latest(s) }.forEach { (s, items) ->
                 store.putList(latestKey(s), s, items)
                 fresh[s] = items
             }
         }
-        resume.join()
-        identifyCollidingEpisodes(servers)
         fresh
     }
 
@@ -226,37 +182,8 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
         return out
     }
 
-    /**
-     * Episodes in 继续观看 that might be the same on two servers (same series name and S/E) need their
-     * series' identity; it is looked up once per server and series and stored, and the episodes are
-     * stored again under the series' key.
-     */
-    private suspend fun identifyCollidingEpisodes(servers: HomeServers) {
-        val lists = store.listsFlow(servers.watch.map(::resumeKey)).first()
-        val episodes = servers.watch.flatMap { s -> lists[resumeKey(s)]?.items.orEmpty() }.filter { it.item.type == "Episode" && it.item.seriesId != null }
-        val colliding = episodes.groupBy { Triple(Titles.normalize(it.item.seriesName), it.item.parentIndexNumber, it.item.indexNumber) }
-            .filterValues { g -> g.map { it.server }.distinct().size > 1 }.values.flatten()
-        for ((server, refs) in colliding.groupBy { it.server }) {
-            var changed = false
-            for (seriesId in refs.mapNotNull { it.item.seriesId }.distinct()) {
-                if (localSeriesKey(server, seriesId) != null) continue
-                val series = try { library.item(server, seriesId) } catch (e: CancellationException) { throw e } catch (_: Exception) { continue }
-                store.putItems(server, listOf(series))
-                StoreKeys.work(server, series).takeIf(StoreKeys::isExternal)?.let { seriesKeys["$server:$seriesId"] = it; changed = true }
-            }
-            if (changed) store.putItems(server, refs.map { it.item })
-        }
-    }
-
-    private suspend fun localSeriesKey(h: Hit): String? = h.item.seriesId?.let { localSeriesKey(h.server, it) }
-
-    private suspend fun localSeriesKey(server: String, seriesId: String): String? =
-        seriesKeys["$server:$seriesId"] ?: store.workKeyOf(server, seriesId)?.takeIf(StoreKeys::isExternal)
-
     companion object {
         private const val TAG = "Home"
-        fun resumeKey(server: String) = "resume:$server"
-        fun nextUpKey(server: String) = "nextup:$server"
         fun latestKey(server: String) = "latest:$server"
         fun latestKey(server: String, libraryId: String) = "latest:$server:$libraryId"
         fun viewsKey(server: String) = "views:$server"

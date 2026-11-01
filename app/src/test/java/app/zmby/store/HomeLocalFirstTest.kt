@@ -142,7 +142,7 @@ class HomeLocalFirstTest {
         server.shutdown()
         val (offline, _) = feed()
         val rows = offline.rows(servers).first()
-        assertEquals(listOf("r1"), rows.resume.map { it.item.id })
+        assertEquals(listOf("r1"), rows.watching.map { it.target?.item?.id })
         assertEquals(listOf("m1"), rows.latest.map { it.item.id })
         // A refresh against the dead server leaves them in place.
         offline.refresh(servers, force = true, now = now)

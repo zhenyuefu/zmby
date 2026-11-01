@@ -18,6 +18,7 @@ import app.zmby.zidoo.ZidooTracks
 import app.zmby.zidoo.ZidooPlayer.SubtitleDelivery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import app.zmby.zidoo.ZidooLaunchSpec
 import app.zmby.zidoo.buildZidooLaunch
@@ -63,6 +64,8 @@ class EmbyPlaybackReporter(
         try {
             block()
             ZLog.i(TAG, "report $what ok item=$itemId pos=${positionMs}ms")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             ZLog.w(TAG, "report $what failed item=$itemId pos=${positionMs}ms: $e")
         }
@@ -88,10 +91,23 @@ data class PreparedPlayback(
     val statusPaths: Set<String> = setOf(launch.uri),
     /** Revokes this attempt's relay URL when the player has returned or launch failed. */
     val releaseRelay: () -> Unit = {},
+    val selection: PlaybackSelection? = null,
 )
 
 /** The user's track picks in Emby stream indexes; null = the server's default for this user. */
 data class TrackChoice(val audio: Int? = null, val subtitle: Int? = null)
+
+/**
+ * 弹幕 as the player's second subtitle for one playback (danmu design: 播放器字幕): the comments,
+ * waited for at most [waitMs] before the player starts, and the danmu2ass settings to write them with.
+ */
+class DanmuSubtitle(
+    val comments: suspend () -> List<app.zmby.danmu.Danmaku>?,
+    val config: app.zmby.danmu.DanmuAss.Config,
+    val waitMs: Long = DEFAULT_WAIT_MS,
+) {
+    companion object { const val DEFAULT_WAIT_MS = 8_000L }
+}
 
 class PlaybackPreparer(
     private val client: EmbyClient,
@@ -115,6 +131,8 @@ class PlaybackPreparer(
         /** Language preference for tracks the user did not pick ([TrackPreference]). */
         audioLanguage: String = TrackPreference.SERVER,
         subtitleLanguage: String = TrackPreference.SERVER,
+        /** 弹幕 baked into the subtitle the player shows; only with [SubtitleDelivery.LocalStrm]. */
+        danmu: DanmuSubtitle? = null,
     ): PreparedPlayback {
         val startPositionMs = WatchThreshold.startPosition(requestedStartMs, item.runtimeMs, watchedPercent)
         if (startPositionMs != requestedStartMs) {
@@ -141,6 +159,9 @@ class PlaybackPreparer(
                 }
                 val url = relayUrl ?: directUrl
                 val viaIntent = subtitles == SubtitleDelivery.IntentExtras
+                val danmuLocal = if (danmu != null && subtitles == SubtitleDelivery.LocalStrm && localStrm != null) {
+                    danmuSession(session, item, source, tracks, url, danmu, localStrm)
+                } else null
                 val (audioIdx, subtitleIdx) = ZidooTracks.choose(source, tracks.audio, tracks.subtitle, externalAllowed = viaIntent)
                 val externals = if (viaIntent) externalSubtitles(session, item, source) else emptyList()
                 ZLog.i(
@@ -150,15 +171,15 @@ class PlaybackPreparer(
                 )
                 // An external subtitle for com.zidoo.player: the video URL (direct or relay, unchanged) goes
                 // into a local .strm next to the downloaded subtitle; subtitlePid replaces subtitle_idx.
-                val localSub = if (subtitles == SubtitleDelivery.LocalStrm && localStrm != null) {
+                val localSub = if (danmuLocal == null && subtitles == SubtitleDelivery.LocalStrm && localStrm != null) {
                     ZidooTracks.wantedSubtitle(source, tracks.subtitle)?.let { idx -> source.mediaStreams.firstOrNull { it.index == idx && LocalStrm.supports(it) } }
                 } else null
-                val local = localSub?.let { stream ->
+                val local = danmuLocal ?: localSub?.let { stream ->
                     val subtitleUrl = StreamUrls.subtitle(session.baseUrl, item.id, source, stream, session.accessToken)
                         ?: throw SubtitlePrepareException("字幕没有下载地址")
                     val key = LocalStrm.sourceKey(session.serverId ?: session.capsKey, item.id, source.id)
                     localStrm!!.prepare(url, key, stream, subtitleUrl).also {
-                        ZLog.i(TAG, "external subtitle ${stream.index} (${stream.codec}) -> ${it.subtitle.path}, pid ${it.subtitlePid}")
+                        ZLog.i(TAG, "external subtitle ${stream.index} (${stream.codec}) -> ${it.subtitle?.path}, pid ${it.subtitlePid}")
                     }
                 }
                 val launch = buildZidooLaunch(
@@ -188,6 +209,7 @@ class PlaybackPreparer(
                     }) else null,
                     statusPaths = setOfNotNull(url, local?.uri),
                     releaseRelay = { relayUrl?.let { relay?.unregister(it) } },
+                    selection = PlaybackSelection.capture(source, tracks),
                 )
             } catch (e: Exception) {
                 relayUrl?.let { relay?.unregister(it) }
@@ -219,6 +241,39 @@ class PlaybackPreparer(
             url = StreamUrls.withPrefix(url, prefix)
         }
         return url
+    }
+
+    /**
+     * 弹幕 for the player's second subtitle (danmu design: 播放器字幕): the comments as ASS beside the
+     * .strm under the fixed 弹幕 name, next to the chosen subtitle. Nothing is merged: the main subtitle
+     * is chosen as always (an external one by PID, an embedded one by index) and the user picks 弹幕
+     * in 字幕2 once (an app cannot switch the second subtitle on, danmu2ass research §5). Null, and the
+     * usual path, when the comments are not there in time or the 弹幕 file cannot be written.
+     */
+    private suspend fun danmuSession(
+        session: ServerSession, item: BaseItemDto, source: MediaSourceInfo, tracks: TrackChoice,
+        url: String, danmu: DanmuSubtitle, localStrm: LocalStrmPreparer,
+    ): LocalStrmSession? {
+        val comments = withTimeoutOrNull(danmu.waitMs) { danmu.comments() }
+        if (comments.isNullOrEmpty()) {
+            ZLog.i(TAG, "弹幕 subtitle skipped: ${if (comments == null) "no comments within ${danmu.waitMs}ms" else "no comments"}")
+            return null
+        }
+        val wanted = ZidooTracks.wantedSubtitle(source, tracks.subtitle)
+        val external = source.mediaStreams.firstOrNull { it.index == wanted && LocalStrm.supports(it) }
+        val main = external?.let { stream ->
+            stream to (StreamUrls.subtitle(session.baseUrl, item.id, source, stream, session.accessToken) ?: throw SubtitlePrepareException("字幕没有下载地址"))
+        }
+        val ass = app.zmby.danmu.DanmuAss.bytes(app.zmby.danmu.DanmuAss.build(app.zmby.danmu.DanmuAss.items(comments), danmu.config))
+        return try {
+            localStrm.prepareDanmu(url, main, ass).also {
+                ZLog.i(TAG, "弹幕 subtitle: ${comments.size} comments -> ${it.extras.joinToString { f -> f.path }}; main ${external?.let { s -> "external ${s.index}, pid ${it.subtitlePid}" } ?: "by index"}")
+            }
+        } catch (e: DanmuWriteException) {
+            // A failing chosen subtitle is a SubtitlePrepareException and goes up: the same choice as without 弹幕.
+            ZLog.w(TAG, "弹幕 subtitle not written; playing without it", e)
+            null
+        }
     }
 
     private fun externalSubtitles(session: ServerSession, item: BaseItemDto, source: MediaSourceInfo): List<ExternalSubtitle> {

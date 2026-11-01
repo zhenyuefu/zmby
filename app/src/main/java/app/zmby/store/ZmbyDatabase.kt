@@ -19,9 +19,9 @@ import androidx.room.migration.Migration
         VersionSummary::class, ListCache::class, ListItem::class,
         FavoriteRow::class, FavoriteInstanceRow::class, FavoriteWriteRow::class, WatchlistRow::class,
         SegmentMarker::class, DataSourceRow::class, SyncState::class, PlayHistoryRow::class, app.zmby.catalog.CatalogCache::class,
-        EpisodeMappingRule::class,
+        EpisodeMappingRule::class, WatchingHiddenRow::class, PlaySessionRow::class,
     ],
-    version = 5,
+    version = 7,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -36,6 +36,8 @@ abstract class ZmbyDatabase : RoomDatabase() {
     abstract fun sources(): SourceDao
     abstract fun playHistory(): PlayHistoryDao
     abstract fun episodeMappings(): EpisodeMappingDao
+    abstract fun watchingHidden(): WatchingHiddenDao
+    abstract fun playSessions(): PlaySessionDao
 
     companion object {
         const val NAME = "zmby.db"
@@ -85,7 +87,24 @@ abstract class ZmbyDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        /** 6: 在看 cards hidden on this box (ui-spec §2.18). */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `watching_hidden` (`work_key` TEXT NOT NULL, `hidden_at` INTEGER NOT NULL, PRIMARY KEY(`work_key`))")
+            }
+        }
+
+        /** 7: 我的's playback sessions on this box (local-data spec, 我的：本机播放会话与统计口径). As in app/schemas/…/7.json. */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `play_session` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `server_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, `type` TEXT NOT NULL, `work_key` TEXT NOT NULL, `series_key` TEXT, `series_id` TEXT, `series_name` TEXT, `title` TEXT, `season` INTEGER, `episode` INTEGER, `genres` TEXT NOT NULL, `started_at` INTEGER NOT NULL, `ended_at` INTEGER NOT NULL, `watched_ms` INTEGER NOT NULL, `spans` TEXT NOT NULL, `start_position_ms` INTEGER NOT NULL, `end_position_ms` INTEGER, `runtime_ms` INTEGER, `completed` INTEGER NOT NULL, `open` INTEGER NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_play_session_started_at` ON `play_session` (`started_at`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_play_session_work_key` ON `play_session` (`work_key`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_play_session_server_id_item_id` ON `play_session` (`server_id`, `item_id`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
 
         fun open(context: Context): ZmbyDatabase =
             Room.databaseBuilder(context, ZmbyDatabase::class.java, NAME)

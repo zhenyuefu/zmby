@@ -94,6 +94,10 @@ private fun App(activity: android.app.Activity) {
                     ZLog.i("Nav", "${from.route} -> back to ${stack.last().route} (focus ${stack.last().focus.lastKey})")
                 }
             }
+            override fun home(tab: Int) {
+                while (stack.size > 1 && stack.last().route != Route.Home) back()
+                homeTab = tab
+            }
             override fun replaceAll(route: Route) {
                 ZLog.i("Nav", "reset to $route")
                 stack.forEach { states.removeState(it.id); it.viewModelStore.clear() }
@@ -124,7 +128,7 @@ private fun App(activity: android.app.Activity) {
                     Route.Settings -> SettingsScreen(nav)
                     is Route.Person -> app.zmby.ui.screens.PersonScreen(nav, route.personKey, route.server, route.personId)
                     is Route.DataSource -> app.zmby.ui.screens.DataSourceScreen(nav, route.feature)
-                    Route.Stats -> app.zmby.ui.screens.StatsScreen(nav)
+                    Route.Me -> app.zmby.ui.screens.MeScreen(nav)
                 }
             }
         }

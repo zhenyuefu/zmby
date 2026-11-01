@@ -44,10 +44,14 @@ class FocusMemory {
     var restoreRequest by mutableIntStateOf(0)
         private set
     var restored = false
+    /** Fixed for this request: removing an overlay can transiently focus another control. */
+    var restoreKey: String? = null
+        private set
 
     fun beginRestore() {
         restored = false
-        restorePending = lastKey != null
+        restoreKey = lastKey
+        restorePending = restoreKey != null
         restoreRequest++
     }
 }

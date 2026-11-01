@@ -120,27 +120,35 @@ internal fun Field(
     onSubmit: () -> Unit = {},
     /** Initial focus for the screen, when this is its first field. */
     initialFocus: FocusRequester? = null,
+    /** Compact variants (弹幕 search row, ui-spec §2.19): no label above, a smaller box, a leading glyph. */
+    showLabel: Boolean = true,
+    height: androidx.compose.ui.unit.Dp = 72.dp,
+    fontSize: Int = 26,
+    leading: app.zmby.ui.components.Glyph? = null,
 ) {
     var editing by remember { mutableStateOf(false) }
     val box = remember { FocusRequester() }
     val input = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val shape = RoundedCornerShape(percent = 50)
-    val style = TextStyle(fontSize = 26.sp, color = Z.textPrimary, fontWeight = FontWeight.SemiBold)
+    val style = TextStyle(fontSize = fontSize.sp, color = Z.textPrimary, fontWeight = FontWeight.SemiBold)
     fun finish(next: Boolean) {
         editing = false
         if (next) focusManager.moveFocus(FocusDirection.Down) else box.requestFocus()
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(label, fontSize = 19.sp, color = Z.textTertiary)
+        if (showLabel) Text(label, fontSize = 19.sp, color = Z.textTertiary)
+        val pad = if (leading != null) 22.dp else 28.dp
         if (editing) {
             var hadFocus by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) { input.requestFocus() }
             BackHandler { finish(next = false) }
             Box(
-                Modifier.fillMaxWidth().height(72.dp).well(shape).border(3.dp, Z.focusFill, shape).padding(horizontal = 28.dp),
+                Modifier.fillMaxWidth().height(height).well(shape).border(3.dp, Z.focusFill, shape).padding(horizontal = pad),
                 contentAlignment = Alignment.CenterStart,
             ) {
+              androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                if (leading != null) app.zmby.ui.components.Icon(leading, size = 24.dp, strokeWidth = 2.2f)
                 BasicTextField(
                     value = value,
                     onValueChange = onChange,
@@ -168,13 +176,16 @@ internal fun Field(
                             }
                         },
                 )
+              }
             }
         } else {
             Focusable({ editing = true }, Modifier.focusRequester(box).then(if (initialFocus != null) Modifier.focusRequester(initialFocus) else Modifier), shape = shape, focusedScale = 1.02f, outline = 3.dp, shadow = 0.dp, label = label) {
-                Box(
-                    Modifier.fillMaxWidth().height(72.dp).well(shape).padding(horizontal = 28.dp),
-                    contentAlignment = Alignment.CenterStart,
+                androidx.compose.foundation.layout.Row(
+                    Modifier.fillMaxWidth().height(height).well(shape).padding(horizontal = pad),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
+                    if (leading != null) app.zmby.ui.components.Icon(leading, size = 24.dp, strokeWidth = 2.2f)
                     val shown = if (secret) "•".repeat(value.length) else value
                     Text(shown.ifEmpty { placeholder }, style = style, color = if (shown.isEmpty()) Z.textTertiary else Z.textPrimary, maxLines = 1)
                 }

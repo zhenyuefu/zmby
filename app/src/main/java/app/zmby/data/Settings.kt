@@ -42,6 +42,12 @@ class Pref<T>(private val prefs: SharedPreferences, val key: String, private val
     }
 }
 
+/**
+ * How 弹幕 reach the screen (danmu design): drawn by zmby on the playback overlay, or baked into an
+ * ASS subtitle the Zidoo player renders itself (danmu2ass research).
+ */
+enum class DanmuMode(val label: String) { Overlay("浮层"), Subtitle("播放器字幕") }
+
 /** Quality preference for the default version (settings › 播放 › 版本选择). */
 enum class QualityPreference(val label: String) { UHD("4K"), FHD("1080p"), Auto("自动") }
 
@@ -51,8 +57,11 @@ class Settings(context: Context) {
     init {
         // The old skip_intro switch controlled both kinds. Copy it once before they become independent.
         if (!prefs.contains("skip_recap")) {
-            prefs.edit { putBoolean("skip_recap", prefs.getBoolean("skip_intro", true)) }
+            prefs.edit(commit = true) { putBoolean("skip_recap", prefs.getBoolean("skip_intro", true)) }
         }
+        // 2026-10-31 (ui-spec §2.16): the two switches became 自动跳过 · 显示按钮 · 关闭; on → 自动跳过.
+        migrateSkipMode(prefs, "skip_intro", KEY_INTRO_MODE)
+        migrateSkipMode(prefs, "skip_recap", KEY_RECAP_MODE)
     }
 
     private val backupPrefs = mutableListOf<Pref<*>>()
@@ -60,6 +69,8 @@ class Settings(context: Context) {
 
     private val debuggable = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
+    private fun skipMode(key: String) = registered(Pref(prefs, key, app.zmby.segments.SkipMode.Auto,
+        { k, d -> getString(k, null)?.let { runCatching { app.zmby.segments.SkipMode.valueOf(it) }.getOrNull() } ?: d }, { k, v -> putString(k, v.name) }))
     private fun bool(key: String, default: Boolean) = registered(Pref(prefs, key, default, { k, d -> getBoolean(k, d) }, { k, v -> putBoolean(k, v) }))
     private fun string(key: String, default: String) = registered(Pref(prefs, key, default, { k, d -> getString(k, d) ?: d }, { k, v -> putString(k, v) }))
 
@@ -82,17 +93,46 @@ class Settings(context: Context) {
     val offerNextEpisode = bool("offer_next_episode", true)
     /** 连播 Up Next: the next-episode prompt counts down and plays it by itself (off: waits for a key). */
     val upNextCountdown = bool("up_next_countdown", true)
-    /** 跳过片头 from the segment markers (P4). */
-    val skipIntro = bool("skip_intro", true)
+    /** 跳过片头 from the segment markers (P4): 自动跳过 · 显示按钮 · 关闭 (ui-spec §2.16). */
+    val skipIntro = skipMode(KEY_INTRO_MODE)
     /** 跳过回顾, independently of the opening credits. */
-    val skipRecap = bool("skip_recap", true)
+    val skipRecap = skipMode(KEY_RECAP_MODE)
     /** 跳过片尾: credits and previews; ending there finishes the playback as watched. */
     val skipCredits = registered(Pref(prefs, "skip_credits", app.zmby.segments.CreditsSkip.Episodes,
         { k, d -> getString(k, null)?.let { runCatching { app.zmby.segments.CreditsSkip.valueOf(it) }.getOrNull() } ?: d }, { k, v -> putString(k, v.name) }))
+    /** How credits are skipped where [skipCredits] covers the item: 自动跳过 or 显示按钮 (never 关闭; that is [skipCredits]). */
+    val skipCreditsMode = registered(Pref(prefs, "skip_credits_mode", app.zmby.segments.SkipMode.Auto,
+        { k, d -> getString(k, null)?.let { runCatching { app.zmby.segments.SkipMode.valueOf(it) }.getOrNull() } ?: d }, { k, v -> putString(k, v.name) },
+        normalize = { if (it == app.zmby.segments.SkipMode.Off) app.zmby.segments.SkipMode.Auto else it }))
+    /**
+     * 播放浮层 (ui-spec §2.16): skip buttons, the next-episode card and 弹幕 drawn over the system
+     * player. Off by default: it needs 「允许显示在其他应用的上层」, which the user grants in system settings.
+     */
+    val playbackOverlay = bool("playback_overlay", false)
+    /** 弹幕 on the overlay (danmu design); needs a 弹幕服务器. */
+    val danmu = bool("danmu", true)
+    /** 弹幕显示方式: the overlay (default) or a subtitle for the system player. */
+    val danmuMode = registered(Pref(prefs, "danmu_mode", DanmuMode.Overlay,
+        { k, d -> getString(k, null)?.let { runCatching { DanmuMode.valueOf(it) }.getOrNull() } ?: d }, { k, v -> putString(k, v.name) }))
+    /** The one-time 播放器字幕 guide (how to switch the player's 双字幕模式 on) has been confirmed. */
+    val danmuDualGuideSeen = bool("danmu_dual_guide_seen", false)
+    /** 弹幕 lines at the top of the screen (1–5). */
+    val danmuRows = registered(Pref(prefs, "danmu_rows", 3, { k, d -> getInt(k, d) }, { k, v -> putInt(k, v) }, normalize = { it.coerceIn(1, 5) }))
+    /** 弹幕 opacity in percent. */
+    val danmuOpacity = registered(Pref(prefs, "danmu_opacity", 100, { k, d -> getInt(k, d) }, { k, v -> putInt(k, v) }, normalize = { it.coerceIn(20, 100) }))
+    /** A dandanplay-compatible API (danmu design); empty = 弹幕 off. Typed by the user, never a default. */
+    val danmuApiBase = string("danmu_api_base", "")
+    /** The official dandanplay API's AppId and AppSecret (signed requests); empty for a server that needs none. */
+    val danmuAppId = string("danmu_app_id", "")
+    val danmuAppSecret = string("danmu_app_secret", "")
     /** 播放失败自动换源: a version that fails to start is replaced by the next one in default order. */
     val autoFailover = bool("auto_failover", true)
+    /**
+     * 在看包含下一集 (ui-spec §2.18): off shows only works stopped part-way. Keeps the key of the
+     * former 「下一集」行 switch, so its value carries over (2026-10-31).
+     */
+    val watchingIncludesNextUp = bool(KEY_WATCHING_NEXT_UP, true)
     /** Home rows (首页与媒体库). */
-    val showNextUpRow = bool("home_next_up", true)
     val showLatestRow = bool("home_latest", true)
     /** 首页来源: "" for 全部 (every server merged), else one server's id; browsing follows it. */
     val homeSource = string("home_source", "")
@@ -137,12 +177,30 @@ class Settings(context: Context) {
         backupPrefs.associate { it.key to it.backupValue() } + (KEY_WATCHED to kotlinx.serialization.json.JsonPrimitive(_watchedPercent.value)))
 
     fun restoreValues(values: kotlinx.serialization.json.JsonObject) {
+        // A backup from before 2026-10-31 has the on/off switches.
+        for ((old, key) in listOf("skip_intro" to KEY_INTRO_MODE, "skip_recap" to KEY_RECAP_MODE)) {
+            if (values[key] != null) continue
+            val on = (values[old] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: continue
+            backupPrefs.firstOrNull { it.key == key }?.restoreValue(kotlinx.serialization.json.JsonPrimitive(skipModeOf(on == "true").name))
+        }
         backupPrefs.forEach { pref -> (values[pref.key] as? kotlinx.serialization.json.JsonPrimitive)?.let(pref::restoreValue) }
         (values[KEY_WATCHED] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()?.let(::setWatchedPercent)
     }
 
     private companion object {
+        const val KEY_INTRO_MODE = "skip_intro_mode"
+        const val KEY_RECAP_MODE = "skip_recap_mode"
+
+        fun skipModeOf(on: Boolean) = if (on) app.zmby.segments.SkipMode.Auto else app.zmby.segments.SkipMode.Off
+
+        fun migrateSkipMode(prefs: SharedPreferences, old: String, key: String) {
+            if (prefs.contains(key)) return
+            // Synchronous like the copy above: the Pref built next reads the migrated value.
+            prefs.edit(commit = true) { putString(key, skipModeOf(prefs.getBoolean(old, true)).name) }
+        }
         const val KEY_LAN_LOG = "lan_log"
         const val KEY_WATCHED = "watched_percent"
+        /** The former 「下一集」行 switch, now 在看包含下一集. */
+        const val KEY_WATCHING_NEXT_UP = "home_next_up"
     }
 }

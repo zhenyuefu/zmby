@@ -18,12 +18,23 @@ import kotlin.random.Random
  * streams that URL; its subtitle scanner looks next to the .strm for files whose name starts with
  * the .strm's base name, and [subtitlePid] picks the file.
  */
-data class LocalStrmSession(val baseName: String, val strm: File, val subtitle: File, val subtitlePid: String) {
+data class LocalStrmSession(
+    val baseName: String,
+    val strm: File,
+    /** The chosen subtitle, selected by [subtitlePid]; null when only [extras] lie beside the .strm. */
+    val subtitle: File?,
+    val subtitlePid: String?,
+    /** Further files the player lists but does not select (the 弹幕 ASS for its second subtitle). */
+    val extras: List<File> = emptyList(),
+) {
     val uri: String get() = "file://${strm.absolutePath}"
 }
 
 /** The chosen subtitle could not be made available; the user decides whether to play without it. */
 class SubtitlePrepareException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** The 弹幕 session's files could not be written; the playback goes on the usual way without 弹幕. */
+class DanmuWriteException(message: String, cause: Throwable? = null) : java.io.IOException(message, cause)
 
 /** File names, contents and checks for a local STRM session. Pure Kotlin. */
 object LocalStrm {
@@ -52,6 +63,19 @@ object LocalStrm {
         val lang = stream.language?.filter { it.isLetterOrDigit() && it.code < 128 || it == '-' }?.take(16)?.ifEmpty { null } ?: "und"
         return "$base.$lang.${stream.index}.${ZidooPlayer.externalFormat(stream.codec)}"
     }
+
+    /**
+     * The one base name of 弹幕 playbacks (danmu design: 播放器字幕). The player keeps its 双字幕模式
+     * switch and its 字幕2 choice per video name, so a fixed name lets the user set them once. Other
+     * sessions are `zmby_<hex>_…`: neither is a prefix of the other.
+     */
+    const val DANMU_BASE = "zmby_danmu"
+
+    /** The 弹幕 ASS beside the .strm, offered for the player's second subtitle. */
+    fun danmuName(base: String) = "$base.danmu.ass"
+
+    /** Whether [name] belongs to the session [base] (`base.strm`, `base.<…>.srt`, …). */
+    fun ofBase(name: String, base: String): Boolean = name.startsWith("$base.")
 
     /** Exactly one UTF-8 line, no BOM: the player takes the first line as the video URL. */
     fun strmContent(videoUrl: String): ByteArray {
@@ -99,6 +123,9 @@ interface PlaybackFileStore {
 
     /** Deletes this app's files there that are older than [maxAgeMs], except [keep]; returns how many. */
     fun sweep(maxAgeMs: Long, keep: Set<String> = emptySet()): Int
+
+    /** Deletes this app's files named [base] or `[base].…` (a fixed-name session's leftovers); returns how many. */
+    fun deleteBase(base: String): Int
 }
 
 /** A plain directory, for tests; on the box the app cannot create the shared directory itself (see [MediaStorePlaybackStore]). */
@@ -122,6 +149,12 @@ class DirectoryPlaybackStore(private val root: File, private val now: () -> Long
         val stale = root.listFiles().orEmpty().filter { it.isFile && OURS.matches(it.name) && now() - it.lastModified() > maxAgeMs && it.name !in keep }
         stale.forEach(::delete)
         return stale.size
+    }
+
+    override fun deleteBase(base: String): Int {
+        val old = root.listFiles().orEmpty().filter { it.isFile && OURS.matches(it.name) && LocalStrm.ofBase(it.name, base) }
+        old.forEach(::delete)
+        return old.size
     }
 
     private companion object {
@@ -170,10 +203,51 @@ class LocalStrmPreparer(
             throw SubtitlePrepareException("字幕下载失败（${e.message ?: e.javaClass.simpleName}）", e)
         }
         LocalStrm.problem(bytes, format)?.let { throw SubtitlePrepareException(it) }
+        return publish(videoUrl, sourceKey, bytes) { base -> LocalStrm.subtitleName(base, stream) }
+    }
+
+    /** The fixed-name 弹幕 session that is current; an older one's release must not delete its files. */
+    private val liveDanmu = java.util.concurrent.atomic.AtomicReference<LocalStrmSession?>(null)
+
+    /**
+     * A 弹幕 playback (danmu design: 播放器字幕) under [LocalStrm.DANMU_BASE]: the chosen external
+     * subtitle (if any, selected by PID as usual) and the 弹幕 ASS for the player's second subtitle,
+     * which the user switches on once in the player. Earlier files of that name are removed first: the
+     * player would list them, and the store refuses to overwrite.
+     */
+    suspend fun prepareDanmu(videoUrl: String, main: Pair<MediaStream, String>?, danmu: ByteArray): LocalStrmSession {
+        val mainBytes = main?.let { (stream, url) ->
+            val bytes = try {
+                download(url)
+            } catch (e: Exception) {
+                throw SubtitlePrepareException("字幕下载失败（${e.message ?: e.javaClass.simpleName}）", e)
+            }
+            LocalStrm.problem(bytes, ZidooPlayer.externalFormat(stream.codec))?.let { throw SubtitlePrepareException(it) }
+            stream to bytes
+        }
+        val base = LocalStrm.DANMU_BASE
+        return withContext(Dispatchers.IO) {
+            liveDanmu.set(null)
+            store.deleteBase(base)
+            val written = mutableListOf<File>()
+            try {
+                val subtitle = mainBytes?.let { (stream, bytes) -> store.publish(LocalStrm.subtitleName(base, stream), bytes).also(written::add) }
+                val ass = store.publish(LocalStrm.danmuName(base), danmu).also(written::add)
+                val strm = store.publish(LocalStrm.strmName(base), LocalStrm.strmContent(videoUrl)).also(written::add)
+                if (written.any { it.parentFile?.path != strm.parentFile?.path }) throw java.io.IOException("files are not in one directory")
+                LocalStrmSession(base, strm, subtitle, mainBytes?.let { LocalStrm.subtitlePid(it.second) }, listOf(ass)).also { liveDanmu.set(it) }
+            } catch (e: Exception) {
+                written.forEach(store::delete)
+                throw DanmuWriteException("无法在 ${store.location} 写入弹幕字幕（${e.message}）", e)
+            }
+        }
+    }
+
+    private suspend fun publish(videoUrl: String, sourceKey: String, bytes: ByteArray, name: (String) -> String): LocalStrmSession {
         val base = LocalStrm.baseName(sourceKey, now(), Random.nextInt())
         return withContext(Dispatchers.IO) {
             val subtitle = try {
-                store.publish(LocalStrm.subtitleName(base, stream), bytes)
+                store.publish(name(base), bytes)
             } catch (e: Exception) {
                 throw SubtitlePrepareException("无法在 ${store.location} 写入字幕（${e.message}）", e)
             }
@@ -192,9 +266,11 @@ class LocalStrmPreparer(
         }
     }
 
-    /** Deletes a finished session's files. */
+    /** Deletes a finished session's files; a fixed-name 弹幕 session only while no newer one took its name. */
     fun release(session: LocalStrmSession) {
-        store.delete(session.subtitle)
+        if (session.baseName == LocalStrm.DANMU_BASE && !liveDanmu.compareAndSet(session, null)) return
+        session.subtitle?.let(store::delete)
+        session.extras.forEach(store::delete)
         store.delete(session.strm)
     }
 }

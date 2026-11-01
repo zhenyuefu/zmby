@@ -280,7 +280,7 @@ class EmbyClient(
         }
 
     /** 观影统计: one page of the user's played films and episodes, most recently played first. */
-    suspend fun playedItems(s: ServerSession, start: Int, limit: Int): ItemsResult =
+    suspend fun playedItems(s: ServerSession, start: Int, limit: Int, listFields: Boolean = false): ItemsResult =
         get(s.baseUrl, s, "Users/${s.userId}/Items") {
             addQueryParameter("Recursive", "true")
             addQueryParameter("IncludeItemTypes", "Movie,Episode")
@@ -289,8 +289,9 @@ class EmbyClient(
             addQueryParameter("SortOrder", "Descending")
             addQueryParameter("StartIndex", start.toString())
             addQueryParameter("Limit", limit.toString())
-            addQueryParameter("Fields", "ProviderIds,RunTimeTicks,UserData")
-            addQueryParameter("EnableImages", "false")
+            // 在看 stores these with the other lists, so it asks for the same fields and artwork.
+            addQueryParameter("Fields", if (listFields) LIST_FIELDS else "ProviderIds,RunTimeTicks,UserData")
+            if (!listFields) addQueryParameter("EnableImages", "false")
         }
 
     suspend fun seasons(s: ServerSession, seriesId: String): ItemsResult =
@@ -332,6 +333,23 @@ class EmbyClient(
 
     suspend fun setPlayed(s: ServerSession, itemId: String, played: Boolean): UserItemData =
         send(s, "Users/${s.userId}/PlayedItems/$itemId", delete = !played)
+
+    /**
+     * Clears [itemId]'s resume point (在看 移除): only PlaybackPositionTicks is sent, which Emby and
+     * Jellyfin apply without touching the played state or the last played date.
+     */
+    suspend fun clearResume(s: ServerSession, itemId: String) {
+        call(s.baseUrl, s, s.ua, expectJson = false) { id ->
+            request(s.baseUrl, s, "Users/${s.userId}/Items/$itemId/UserData", id) {}.post("""{"PlaybackPositionTicks":0}""".toRequestBody(JSON)).build()
+        }
+    }
+
+    /** Films and series by id with the list fields (在看: a series' ProviderIds, Status and artwork). */
+    suspend fun itemsByIds(s: ServerSession, ids: List<String>): ItemsResult =
+        get(s.baseUrl, s, "Users/${s.userId}/Items") {
+            addQueryParameter("Ids", ids.joinToString(","))
+            addQueryParameter("Fields", LIST_FIELDS)
+        }
 
     suspend fun setFavorite(s: ServerSession, itemId: String, favorite: Boolean): UserItemData =
         send(s, "Users/${s.userId}/FavoriteItems/$itemId", delete = !favorite)

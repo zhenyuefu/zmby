@@ -46,14 +46,16 @@ sealed interface Route {
     data class Person(val personKey: String, val server: String, val personId: String) : Route
     /** 设置 › 数据来源 › one feature's servers or providers. */
     data class DataSource(val feature: app.zmby.data.SourceFeature) : Route
-    /** 观影统计 (P4). */
-    data object Stats : Route
+    /** 我的 (ui-spec §2.17; replaced 观影统计). */
+    data object Me : Route
 }
 
 interface Nav {
     fun go(route: Route)
     fun back()
     fun replaceAll(route: Route)
+    /** Back to the home screen on [tab] (我的 opens 收藏 and 待看 this way). */
+    fun home(tab: Int) {}
 }
 
 /**

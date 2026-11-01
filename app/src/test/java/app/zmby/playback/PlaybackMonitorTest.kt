@@ -15,6 +15,72 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackMonitorTest {
+    @Test fun remembersSelectionOnlyAfterConfirmedPlaybackAndOnlyOnce() = runTest {
+        var remembered = 0
+        val player = FakePlayer().apply { status = playing(1_000) }
+        val monitor = PlaybackMonitor(player, Recorder(), 0, 9_000_000, onStarted = { remembered++ }, reportScope = this)
+        assertEquals(0, remembered)
+        val job = launch { monitor.watch() }
+        advanceTimeBy(1_000)
+        assertEquals(1, remembered)
+        job.cancel()
+        monitor.finish(ZidooResult(2_000, 9_000_000, "user"))
+        assertEquals(1, remembered)
+    }
+
+    @Test fun failedOrUnknownLaunchDoesNotBecomeAPlaybackMemoryButPositiveResultDoes() = runTest {
+        var remembered = 0
+        fun fresh() = PlaybackMonitor(FakePlayer(), Recorder(), 0, 9_000_000, onStarted = { remembered++ }, reportScope = this)
+        fresh().finish(null)
+        fresh().finish(ZidooResult(0, null, "playback_error"))
+        fresh().finish(ZidooResult(0, null, "user"))
+        assertEquals(0, remembered)
+        fresh().finish(ZidooResult(5_000, null, "user"))
+        assertEquals(1, remembered)
+    }
+
+    @Test fun recordsASessionWithPausesAndSkipsAndFinishesIt() = runTest {
+        val player = FakePlayer().apply { status = playing(60_000) }
+        val sink = SessionSink()
+        val monitor = PlaybackMonitor(player, Recorder(), 60_000, 9_000_000, now = { testScheduler.currentTime }, session = sink, reportScope = this)
+        val job = launch {
+            monitor.watch()
+        }
+        advanceTimeBy(1)
+        assertEquals(listOf("start@60000"), sink.events)
+        // Ten seconds of playing, one sample a second.
+        repeat(10) { player.status = playing(60_000 + (it + 1) * 1_000L); advanceTimeBy(1_000) }
+        // Paused for 30 seconds.
+        player.status = player.status!!.copy(playing = false)
+        advanceTimeBy(30_000)
+        // A seek far ahead, then five more seconds.
+        player.status = playing(500_000)
+        advanceTimeBy(1_000)
+        repeat(5) { player.status = playing(500_000 + (it + 1) * 1_000L); advanceTimeBy(1_000) }
+        job.cancel()
+        monitor.finish(ZidooResult(505_000, 9_000_000, "user"))
+        val last = sink.progress.last()
+        assertEquals(15_000L, last.watchedMs)
+        assertEquals(2, last.spans.size)
+        assertTrue(sink.events.any { it.startsWith("checkpoint") })
+        assertEquals("finished@505000 completed=false", sink.events.last())
+    }
+
+    @Test fun noSessionWhenThePlayerWasNeverConfirmed() = runTest {
+        val sink = SessionSink()
+        PlaybackMonitor(FakePlayer(), Recorder(), 0, 9_000_000, session = sink, reportScope = this).finish(ZidooResult(5_000, null, "user"))
+        assertTrue(sink.events.isEmpty())
+    }
+
+    private class SessionSink : PlaySessionSink {
+        val events = mutableListOf<String>()
+        val progress = mutableListOf<SessionProgress>()
+        override suspend fun started(at: Long, positionMs: Long) { events += "start@$positionMs" }
+        override suspend fun checkpoint(progress: SessionProgress) { events += "checkpoint@${progress.positionMs}"; this.progress += progress }
+        override suspend fun finished(progress: SessionProgress, positionMs: Long?, runtimeMs: Long?, completed: Boolean) {
+            events += "finished@$positionMs completed=$completed"; this.progress += progress
+        }
+    }
 
     private class FakePlayer : PlayerStatusSource {
         var status: ZidooStatus? = null
@@ -38,13 +104,13 @@ class PlaybackMonitorTest {
     private fun playing(pos: Long, path: String = "a.mkv") = ZidooStatus(true, pos, 9_000_000, path, null)
 
     private fun TestScope.monitor(player: FakePlayer, reporter: Recorder, start: Long = 0, runtime: Long? = 9_000_000, percent: Int = 90) =
-        PlaybackMonitor(player, reporter, start, runtime, percent, now = { testScheduler.currentTime })
+        PlaybackMonitor(player, reporter, start, runtime, percent, now = { testScheduler.currentTime }, reportScope = this)
 
     @Test fun ignoresOldVideoWhileWaitingForThisAttempt() = runTest {
         val player = FakePlayer().apply { status = playing(80_000, "old.mkv") }
         val reporter = Recorder()
         val monitor = PlaybackMonitor(player, reporter, 123_000, 9_000_000,
-            now = { testScheduler.currentTime }, acceptsStatus = { matchesPlaybackPath(it.path, "new.mkv") })
+            now = { testScheduler.currentTime }, acceptsStatus = { matchesPlaybackPath(it.path, "new.mkv") }, reportScope = this)
         val job = launch { monitor.watch() }
         advanceTimeBy(1_000)
         assertTrue(reporter.events.isEmpty())
@@ -96,7 +162,7 @@ class PlaybackMonitorTest {
         val skipper = kotlinx.coroutines.CompletableDeferred(
             app.zmby.segments.SegmentSkipper(listOf(app.zmby.segments.Segment(app.zmby.segments.SegmentKind.Intro, 60_000, 150_000)), skipIntro = true, skipRecap = true, skipEnd = true),
         )
-        val m = PlaybackMonitor(player, reporter, 0, 9_000_000, 90, now = { testScheduler.currentTime }, skipper = skipper)
+        val m = PlaybackMonitor(player, reporter, 0, 9_000_000, 90, now = { testScheduler.currentTime }, skipper = skipper, reportScope = this)
         val job = launch { m.watch() }
         advanceTimeBy(1_100)
         player.status = playing(59_000)
@@ -106,6 +172,67 @@ class PlaybackMonitorTest {
         assertEquals(listOf(150_000L), player.seeks)
         assertEquals("progress@150000", reporter.events.last())
         assertEquals(1, m.skips)
+        job.cancel()
+    }
+
+    @Test
+    fun offersAButtonOnTheOverlayAndReportsTheSeekItMakes() = runTest {
+        val player = FakePlayer().apply { status = playing(58_000) }
+        val reporter = Recorder()
+        val skipper = kotlinx.coroutines.CompletableDeferred(
+            app.zmby.segments.SegmentSkipper(
+                listOf(app.zmby.segments.Segment(app.zmby.segments.SegmentKind.Intro, 60_000, 150_000)),
+                mapOf(app.zmby.segments.SegmentKind.Intro to app.zmby.segments.SkipMode.Button),
+            ),
+        )
+        val seen = mutableListOf<String>()
+        val overlay = object : MonitorOverlay {
+            override fun onSample(positionMs: Long, durationMs: Long, playing: Boolean) { seen += "sample@$positionMs" }
+            override fun onOffer(offer: app.zmby.segments.SkipDecision.Offer): Boolean { seen += "offer@${offer.targetMs}"; return true }
+            override fun onSeeked(positionMs: Long) { seen += "seeked@$positionMs" }
+        }
+        val m = PlaybackMonitor(player, reporter, 0, 9_000_000, 90, now = { testScheduler.currentTime }, skipper = skipper, overlay = overlay, reportScope = this)
+        val job = launch { m.watch() }
+        advanceTimeBy(1_100)
+        player.status = playing(59_000)
+        advanceTimeBy(1_000)
+        player.status = playing(60_500)
+        advanceTimeBy(1_000)
+        // Offered, not seeked by the monitor.
+        assertTrue(player.seeks.isEmpty())
+        assertTrue("offer@150000" in seen)
+        // The user pressed OK: the overlay seeks through the monitor; the next poll reports it.
+        assertTrue(m.seekFromOverlay(150_000))
+        assertEquals(listOf(150_000L), player.seeks)
+        player.status = playing(150_200)
+        advanceTimeBy(1_000)
+        assertTrue("progress@150000" in reporter.events)
+        assertEquals(1, m.skips)
+        job.cancel()
+    }
+
+    @Test
+    fun skipsByItselfWhenTheOverlayCannotAsk() = runTest {
+        val player = FakePlayer().apply { status = playing(58_000) }
+        val reporter = Recorder()
+        val skipper = kotlinx.coroutines.CompletableDeferred(
+            app.zmby.segments.SegmentSkipper(
+                listOf(app.zmby.segments.Segment(app.zmby.segments.SegmentKind.Intro, 60_000, 150_000)),
+                mapOf(app.zmby.segments.SegmentKind.Intro to app.zmby.segments.SkipMode.Button),
+            ),
+        )
+        // The permission was revoked while playing: the overlay closed and refuses the offer.
+        val closed = object : MonitorOverlay {
+            override fun onSample(positionMs: Long, durationMs: Long, playing: Boolean) {}
+        }
+        val m = PlaybackMonitor(player, reporter, 0, 9_000_000, 90, now = { testScheduler.currentTime }, skipper = skipper, overlay = closed, reportScope = this)
+        val job = launch { m.watch() }
+        advanceTimeBy(1_100)
+        player.status = playing(59_000)
+        advanceTimeBy(1_000)
+        player.status = playing(60_500)
+        advanceTimeBy(1_000)
+        assertEquals(listOf(150_000L), player.seeks)
         job.cancel()
     }
 

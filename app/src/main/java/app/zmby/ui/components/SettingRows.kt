@@ -1,5 +1,14 @@
 package app.zmby.ui.components
 
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -100,13 +109,34 @@ fun ChoiceSetting(title: String, options: List<String>, selected: Int, onSelect:
         }
         return
     }
+    // The segments sit at the right end. Up or Down from a full-width row would rather pick the next
+    // full-width row (it is better aligned) or the next row's segments, and skip them; so the whole
+    // row takes focus too and hands it on to the selected segment. Being their parent also hides the
+    // segments from searches that start outside the row.
+    // The hand-over waits for the next frame: requesting focus inside the focus change that is still
+    // under way loses it (Up would end on the side menu).
+    val entry = remember { FocusRequester() }
+    var handOver by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(handOver) { if (handOver > 0) runCatching { entry.requestFocus() } }
+    // Back would first move focus out to this row (Compose's exit to the nearest focusable parent),
+    // which hands it straight back: the screen would never close. Back goes to the screen instead.
+    val back = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     Row(
-        Modifier.fillMaxWidth().defaultMinSize(minHeight = 70.dp).padding(SetPadding),
+        Modifier.fillMaxWidth().defaultMinSize(minHeight = 70.dp)
+            .onPreviewKeyEvent { e ->
+                if (e.key != Key.Back) return@onPreviewKeyEvent false
+                if (e.type == KeyEventType.KeyUp) back?.onBackPressed()
+                true
+            }
+            .onFocusChanged { if (it.isFocused) handOver++ }
+            .focusable()
+            .padding(SetPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         SettingLabel(title, sub, false, Modifier.weight(1f))
         SegmentedWell(
+            entry = entry,
             items = options.mapIndexed { i, o -> Segment(o, dim = i in dim) },
             selected = selected,
             onSelect = onSelect,

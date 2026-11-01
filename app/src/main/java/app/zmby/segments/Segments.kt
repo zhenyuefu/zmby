@@ -190,33 +190,64 @@ object SegmentRules {
 enum class CreditsSkip(val label: String) { Off("关闭"), Episodes("剧集"), All("全部") }
 
 /**
+ * How a kind of segment is handled (ui-spec §2.16): skipped by zmby at once, offered as a 「跳过」
+ * button on the playback overlay, or left alone. [Button] needs the overlay; without it (switched
+ * off or not permitted) it behaves as [Auto], so nothing is lost.
+ */
+enum class SkipMode(val label: String) { Auto("自动跳过"), Button("显示按钮"), Off("关闭") }
+
+/** What [SegmentSkipper] decided for one sample. */
+sealed interface SkipDecision {
+    val kind: SegmentKind
+    val targetMs: Long
+
+    /** zmby seeks now (自动跳过). */
+    data class Seek(override val kind: SegmentKind, override val targetMs: Long) : SkipDecision
+
+    /** The overlay offers a button that seeks to [targetMs]; it goes away once playback passes [untilMs] (null: the end). */
+    data class Offer(override val kind: SegmentKind, override val targetMs: Long, val untilMs: Long?) : SkipDecision
+}
+
+/**
  * Decides, poll by poll, whether to seek past a segment (zidoo-player decision: com.zidoo.player
  * 1.3.60 ignores skip extras, so zmby seeks through the 9529 API). Rules:
- * - each segment is skipped at most once per playback, so going back to watch it is respected;
+ * - each segment is acted on at most once per playback, so going back to watch it is respected;
  * - only when playback ran into it: the previous sample was just before it and time moved forward
  *   normally (or, for intro and recap, the playback started inside it) — not when the user seeked
  *   into it;
  * - intro and recap jump to their end; credits and preview jump to their end, or close to the end
- *   of the video when they run to it, which ends playback as completed (Up Next takes over).
+ *   of the video when they run to it, which ends playback as completed (Up Next takes over);
+ * - a kind in [SkipMode.Button] is offered instead of skipped (the overlay asks the user).
  */
 class SegmentSkipper(
     private val segments: List<Segment>,
-    private val skipIntro: Boolean,
-    private val skipRecap: Boolean,
-    private val skipEnd: Boolean,
+    private val modes: Map<SegmentKind, SkipMode>,
 ) {
+    constructor(segments: List<Segment>, skipIntro: Boolean, skipRecap: Boolean, skipEnd: Boolean) : this(
+        segments,
+        mapOf(
+            SegmentKind.Intro to auto(skipIntro), SegmentKind.Recap to auto(skipRecap),
+            SegmentKind.Credits to auto(skipEnd), SegmentKind.Preview to auto(skipEnd),
+        ),
+    )
+
     private val done = mutableSetOf<SegmentKind>()
 
-    /** The position to seek to after a sample at [positionMs] (previous sample [previousMs]), or null. */
-    fun onSample(previousMs: Long?, positionMs: Long, durationMs: Long): Long? {
+    /** The segment of [kind], if any (the overlay's next-episode card starts with the credits). */
+    fun segment(kind: SegmentKind): Segment? = segments.firstOrNull { it.kind == kind }
+
+    fun mode(kind: SegmentKind): SkipMode = modes[kind] ?: SkipMode.Off
+
+    /** The position to seek to at once after a sample at [positionMs] (previous sample [previousMs]), or null. */
+    fun onSample(previousMs: Long?, positionMs: Long, durationMs: Long): Long? =
+        (decide(previousMs, positionMs, durationMs) as? SkipDecision.Seek)?.targetMs
+
+    /** What to do after a sample at [positionMs] (previous sample [previousMs]), or null. */
+    fun decide(previousMs: Long?, positionMs: Long, durationMs: Long): SkipDecision? {
         for (s in segments) {
             if (s.kind in done) continue
-            val enabled = when (s.kind) {
-                SegmentKind.Intro -> skipIntro
-                SegmentKind.Recap -> skipRecap
-                SegmentKind.Credits, SegmentKind.Preview -> skipEnd
-            }
-            if (!enabled) continue
+            val mode = mode(s.kind)
+            if (mode == SkipMode.Off) continue
             if (!s.contains(positionMs)) continue
             // A playback that starts inside the intro skips it; one resumed inside the credits does not.
             val ranInto = (previousMs == null && s.kind.atStart) ||
@@ -229,7 +260,7 @@ class SegmentSkipper(
                 else -> continue
             }
             if (target - positionMs < MIN_JUMP_MS) continue
-            return target
+            return if (mode == SkipMode.Button) SkipDecision.Offer(s.kind, target, s.endMs) else SkipDecision.Seek(s.kind, target)
         }
         return null
     }
@@ -242,13 +273,26 @@ class SegmentSkipper(
         /** Not worth a seek. */
         const val MIN_JUMP_MS = 2_000L
 
+        private fun auto(on: Boolean) = if (on) SkipMode.Auto else SkipMode.Off
+
         fun of(segments: Map<SegmentKind, Pair<SegmentProvider, Segment>>, episode: Boolean, intro: Boolean, recap: Boolean, credits: CreditsSkip): SegmentSkipper =
-            SegmentSkipper(
+            of(segments, episode, auto(intro), auto(recap), credits, SkipMode.Auto, buttons = false)
+
+        /**
+         * The skipper for one playback. [creditsMode] applies where [credits] covers the item; with
+         * [buttons] false (no overlay) every [SkipMode.Button] becomes [SkipMode.Auto].
+         */
+        fun of(
+            segments: Map<SegmentKind, Pair<SegmentProvider, Segment>>, episode: Boolean,
+            intro: SkipMode, recap: SkipMode, credits: CreditsSkip, creditsMode: SkipMode, buttons: Boolean,
+        ): SegmentSkipper {
+            fun eff(m: SkipMode) = if (m == SkipMode.Button && !buttons) SkipMode.Auto else m
+            val end = if (credits == CreditsSkip.All || (credits == CreditsSkip.Episodes && episode)) eff(creditsMode) else SkipMode.Off
+            return SegmentSkipper(
                 segments.values.map { it.second }.sortedBy { it.startMs },
-                skipIntro = intro,
-                skipRecap = recap,
-                skipEnd = credits == CreditsSkip.All || (credits == CreditsSkip.Episodes && episode),
+                mapOf(SegmentKind.Intro to eff(intro), SegmentKind.Recap to eff(recap), SegmentKind.Credits to end, SegmentKind.Preview to end),
             )
+        }
     }
 }
 

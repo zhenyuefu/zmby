@@ -12,12 +12,13 @@ GPL-3.0-or-later 覆盖本项目自有代码和自制配图，不替代以下组
 | OkHttp 内含 Public Suffix List 数据 | 域名后缀匹配 | MPL-2.0；[原始数据](https://publicsuffix.org/list/public_suffix_list.dat)，保留 OkHttp JAR 内的 NOTICE。 |
 | Coil | 图片加载 | Apache-2.0；[Coil](https://github.com/coil-kt/coil) |
 | pinyin4j 2.5.1（com.belerweb） | 拼音匹配 | 按 [PinyinHelper 源码](https://github.com/belerweb/pinyin4j/blob/master/src/main/java/net/sourceforge/pinyin4j/PinyinHelper.java) 的 **GPL-2.0-or-later** 声明处理；内含 [Sparta](https://github.com/belerweb/pinyin4j/blob/master/src/main/java/com/hp/hpl/sparta/Parser.java) 为 **LGPL-2.1-or-later**，Copyright © 2002 Hewlett-Packard Company。[POM](https://github.com/belerweb/pinyin4j/blob/master/pom.xml) 虽写 BSD，本项目不以此覆盖源码的许可声明。 |
+| danmu2ass 1.0.2（gwy15，提交 3b8046d） | `app/src/main/java/app/zmby/danmu/DanmuAss.kt` 将其弹幕分道、避让与 ASS 写出逐行移植为 Kotlin（不含其 Rust 代码或二进制） | MIT，Copyright (c) 2022 gwy15；全文见 [LICENSES/MIT-danmu2ass.txt](LICENSES/MIT-danmu2ass.txt)。[danmu2ass](https://github.com/gwy15/danmu2ass) |
 | ZXing core | 二维码 | Apache-2.0；[ZXing](https://github.com/zxing/zxing) |
 | JUnit 4 | 单元测试 | EPL-1.0；[原始许可](https://github.com/junit-team/junit4/blob/main/LICENSE-junit.txt) |
 | Robolectric | Android JVM 测试 | MIT，部分文件为 Apache-2.0；[原始许可](https://github.com/robolectric/robolectric/blob/master/LICENSE) |
 
 Apache-2.0 全文随仓库保存在 [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)。
-GPLv3 全文见根 [LICENSE](LICENSE)；Sparta 的 LGPLv2.1 全文见 [LICENSES/LGPL-2.1.txt](LICENSES/LGPL-2.1.txt)。
+GPLv3 全文见根 [LICENSE](LICENSE)；danmu2ass 的 MIT 全文见 [LICENSES/MIT-danmu2ass.txt](LICENSES/MIT-danmu2ass.txt)；Sparta 的 LGPLv2.1 全文见 [LICENSES/LGPL-2.1.txt](LICENSES/LGPL-2.1.txt)。
 上表是直接使用组件的导航，不是 APK 中全部传递依赖的完整许可清单。正式分发二进制前，
 应按实际 release 依赖图收集每个组件的 LICENSE / NOTICE，保留必要的版权声明。
 

@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.zmby.ZmbyApp
 import app.zmby.aggregate.HomeRows
+import app.zmby.aggregate.WatchCard
+import app.zmby.aggregate.WatchState
 import app.zmby.aggregate.HeroMerge
 import app.zmby.aggregate.HeroPick
 import app.zmby.aggregate.HomeServers
@@ -34,7 +36,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
     /**
-     * 继续观看 and 下一集 from 观看记录来源; 最新添加 from every enabled server (its media library
+     * 在看 from 观看记录来源; 最新添加 from every enabled server (its media library
      * switches decide which libraries).
      */
     private val servers = kotlinx.coroutines.flow.combine(app.registry.servers, app.sources.rows) { list, _ ->
@@ -51,6 +53,55 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, HomeRows.EMPTY)
 
     private var refreshing: Job? = null
+
+    /** 在看 (ui-spec §2.18): the home row and the page; without 下一集 when the setting is off. */
+    val watching: StateFlow<List<WatchCard>> = kotlinx.coroutines.flow.combine(rows, app.settings.watchingIncludesNextUp.flow) { r, next ->
+        if (next) r.watching else r.watching.filter { it.state == WatchState.Resume }
+    }.flowOn(kotlinx.coroutines.Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** 移除 and 标记为已观看 in flight, by card key; the menu ignores a second press meanwhile. */
+    private val busy = HashSet<String>()
+
+    /**
+     * 从在看中移除; [onDone] gets the text for the result notice (null when nothing needs saying):
+     * failed servers by name.
+     */
+    fun remove(card: WatchCard, onDone: (String?) -> Unit) {
+        if (!busy.add(card.key)) return
+        viewModelScope.launch {
+            try {
+                val outcome = app.home.watching.remove(card)
+                val names = outcome.failed.map { app.registry.get(it)?.name ?: "一台服务器" }
+                onDone(when {
+                    names.isEmpty() -> null
+                    !outcome.hidden -> "未能清除续播进度：${names.joinToString("、")}"
+                    else -> "已从在看中移除；${names.joinToString("、")} 的续播进度未能清除"
+                })
+            } finally {
+                busy.remove(card.key)
+                refresh()
+            }
+        }
+    }
+
+    /** 标记为已观看 on the server the card plays from. */
+    fun markWatched(card: WatchCard, onDone: (String?) -> Unit) {
+        if (!busy.add(card.key)) return
+        viewModelScope.launch {
+            try {
+                app.home.watching.markWatched(card)
+                onDone(null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ZLog.w("Home", "mark watched failed: ${e.message}")
+                onDone("未能标记为已观看：${card.target?.server?.let { app.registry.get(it)?.name } ?: "服务器"}")
+            } finally {
+                busy.remove(card.key)
+                refresh()
+            }
+        }
+    }
 
     /** 首页来源: "" for 全部, else a server id (a deleted server falls back to 全部). */
     val source: StateFlow<String> = kotlinx.coroutines.flow.combine(app.settings.homeSource.flow, app.registry.servers) { id, list ->
@@ -88,7 +139,8 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
     init {
         // A resume point from any client means watching started: off 待看 (favorites spec).
         viewModelScope.launch {
-            rows.map { it.resume }.distinctUntilChanged().collect { if (it.isNotEmpty()) app.watchlist.removeStarted(it) }
+            rows.map { r -> r.watching.filter { it.state == WatchState.Resume }.flatMap { it.resumePoints } }
+                .distinctUntilChanged().collect { if (it.isNotEmpty()) app.watchlist.removeStarted(it) }
         }
     }
 

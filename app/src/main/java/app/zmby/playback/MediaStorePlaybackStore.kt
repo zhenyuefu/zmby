@@ -82,6 +82,23 @@ class MediaStorePlaybackStore(private val resolver: ContentResolver, private val
         return stale.count { runCatching { resolver.delete(it, null, null) > 0 }.getOrDefault(false) }
     }
 
+    override fun deleteBase(base: String): Int {
+        val old = mutableListOf<Uri>()
+        // Filtered here, not with LIKE: '_' in the base name is a LIKE wildcard.
+        resolver.query(
+            collection,
+            arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME),
+            "${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+            arrayOf(relativePath),
+            null,
+        )?.use { c ->
+            while (c.moveToNext()) {
+                if (LocalStrm.ofBase(c.getString(1), base)) old += ContentUris.withAppendedId(collection, c.getLong(0))
+            }
+        }
+        return old.count { runCatching { resolver.delete(it, null, null) > 0 }.getOrDefault(false) }
+    }
+
     private companion object {
         const val TAG = "Strm"
         const val DIR = "zmby-playback"

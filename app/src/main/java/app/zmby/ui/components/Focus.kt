@@ -72,10 +72,10 @@ fun Focusable(
     val restore = remember { FocusRequester() }
     if (memory != null && focusKey != null) {
         LaunchedEffect(memory.restorePending, memory.restoreRequest) {
-            if (memory.restorePending && memory.lastKey == focusKey) {
+            if (memory.restorePending && memory.restoreKey == focusKey) {
                 val request = memory.restoreRequest
                 awaitFrame()
-                if (!memory.restorePending || memory.restoreRequest != request || memory.lastKey != focusKey) return@LaunchedEffect
+                if (!memory.restorePending || memory.restoreRequest != request || memory.restoreKey != focusKey) return@LaunchedEffect
                 if (runCatching { restore.requestFocus() }.getOrDefault(false)) {
                     memory.restored = true
                     memory.restorePending = false

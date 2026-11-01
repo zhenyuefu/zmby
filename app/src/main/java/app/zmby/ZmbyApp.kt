@@ -73,6 +73,8 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         private set
     lateinit var preparer: PlaybackPreparer
         private set
+    lateinit var playbackMemory: app.zmby.playback.PlaybackMemory
+        private set
     lateinit var playbackArtwork: app.zmby.playback.PlaybackArtworkResolver
         private set
     lateinit var capsStore: ServerCapsStore
@@ -119,11 +121,33 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     /** 片头片尾: segment markers from the providers in 片段标记来源 (P4). */
     lateinit var segments: app.zmby.segments.SegmentRepository
         private set
-    /** 观影统计 (P4): play history of the 观影统计 servers, local first. */
+    /** Play history of the 观影统计 servers (我的 › 最近看过), local first. */
     lateinit var stats: app.zmby.stats.WatchStats
+        private set
+    /** 我的: playback sessions on this box, the time charts' source (local-data spec). */
+    lateinit var playSessions: app.zmby.stats.PlaySessionRecorder
+        private set
+    lateinit var me: app.zmby.stats.MeFeed
+        private set
+    /** 我的 › 追剧日历: TMDB air dates of followed series, cached. */
+    lateinit var airing: app.zmby.stats.AiringCalendar
         private set
 
     val backups by lazy { app.zmby.backup.BackupRepository(this) }
+
+    /** 弹幕 (danmu design): matched and cached per playback; the server is the one the user typed. */
+    val danmu by lazy { app.zmby.danmu.DanmuRepository(cacheDir.resolve("danmu"), app.zmby.danmu.DandanplayApi(http), choicesDir = filesDir.resolve("danmu-selections")) }
+    val danmuQueries by lazy { app.zmby.danmu.DanmuQueryResolver(
+        parent = { server, id -> store.detail(server, id)?.item ?: library.item(server, id) },
+        cached = catalog::cached, resolve = catalog::resolve, aliases = catalog::danmuAliases,
+    ) }
+
+    /** The 弹幕服务器 from the settings; its secret is kept out of the log. */
+    fun danmuEndpoint(): app.zmby.danmu.DanmuEndpoint {
+        val e = app.zmby.danmu.DanmuEndpoint(settings.danmuApiBase.value.trim(), settings.danmuAppId.value.trim(), settings.danmuAppSecret.value.trim())
+        ZLog.secret(e.appSecret.takeIf { it.isNotEmpty() })
+        return e
+    }
 
     /** Versions to fall back on per playback request (播放失败自动换源), handed over by token. */
     private val alternates = java.util.concurrent.ConcurrentHashMap<String, List<app.zmby.playback.Alternate>>()
@@ -176,6 +200,7 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun init() {
         settings = Settings(this)
+        playbackMemory = app.zmby.playback.PlaybackMemory(getSharedPreferences("playback_memory", Context.MODE_PRIVATE))
         activeImageCacheMb = settings.imageCacheMb.value
         ZLog.i(TAG, "start ${BuildConfigCompat.versionName(this)} on ${Build.MODEL} (API ${Build.VERSION.SDK_INT})")
         sessionStore = SessionStore(this)
@@ -270,7 +295,12 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             key = { p -> if (p == SegmentProvider.PublicMetaDB) settings.publicMetaDbKey.value.takeIf { it.isNotBlank() } else null },
         )
         ZLog.secret(settings.publicMetaDbKey.value)
-        stats = app.zmby.stats.WatchStats(store, library, { sources.servers(SourceFeature.Stats) }, sources.rows)
+        stats = app.zmby.stats.WatchStats(store, library, { sources.servers(SourceFeature.Stats) })
+        playSessions = app.zmby.stats.PlaySessionRecorder(store)
+        me = app.zmby.stats.MeFeed(store, { sources.enabled(SourceFeature.Stats, it) }, { sources.servers(SourceFeature.Stats) }, sources.rows)
+        airing = app.zmby.stats.AiringCalendar(catalog, app.zmby.catalog.CatalogResources(library, fanOut), { key -> store.episodeMappings.observe(key).first() })
+        // No playback survives a new process: what the last run left open ends at its last checkpoint.
+        appScope.launch(Dispatchers.IO) { playSessions.closeAbandoned() }
         appScope.launch(Dispatchers.IO) { runCatching { store.trim() }.onFailure { ZLog.w(TAG, "trim failed", it) } }
     }
 
@@ -389,6 +419,8 @@ class ActivePlayback(
     val monitor: PlaybackMonitor, val watchJob: Job, val local: LocalStrmSession?,
     val prepared: app.zmby.playback.PreparedPlayback, val server: String,
     val item: app.zmby.emby.BaseItemDto, val launchedAt: Long,
+    /** 播放浮层 of this playback, when on. */
+    val overlay: app.zmby.overlay.PlaybackOverlay? = null,
 )
 
 /**

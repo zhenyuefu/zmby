@@ -12,6 +12,41 @@ import java.util.concurrent.TimeUnit
 class TooBigRowException : RuntimeException("Row too big to fit into CursorWindow")
 
 class CatalogRepositoryTest {
+    @Test fun `danmu alternate names stay on the known work identity for TV and movies`() = runBlocking {
+        MockWebServer().use { server ->
+            for ((kind, field) in listOf("tv" to "name", "movie" to "title")) {
+                server.enqueue(MockResponse().setBody("""{"$field":"菜鸟伙房兵","original_$field":"취사병",
+                    "translations":{"translations":[
+                        {"iso_639_1":"en","data":{"$field":"The Cook"}},
+                        {"iso_639_1":"zh","data":{"$field":"菜鸟炊事兵"}}]},
+                    "alternative_titles":{"${if (kind == "tv") "results" else "titles"}":[{"title":"另一译名"}]}}"""))
+                val cache = MemoryCache()
+                val api = CatalogHttp(OkHttpClient(), cache, { "test-token" }, server.url("/3/").toString())
+                val repo = CatalogRepository(api, cache, { "zh-CN" }, { "zh-CN" }, { "zh-CN" }, { false })
+                assertEquals(listOf("菜鸟炊事兵", "The Cook", "菜鸟伙房兵", "취사병", "另一译名"),
+                    repo.danmuAliases(CatalogId("tmdb", kind, "10")))
+                val request = server.takeRequest()
+                assertEquals("/3/$kind/10", request.requestUrl!!.encodedPath)
+                assertEquals("translations,alternative_titles", request.requestUrl!!.queryParameter("append_to_response"))
+                assertEquals("Bearer test-token", request.getHeader("Authorization"))
+            }
+        }
+    }
+
+    @Test fun `bangumi aliases are available without TMDB credentials`() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"name_cn":"中文名","name":"原名",
+                "infobox":[{"key":"别名","value":[{"v":"另一译名"},{"v":"中文名"}]}]}"""))
+            val cache = MemoryCache()
+            val api = CatalogHttp(OkHttpClient(), cache, { "" }, bgmBase = server.url("/v0/").toString())
+            val repo = CatalogRepository(api, cache, { "zh-CN" }, { "zh-CN" }, { "zh-CN" }, { true })
+            assertEquals(listOf("中文名", "原名", "另一译名"), repo.danmuAliases(CatalogId("bangumi", "tv", "12")))
+            val request = server.takeRequest()
+            assertEquals("/v0/subjects/12", request.requestUrl!!.encodedPath)
+            assertNull(request.getHeader("Authorization"))
+        }
+    }
+
     @Test fun `secondary episode lookup uses the official find route with cache refresh and no credential in keys`() = runBlocking {
         MockWebServer().use { server ->
             val cache = MemoryCache()

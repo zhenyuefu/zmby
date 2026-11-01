@@ -297,15 +297,19 @@ private fun PanelLinkRow(title: String, value: String?, onClick: () -> Unit) {
     }
 }
 
+/** The home tab of 在看 (ui-spec §2.18); listed second in the side bar, numbered after the older tabs. */
+const val WATCHING_TAB = 5
+
 /** The places the side bar lists, in its order; [tab] is the home tab it shows, if it is one. */
 enum class SideNavItem(val label: String, val glyph: Glyph, val tab: Int? = null) {
     Search("搜索", Glyph.Search),
     Home("首页", Glyph.Home, 0),
+    Watching("在看", Glyph.PlayCircle, WATCHING_TAB),
     Movies("电影", Glyph.Film, 1),
     Series("剧集", Glyph.Tv, 2),
     Favorites("收藏", Glyph.Heart, 3),
     Watchlist("待看", Glyph.Bookmark, 4),
-    Stats("观影统计", Glyph.Chart),
+    Me("我的", Glyph.Person),
     Servers("服务器", Glyph.Servers),
     Settings("设置", Glyph.Gear),
 }
@@ -328,6 +332,8 @@ fun SideNav(
     currentTab: Int,
     onPick: (SideNavItem) -> Unit,
     onDismiss: () -> Unit,
+    /** 在看's count (ui-spec §2.18), from the same list as the page. */
+    watching: Int = 0,
 ) {
     val app = LocalContext.current.zmby
     // While the bar slides out, focus may leave it: the caller is giving focus back to the page.
@@ -376,10 +382,11 @@ fun SideNav(
                 ZmbyLogo(markSize = 40.dp, wordSize = 28)
             }
             SideNavItem.entries.forEach { item ->
-                if (item == SideNavItem.Home || item == SideNavItem.Stats) {
+                if (item == SideNavItem.Home || item == SideNavItem.Me) {
                     Box(Modifier.padding(horizontal = 24.dp, vertical = 10.dp).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.10f)))
                 }
                 val sub = when (item) {
+                    SideNavItem.Watching -> watching.takeIf { it > 0 }?.toString()
                     SideNavItem.Favorites -> favorites.size.takeIf { it > 0 }?.toString()
                     SideNavItem.Watchlist -> watchlist.size.takeIf { it > 0 }?.toString()
                     SideNavItem.Servers -> "$online 台在线"

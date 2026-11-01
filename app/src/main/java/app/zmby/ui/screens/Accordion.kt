@@ -80,6 +80,27 @@ private val SECTION_TOP = 170.dp
 /** Height change, content crossfade and page alignment share one duration and easing. */
 private const val TRANSITION_MS = 200
 
+/** The names the hold hints use for each block. */
+internal val SECTION_NAMES = mapOf(
+    SECTION_EPISODES to "剧集",
+    SECTION_VERSIONS to "版本",
+    SECTION_TRACKS to "音轨与字幕",
+    SECTION_CAST to "演职人员",
+    SECTION_RECS to "为你推荐",
+)
+
+/** What holding ↑ and ↓ jumps to from a block: its neighbours on the page (the header is not a block). */
+internal data class HoldHint(val up: String?, val down: String?) {
+    /** 「长按 ↑ 剧集　长按 ↓ 音轨与字幕」, without the half that has no block. */
+    val text: String? get() = listOfNotNull(up?.let { "长按 ↑ $it" }, down?.let { "长按 ↓ $it" }).joinToString("　").ifEmpty { null }
+}
+
+internal fun holdHint(order: List<String>, key: String): HoldHint {
+    val i = order.indexOf(key)
+    if (i < 0) return HoldHint(null, null)
+    return HoldHint(order.getOrNull(i - 1)?.let(SECTION_NAMES::get), order.getOrNull(i + 1)?.let(SECTION_NAMES::get))
+}
+
 /** Blocks that collapse to a summary bar; the others always keep their content. */
 internal val COLLAPSIBLE = setOf(SECTION_VERSIONS, SECTION_TRACKS)
 

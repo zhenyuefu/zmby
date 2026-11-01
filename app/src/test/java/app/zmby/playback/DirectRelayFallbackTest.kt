@@ -67,7 +67,7 @@ class DirectRelayFallbackTest {
                     val forwardedUrl = forwarded.local?.strm?.readText()?.trim() ?: forwarded.launch.uri
                     try {
                         assertTrue(forwardedUrl.startsWith("http://127.0.0.1:"))
-                        if (subtitleBytes != null) assertArrayEquals(subtitleBytes, forwarded.local!!.subtitle.readBytes())
+                        if (subtitleBytes != null) assertArrayEquals(subtitleBytes, forwarded.local!!.subtitle!!.readBytes())
                         assertNull(forwarded.retryWithRelay)
                         assertEquals(125_000, forwarded.startPositionMs)
                         assertEquals(direct.launch.extras.filterKeys { it != ZidooPlayer.EXTRA_POSITION }, forwarded.launch.extras.filterKeys { it != ZidooPlayer.EXTRA_POSITION })

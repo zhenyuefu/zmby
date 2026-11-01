@@ -243,12 +243,15 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         else -> VersionsState(emptyList(), 0, null)
     }
     var picked by remember(shown?.key) { mutableStateOf<Version?>(null) }
-    val chosen = picked?.let { p -> versions.all.firstOrNull { it.key == p.key } } ?: versions.default
+    val lastPlayed = remember(versions.all, tick) { app.playbackMemory.latest(versions.all.map { it.ref }) }
+    val chosen = picked?.let { p -> versions.all.firstOrNull { it.key == p.key } }
+        ?: versions.all.firstOrNull { v -> v.ref.server == lastPlayed?.server && v.item.id == lastPlayed.itemId && lastPlayed.selection.restore(v.source) != null }
+        ?: versions.default
     val selected = chosen?.let { it.copy(item = it.ref.withPlaybackProgress(progress).item) }
     var preview by remember(shown?.key) { mutableStateOf<Version?>(null) }
     var picks by rememberRetained("picks", seriesId) { mutableStateOf<Map<String, TrackChoice>>(emptyMap()) }
     fun trackKey(v: Version) = v.key
-    fun tracks(v: Version) = picks[trackKey(v)] ?: TrackChoice()
+    fun tracks(v: Version) = picks[trackKey(v)] ?: app.playbackMemory.tracksFor(v.ref, v.source) ?: TrackChoice()
     val scroll = rememberScrollState()
     val heading = rememberDetailHeading(scroll, gap = 20f)
     val rowState = rememberLazyListState()
@@ -258,6 +261,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     var headerFocused by remember { mutableStateOf(false) }
     val trackEntry = remember { FocusRequester() }
     var marking by remember { mutableStateOf<ServerItem?>(null) }
+    val danmu = rememberDanmuPanel()
     var unsorted by rememberSaveable { mutableStateOf(false) }
     var mappingsOpen by remember { mutableStateOf(false) }
     var mappingSource by remember { mutableStateOf<ServerItem?>(null) }
@@ -328,13 +332,13 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     accordion.header = playButton
     val today = remember { java.time.LocalDate.now().toString() }
     if (mappingsOpen && canonical != null) EpisodeMappingDialog(canonical, allCatalog, allResources, identities, localMappings, seasonNumber, mappingSource,
-        onDismiss = { mappingsOpen = false; mappingSource = null })
-    if (quickSelect) QuickEpisodeDialog(seasons, seasonNumber, episodes, shown?.key,
+        unsorted = mapped.unmatched, reasons = mapped.reasons, onDismiss = { mappingsOpen = false; mappingSource = null })
+    if (quickSelect) QuickEpisodeDialog(display.title, seasons, seasonNumber, episodes, shown?.key,
         onSeason = { number -> if (number != seasonNumber) { seasonNumber = number; currentKey = null }; unsorted = false },
         onSelect = { row -> currentKey = row.key; unsorted = false; quickSelect = false; quickPickKey = row.key },
         onDismiss = { quickSelect = false })
     BackdropProvider(display.backdrop, rememberDetailScrims(heading, series = true)) {
-      Box(Modifier.fillMaxSize()) {
+      ActionFeedbackHost(Modifier.fillMaxSize()) {
         BackdropLayer(Modifier.fillMaxSize(), blurProgress = { heading.backdropProgress })
         // Section changes align the context row; inner card focus must not move the whole page.
         @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -347,7 +351,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                     onPlay = { _, v, start -> v?.let { play(context, it.ref, start, it.source.id, tracks(it), versions.alternatesTo(it)) } },
                     playButton = playButton,
                     initialFocusKey = seriesId, onFocusChanged = { headerFocused = it; if (it) accordion.showHeader() },
-                    onMarks = { selected?.let { marking = it.ref } }, availability = availability,
+                    onMarks = { selected?.let { marking = it.ref } },
+                    danmu = danmu, availability = availability,
                     onQuickSelect = { quickSelect = true },
                     onRetry = { versions.retry(); failed.forEach(app.registry::retry); resourceRetry++ },
                     onDown = { accordion.open(SECTION_EPISODES) })
@@ -356,9 +361,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                 // 剧集 never collapses: the season row and the current episode stay in place (ui-spec §2.14).
                 DetailBlock(accordion, SECTION_EPISODES) {
                   Column(Modifier.padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
-                    if (canonical != null && (mapped.awaitingIdentity.isNotEmpty() || identities.values.any { it.state == EpisodeIdentityState.Unavailable })) Row(Modifier.fillMaxWidth().padding(horizontal = 80.dp), verticalAlignment = Alignment.CenterVertically,
+                    if (canonical != null && identities.values.any { it.state == EpisodeIdentityState.Unavailable }) Row(Modifier.fillMaxWidth().padding(horizontal = 80.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                        if (mapped.awaitingIdentity.isNotEmpty()) Text("正在核对 ${mapped.awaitingIdentity.size} 条单集身份…", fontSize = 18.sp, color = Z.textSecondary)
                         val unavailable = identities.values.count { it.state == EpisodeIdentityState.Unavailable }
                         if (unavailable > 0) GlassButton("$unavailable 条身份待确认 · 重试", { identityRetry++ })
                     }
@@ -376,7 +380,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                             }
                         }, labelPrefix = "季")
                       }
-                      if (canonical != null) GlassButton("季集映射", { mappingSource = null; mappingsOpen = true })
+                      if (canonical != null) MappingChip(localMappings.size) { mappingSource = null; mappingsOpen = true }
                     }
                     episodeError?.let { Text(it, color = Z.warn, modifier = Modifier.padding(horizontal = 80.dp)); GlassButton("重试目录", { resourceRetry++ }, Modifier.padding(start = 80.dp)) }
                     if (episodes.isEmpty() && !unsorted && episodeError == null) {
@@ -384,7 +388,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                         Text(if (loading) "正在加载剧集目录…" else "这一季还没有剧集", fontSize = 21.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 80.dp))
                     }
                     if (unsorted) {
-                        if (unknown.isEmpty()) Text(if (pending > 0 || mapped.awaitingIdentity.isNotEmpty()) "正在核对资源…" else "没有未归类条目",
+                        if (unknown.isEmpty() && pending == 0 && mapped.awaitingIdentity.isEmpty()) Text("没有未归类条目",
                             fontSize = 21.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 80.dp))
                         UnsortedRow(nav, unknown, mapped.reasons, accordion.entry(SECTION_EPISODES)) { mappingSource = it; mappingsOpen = true }
                     } else {
@@ -424,14 +428,14 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                             ?: SummaryText(if (versions.searching > 0) "正在查找资源…" else "这一集暂无可播放的版本")
                     }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
-                            VersionSection(versions, selected, { picked = it }, { preview = it }, { play(context, it.ref, it.item.resumeMs, it.source.id, tracks(it), versions.alternatesTo(it)) }, entry = accordion.entry(SECTION_VERSIONS))
+                            VersionSection(versions, selected, { picked = it }, { preview = it }, { play(context, it.ref, it.item.resumeMs, it.source.id, tracks(it), versions.alternatesTo(it)) }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
                         }
                     }
                 }
                 trackVersion?.let { v ->
                     CollapsibleSection(accordion, SECTION_TRACKS, "音轨与字幕", "${v.source.subtitleStreams.size} 条字幕", barHeight = 112.dp, summary = { TrackSummary(v, tracks(v)) }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
-                            TrackSection(v, v.item.chapters.size, v.item.runTimeTicks, tracks(v), accordion.entry(SECTION_TRACKS)) { picks = picks + (trackKey(v) to it) }
+                            TrackSection(v, v.item.chapters.size, v.item.runTimeTicks, tracks(v), accordion.entry(SECTION_TRACKS), holdHint(accordion.order, SECTION_TRACKS)) { picks = picks + (trackKey(v) to it) }
                         }
                     }
                 }
@@ -462,6 +466,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
             if (shown != null && playItem != null) seriesPlayLabel(episodeCode(shown.item), resumeMs, remainingLabel(playItem)) else null,
         )
         marking?.let { SegmentMarksPanel(it.server, it.item, onDismiss = { marking = null }) }
+        DanmuPanelHost(danmu)
       }
     }
 }
@@ -544,6 +549,21 @@ private fun UnsortedRow(nav: Nav, items: List<ServerItem>, reasons: Map<String, 
     }
 }
 
+/** 「n 条规则」 after 季集映射 on the season row, nothing without rules. */
+internal fun mappingChipCount(rules: Int): String? = if (rules > 0) "$rules 条规则" else null
+
+/** 季集映射 on the season row (Series.dc.html): 60 high glass pill, swap arrows, then the rule count. */
+@Composable
+private fun MappingChip(rules: Int, onClick: () -> Unit) {
+    GlassSurface(onClick, label = "季集映射", focusKey = "season-mapping") {
+        Row(Modifier.height(60.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Glyph.Swap, size = 20.dp, strokeWidth = 2.2f)
+            Text("季集映射", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            mappingChipCount(rules)?.let { Text(it, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, color = androidx.tv.material3.LocalContentColor.current.copy(alpha = 0.6f)) }
+        }
+    }
+}
+
 /** 「第 1 季 第 1 集」 from the server's numbers, or null when it has none. */
 internal fun unsortedCode(item: BaseItemDto): String? {
     val e = item.indexNumber ?: return null
@@ -564,17 +584,13 @@ private fun SeriesHeader(
     initialFocusKey: String?,
     onFocusChanged: (Boolean) -> Unit,
     onMarks: (BaseItemDto) -> Unit = {},
+    danmu: DanmuPanelState? = null,
     onQuickSelect: () -> Unit = {},
     availability: String? = null,
     onRetry: () -> Unit = {},
     onDown: () -> Unit = {},
 ) {
-    val context = LocalContext.current
-    val app = context.zmby
-    val scope = rememberCoroutineScope()
     val s = ref.item
-    val favorites by app.favorites.items.collectAsState()
-    val favorite = remember(favorites, ref.key) { app.favorites.isFavorite(ref) }
     Column(
         Modifier
             .padding(start = 80.dp, top = 140.dp)
@@ -594,23 +610,16 @@ private fun SeriesHeader(
             GlassButton(label, { if(current != null && selected != null) onPlay(current,selected,resumeMs) else onRetry() },
                 Modifier.focusRequester(playButton).focusRequester(rememberInitialFocus(initialFocusKey ?: s.id)), glyph = Glyph.Play, label = "seriesPlay:$initialFocusKey")
             if(current != null && selected != null && resumeMs > 0) GlassButton("从头播放", { onPlay(current,selected,0) })
-            GlassIconButton(Glyph.Episodes, onClick = onQuickSelect, label = "快速选集")
-            selected?.ref?.let { WatchedButton(it) }
-            if (ref.server != "catalog") GlassIconButton(
-                Glyph.Heart,
-                on = favorite,
-                label = if (favorite) "已收藏" else "加入收藏",
-                modifier = Modifier,
-                onClick = { scope.launch { app.favorites.toggle(ref, listOf(ref)) } },
-            )
-            // 待看 next to 收藏 (favorites spec); white when the work is on the list.
-            val watchEntries by app.watchlist.entries.collectAsState()
-            val inWatchlist = remember(watchEntries, ref.key) { app.watchlist.contains(ref) }
-            if (ref.server != "catalog") GlassIconButton(Glyph.Bookmark, label = if (inWatchlist) "已在待看" else "加入待看", on = inWatchlist, onClick = {
-                app.toggleWatchlist(scope, ref, emptyList())
-            })
+            // Then the icon buttons in their fixed order (ui-spec §2.15); unavailable ones stay in place, dimmed.
+            ActionDivider()
+            QuickPickAction(onQuickSelect)
+            WatchedAction(selected?.ref)
+            FavoriteAction(ref, listOf(ref))
+            WatchlistAction(ref, emptyList())
             // 本地手动标记 of the episode the main button plays (or its whole season).
-            if (current != null && selected != null) GlassIconButton(Glyph.Marks, label = "片头片尾", onClick = { onMarks(current) })
+            MarksAction(enabled = current != null && selected != null) { current?.let(onMarks) }
+            // 弹幕 (ui-spec §2.19): last, after 片头片尾; for the episode the main button plays.
+            danmu?.let { DanmuAction(selected?.ref, it) }
         }
     }
 }

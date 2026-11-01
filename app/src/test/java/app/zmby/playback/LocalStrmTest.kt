@@ -74,14 +74,14 @@ class LocalStrmTest {
         val b = preparer.prepare("http://h/v", "k", stream, "http://h/s.srt")
         assertFalse(a.baseName == b.baseName)
         assertEquals("http://h/v\n", a.strm.readText())
-        assertEquals("${a.baseName}.chi.6.srt", a.subtitle.name)
-        assertEquals(a.strm.parentFile, a.subtitle.parentFile)
+        assertEquals("${a.baseName}.chi.6.srt", a.subtitle!!.name)
+        assertEquals(a.strm.parentFile, a.subtitle!!.parentFile)
         assertEquals(LocalStrm.subtitlePid(srt), a.subtitlePid)
         assertEquals("file://${a.strm.absolutePath}", a.uri)
         preparer.release(a)
-        assertFalse(a.strm.exists() || a.subtitle.exists())
-        assertTrue(b.strm.exists() && b.subtitle.exists())
-        assertEquals(setOf(b.strm.name, b.subtitle.name), root.list()!!.toSet())
+        assertFalse(a.strm.exists() || a.subtitle!!.exists())
+        assertTrue(b.strm.exists() && b.subtitle!!.exists())
+        assertEquals(setOf(b.strm.name, b.subtitle!!.name), root.list()!!.toSet())
     }
 
     @Test

@@ -63,7 +63,7 @@ internal fun FavoritesGrid(nav: Nav, search: FocusRequester, entry: FocusRequest
             // Shown from the first instance on a server that is on and reachable; offline instances stay listed.
             val usable = f.instances.sortedBy { i -> servers.firstOrNull { it.id == i.server }?.let { if (it.enabled && it.health != Health.Off) it.order else 1000 + it.order } ?: 9999 }
                 .firstOrNull { i -> servers.any { it.id == i.server } }
-            val ref = usable?.let { ServerItem(it.server, display(f, it.itemId)) }
+            val ref = usable?.let { ServerItem(it.server, favoriteItem(f, it.itemId)) }
             PosterCard2x3(
                 imageUrl = ref?.let { app.library.primaryImage(it) },
                 title = visibleText(f.title) ?: UNTITLED,
@@ -79,7 +79,7 @@ internal fun FavoritesGrid(nav: Nav, search: FocusRequester, entry: FocusRequest
     }
 }
 
-private fun display(f: Favorite, itemId: String) = BaseItemDto(
+internal fun favoriteItem(f: Favorite, itemId: String) = BaseItemDto(
     id = itemId,
     name = f.title,
     type = f.type,

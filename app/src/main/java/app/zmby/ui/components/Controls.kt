@@ -185,6 +185,8 @@ fun SegmentedWell(
     focusShowsOn: Boolean = false,
     labelPrefix: String = "seg",
     focusKeyPrefix: String? = null,
+    /** Requests focus on the selected segment (a whole settings row hands its focus on to it). */
+    entry: FocusRequester? = null,
 ) {
     val requesters = remember(items.size) { List(items.size) { FocusRequester() } }
     val shape = if (wrap) RoundedCornerShape(32.dp) else Pill
@@ -203,7 +205,7 @@ fun SegmentedWell(
         val isSelected = i == selected
         Focusable(
             onClick = { onSelect(i) },
-            modifier = m.focusRequester(requesters[i]),
+            modifier = m.focusRequester(requesters[i]).then(if (entry != null && i == selected.coerceIn(items.indices)) Modifier.focusRequester(entry) else Modifier),
             shape = Pill,
             focusedScale = if (isSelected || focusShowsOn) 1.08f else 1.06f,
             outline = 0.dp,
@@ -299,6 +301,8 @@ fun SelectableRow(
     tile: Boolean = false,
     dimmed: Boolean = false,
     showCheck: Boolean = true,
+    /** Selected shows as a 2 px white inner ring instead of the brighter fill (version rows). */
+    selectedRing: Boolean = false,
     radius: Dp = 18.dp,
     padding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
     onFocus: (() -> Unit)? = null,
@@ -314,9 +318,10 @@ fun SelectableRow(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .background(if (selected) Z.sel else if (tile) Z.tile else Color.Transparent, shape)
+                    .background(if (selected && !selectedRing) Z.sel else if (tile) Z.tile else Color.Transparent, shape)
                     .then(if (focused) Modifier.liftShadow(shape) else Modifier)
                     .onFill(shape) { focusAlpha }
+                    .then(if (selected && selectedRing && !focused) Modifier.border(2.dp, Color.White.copy(alpha = 0.7f), shape) else Modifier)
                     .padding(padding),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),

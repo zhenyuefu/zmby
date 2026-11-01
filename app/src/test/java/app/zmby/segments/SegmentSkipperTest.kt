@@ -66,4 +66,25 @@ class SegmentSkipperTest {
         val s = SegmentSkipper(listOf(Segment(SegmentKind.Intro, 0, 60_000)), skipIntro = true, skipRecap = true, skipEnd = true)
         assertNull(s.onSample(58_500, 59_000, d))
     }
+
+    @Test fun `button mode offers the skip instead of seeking, once`() {
+        val s = SegmentSkipper(listOf(intro, credits), mapOf(SegmentKind.Intro to SkipMode.Button, SegmentKind.Credits to SkipMode.Auto))
+        assertNull(s.decide(58_000, 59_000, d))
+        assertEquals(SkipDecision.Offer(SegmentKind.Intro, 150_000, 150_000), s.decide(59_000, 60_500, d))
+        assertNull(s.decide(60_500, 61_500, d))
+        assertEquals(SkipDecision.Seek(SegmentKind.Credits, d - SegmentSkipper.END_GUARD_MS), s.decide(2_599_000, 2_600_200, d))
+    }
+
+    @Test fun `without the overlay a button mode skips by itself`() {
+        val plan = mapOf(SegmentKind.Intro to (SegmentProvider.TheIntroDB to intro), SegmentKind.Credits to (SegmentProvider.TheIntroDB to credits))
+        val off = SegmentSkipper.of(plan, episode = true, intro = SkipMode.Button, recap = SkipMode.Off, credits = CreditsSkip.Episodes, creditsMode = SkipMode.Button, buttons = false)
+        assertEquals(SkipDecision.Seek(SegmentKind.Intro, 150_000), off.decide(59_000, 60_500, d))
+        val on = SegmentSkipper.of(plan, episode = true, intro = SkipMode.Button, recap = SkipMode.Off, credits = CreditsSkip.Episodes, creditsMode = SkipMode.Button, buttons = true)
+        assertEquals(SkipDecision.Offer(SegmentKind.Intro, 150_000, 150_000), on.decide(59_000, 60_500, d))
+        assertEquals(SkipDecision.Offer(SegmentKind.Credits, d - SegmentSkipper.END_GUARD_MS, null), on.decide(2_599_000, 2_600_200, d))
+        // Films are outside 剧集 credits skipping, whatever the mode.
+        val film = SegmentSkipper.of(plan, episode = false, intro = SkipMode.Off, recap = SkipMode.Off, credits = CreditsSkip.Episodes, creditsMode = SkipMode.Button, buttons = true)
+        assertNull(film.decide(2_599_000, 2_600_200, d))
+        assertEquals(credits, film.segment(SegmentKind.Credits))
+    }
 }

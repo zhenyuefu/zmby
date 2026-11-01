@@ -5,6 +5,7 @@ import app.zmby.zidoo.PlayerStatusSource
 import app.zmby.zidoo.ZidooResult
 import app.zmby.zidoo.ZidooStatus
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import app.zmby.segments.SegmentSkipper
 import kotlin.math.abs
@@ -16,6 +17,24 @@ interface PlaybackReporter {
     suspend fun stopped(positionMs: Long)
     /** Marks the item played explicitly (the watch threshold was passed). */
     suspend fun markPlayed() {}
+}
+
+/**
+ * The playback overlay's side of one playback (ui-spec §2.16). Called on the monitor's coroutine
+ * (the main thread); implementations hand drawing to their own views.
+ */
+interface MonitorOverlay {
+    /** Every sample of this playback's file. */
+    fun onSample(positionMs: Long, durationMs: Long, playing: Boolean)
+    /**
+     * A segment in 显示按钮 mode was run into: offer its button. False when the overlay cannot ask
+     * (closed, permission revoked): the monitor then skips by itself, as without the overlay.
+     */
+    fun onOffer(offer: app.zmby.segments.SkipDecision.Offer): Boolean = false
+    /** zmby moved the position (an automatic skip or a button on the overlay). */
+    fun onSeeked(positionMs: Long) {}
+    /** The player opened another file: hide everything, nothing here belongs to it. */
+    fun onLost() {}
 }
 
 /** How a playback ended, as far as the app is concerned. */
@@ -49,7 +68,18 @@ class PlaybackMonitor(
     private val skipper: Deferred<SegmentSkipper?>? = null,
     /** Ignore stale status for a previous file, especially between direct and relay attempts. */
     private val acceptsStatus: (ZidooStatus) -> Boolean = { true },
+    private val onStarted: () -> Unit = {},
+    /** 我的: this playback's session on this box; only playbacks the status API confirmed are recorded. */
+    private val session: PlaySessionSink? = null,
+    /** 播放浮层: told about every sample, offered skip buttons. */
+    private val overlay: MonitorOverlay? = null,
+    /** Application lifetime: finishing a playback drains reports after its polling job is cancelled. */
+    reportScope: CoroutineScope,
 ) {
+    private val reports = PlaybackReportQueue(reportScope, reporter, session)
+    /** Seeks the overlay made (a button), applied on the next poll like zmby's own skips. */
+    private val overlaySeeks = java.util.concurrent.ConcurrentLinkedQueue<Long>()
+
     /** Seeks zmby made past segments (for the log and tests). */
     var skips = 0
         private set
@@ -63,25 +93,41 @@ class PlaybackMonitor(
         private set
     private var fileKey: String? = null
     private var finished = false
+    private var tracker: SessionTracker? = null
 
     suspend fun watch() {
         if (!awaitStartup()) return
         var lastReport = now()
         var lastPaused = false
         var previous: Long? = null
-        while (true) {
+        while (!finished) {
             delay(config.pollMs)
+            while (true) {
+                val target = overlaySeeks.poll() ?: break
+                // The overlay already seeked: record it as a jump and report the new position at once.
+                skips++
+                previous = target
+                lastPositionMs = target
+                tracker?.seeked(now(), target)
+                reports.progress(target, lastPaused, tracker?.snapshot(), boundary = true)
+                lastReport = now()
+            }
             val status = player.status() ?: continue
             if (fileKey != null && status.fileKey != null && status.fileKey != fileKey) {
                 // The player moved on to another file; it is no longer ours to report.
                 ZLog.w(TAG, "player opened another file (${status.fileKey}); stop following")
+                overlay?.onLost()
                 return
             }
+            overlay?.onSample(status.positionMs, status.durationMs, status.playing)
             if (status.positionMs > 0) lastPositionMs = status.positionMs
             if (status.durationMs > 0) lastDurationMs = status.durationMs
+            tracker?.sample(now(), status.positionMs, status.playing)
             val paused = !status.playing
             val skip = skipper?.takeIf { it.isCompleted }?.getCompletedOrNull()
-            val target = if (skip != null && status.durationMs > 0) skip.onSample(previous, status.positionMs, status.durationMs) else null
+            val decision = if (skip != null && status.durationMs > 0) skip.decide(previous, status.positionMs, status.durationMs) else null
+            val asked = decision is app.zmby.segments.SkipDecision.Offer && overlay?.onOffer(decision) == true
+            val target = decision?.targetMs?.takeIf { !asked }
             previous = status.positionMs
             if (target != null) {
                 // Like a user's seek: the new position is reported at once, so the server's resume
@@ -92,7 +138,9 @@ class PlaybackMonitor(
                     skips++
                     previous = target
                     lastPositionMs = target
-                    reporter.progress(target, paused)
+                    tracker?.seeked(now(), target)
+                    overlay?.onSeeked(target)
+                    reports.progress(target, paused, tracker?.snapshot(), boundary = true)
                     lastReport = now()
                     lastPaused = paused
                     continue
@@ -101,16 +149,31 @@ class PlaybackMonitor(
             val due = now() - lastReport >= config.reportIntervalMs
             if (due || paused != lastPaused) {
                 ZLog.d(TAG, "poll pos=${status.positionMs}ms/${status.durationMs}ms ${if (paused) "paused" else "playing"}")
-                lastPositionMs?.let { reporter.progress(it, paused) }
+                lastPositionMs?.let { reports.progress(it, paused, tracker?.snapshot(), boundary = paused != lastPaused) }
                 lastReport = now()
                 lastPaused = paused
             }
         }
     }
 
+    /**
+     * A seek the user asked for on the overlay (跳过片头, 立即播放). The jump is reported on the next
+     * poll, to this playback's own server only. False when the player refused it.
+     */
+    suspend fun seekFromOverlay(targetMs: Long): Boolean {
+        if (finished) return false
+        val ok = player.seekTo(targetMs)
+        ZLog.i(TAG, "overlay seek -> ${targetMs}ms ${if (ok) "ok" else "failed"}")
+        if (ok) {
+            overlaySeeks += targetMs
+            overlay?.onSeeked(targetMs)
+        }
+        return ok
+    }
+
     private suspend fun awaitStartup(): Boolean {
         val deadline = now() + config.startupTimeoutMs
-        while (now() < deadline) {
+        while (!finished && now() < deadline) {
             val status = player.status()
             if (status != null && acceptsStatus(status)) {
                 fileKey = status.fileKey
@@ -124,7 +187,13 @@ class PlaybackMonitor(
                 }
                 lastPositionMs = position.takeIf { it > 0 }
                 started = true
-                reporter.start(position)
+                onStarted()
+                if (session != null) {
+                    val at = now()
+                    tracker = SessionTracker(at, position, status.playing)
+                }
+                overlay?.onSample(position, status.durationMs, status.playing)
+                reports.start(now(), position, recordSession = tracker != null)
                 return true
             }
             delay(config.startupPollMs)
@@ -145,14 +214,17 @@ class PlaybackMonitor(
         val position = resolveFinalPosition(result, lastPositionMs, runtime)
         val watched = result?.completed == true || (position != null && WatchThreshold.isWatched(position, runtime, watchedPercent))
         ZLog.i(TAG, "finish result=$result lastPolled=${lastPositionMs}ms runtime=${runtime}ms -> final=${position}ms watched=$watched")
-        if (position == null) return PlaybackOutcome(null, false)
+        if (position == null) {
+            reports.finish(null, runtime, false, tracker?.snapshot())
+            return PlaybackOutcome(null, false)
+        }
         if (!started) {
             // The status API never saw the player (e.g. it is disabled), but the result says it played.
-            reporter.start(startPositionMs)
+            reports.start(now(), startPositionMs, recordSession = false)
             started = true
+            if (result?.failed != true && (position > 0 || result?.completed == true)) onStarted()
         }
-        reporter.stopped(position)
-        if (watched) reporter.markPlayed()
+        reports.finish(position, runtime, watched, tracker?.snapshot())
         return PlaybackOutcome(position, watched)
     }
 }

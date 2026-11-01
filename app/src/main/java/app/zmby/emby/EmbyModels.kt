@@ -82,6 +82,10 @@ data class BaseItemDto(
     @SerialName("SortName") val sortName: String? = null,
     /** First air or release date (ISO); a person's birth date. */
     @SerialName("PremiereDate") @Serializable(with = KnownDate::class) val premiereDate: String? = null,
+    /** A series' Continuing or Ended (在看 keeps a finished but continuing series as 等待更新). */
+    @SerialName("Status") val status: String? = null,
+    /** Virtual for an episode the server lists but has no file for (missing or not yet aired). */
+    @SerialName("LocationType") val locationType: String? = null,
     /** Cast and crew; only the single-item endpoint (or Fields=People) carries it. */
     @SerialName("People") val people: List<PersonDto> = emptyList(),
     /** A person's birthplace. */

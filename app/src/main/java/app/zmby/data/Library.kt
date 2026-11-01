@@ -359,6 +359,26 @@ class Library(
     }
 
     suspend fun setPlayed(server: String, id: String, played: Boolean) = emby.setPlayed(session(server), id, played)
+    suspend fun clearResume(server: String, id: String) = emby.clearResume(session(server), id)
+
+    /** 在看: the films and episodes most recently finished on [server], newest first. */
+    suspend fun recentlyPlayed(server: String, limit: Int = 60): List<BaseItemDto> = emby.playedItems(session(server), 0, limit, listFields = true).items
+
+    /** 在看: [ids] (series) with their ProviderIds, Status and artwork, in requests of 50. */
+    suspend fun itemsByIds(server: String, ids: List<String>): List<BaseItemDto> =
+        ids.distinct().chunked(50).flatMap { emby.itemsByIds(session(server), it).items }
+
+    /** 在看: a whole series' episodes (no media sources), page by page up to [max]. */
+    suspend fun seriesEpisodes(server: String, seriesId: String, max: Int = 1000): List<BaseItemDto> {
+        val s = session(server)
+        val all = mutableListOf<BaseItemDto>()
+        while (all.size < max) {
+            val page = emby.episodes(s, seriesId, start = all.size, limit = EPISODE_PAGE, withSources = false)
+            all += page.items
+            if (page.items.isEmpty() || all.size >= page.totalRecordCount) break
+        }
+        return all
+    }
     suspend fun setFavorite(server: String, id: String, favorite: Boolean) = emby.setFavorite(session(server), id, favorite)
 
     // ---- images

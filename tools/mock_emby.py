@@ -20,11 +20,15 @@ under /emby (the root answers 200 with the whole file).
 --multi also starts four servers that disagree with this one (ports --port+2 … +5): 朋友的服 (other
 translated titles, upper-case ProviderIds keys, a pinyin plugin, only episodes 1–8 of one show, a
 230-episode anime), 公益服 A (ignores AnyProviderIdEquals and returns its whole library, refuses
-favourite writes with 403, 1.2 s per request, lower-case keys, one film twice with the same TMDB),
+favourite and user-data writes with 403, 1.2 s per request, lower-case keys, one film twice with the same TMDB),
 公益服 B (logs in, then hangs 25 s on every library request) and 无 ID 服 (no ProviderIds; one title
 that matches on title + year, one with the wrong year) and, on --port+6, 严格服 (the main catalogue,
 but only for official Emby clients: anything else, zmby and the Zidoo player's okhttp included, gets
 an nginx-style 403 page). Log in to each as its own server. --official-only makes the main server strict.
+
+--segments gives 漫长的季节 Emby segment markers (intro 0:10–1:10, credits from 4:00), timed for a
+five-minute fake video (`adb shell setprop debug.zmby.fake_zidoo_duration 300000`), to try the
+playback overlay's skip buttons and next-episode card on the emulator.
 
 --redirect mimics a 302 cloud-drive server (emby2alist and the like): stream URLs answer 302 to a
 signed link on --signed-port (default 8097) with Cache-Control: max-age=--sign-ttl (default 60);
@@ -32,9 +36,11 @@ the link answers 403 once expired, and with --require-ua only to that User-Agent
 """
 import os
 import argparse
+import datetime
 import hashlib
 import hmac
 import json
+import re
 import struct
 import threading
 import time
@@ -495,6 +501,10 @@ def build_friend():
     items["f-dune"]["UserData"].update({"PlaybackPositionTicks": 3_100_000 * TICKS, "PlayedPercentage": 31, "LastPlayedDate": "2026-10-23T08:00:00Z"})
     for k, v in series_copy("longseason", "f-ls", "The Long Season", {"TMDB": "202750"}, range(1, 9), "ep", "f-ls-e").items():
         items[k] = dict(v, _lib="lib-tv") if v["Type"] == "Series" else v
+    # 在看 across servers: 家里 NAS stopped part-way through episode 7; here all eight were watched
+    # since, so the merged card moves on to episode 9 (only 家里 NAS has it).
+    for e in range(1, 9):
+        items[f"f-ls-e{e}"]["UserData"].update({"Played": True, "PlayedPercentage": 100, "LastPlayedDate": f"2026-10-24T{12 + e}:00:00Z"})
     for k, v in series_copy("anime", "f-an", "长篇番剧", {"TVDB": "300001"}, range(1, 231), "an", "f-an-e", quality=(3840, 2160)).items():
         items[k] = dict(v, _lib="lib-tv") if v["Type"] == "Series" else v
     # Its own person ids and English names; TMDB ids match 家里 NAS (one person in the app).
@@ -533,6 +543,8 @@ def build_public_a():
     ]:
         d["_lib"] = "lib-movies"
         items[d["Id"]] = d
+    # Also part-way through on 家里 NAS (older): one 在看 card, and 移除 hits this server's 403.
+    items["a-oppen-4k"]["UserData"].update({"PlaybackPositionTicks": 5_400_000 * TICKS, "PlayedPercentage": 50, "LastPlayedDate": "2026-10-24T09:00:00Z"})
     stamp_dates(items)
     return items
 
@@ -636,8 +648,12 @@ def mock_tmdb(rest, q, headers):
         if len(parts) == 4 and parts[2] == "season":
             n = int(parts[3])
             if tid == "202750" and n == 1:
+                # 我的 › 追剧日历: relative to today, so the current week always has something to show:
+                # episode 12 (on the servers) aired yesterday, 13 airs today and 14 in three days (no server has them).
+                today = datetime.date.today()
+                dates = {12: today - datetime.timedelta(days=1), 13: today, 14: today + datetime.timedelta(days=3)}
                 eps = [{"id": 2027500 + e, "episode_number": e, "name": f"第 {e} 集的标题", "overview": f"第 {e} 集（TMDB）",
-                        "air_date": "2023-04-22" if e <= 12 else "2026-11-02"} for e in range(1, 15)]
+                        "air_date": dates[e].isoformat() if e in dates else "2023-04-22"} for e in range(1, 15)]
                 return ({"episodes": eps},)
             return ({"episodes": []},)
         body = dict(row)
@@ -769,6 +785,38 @@ class Emby(BaseHTTPRequestHandler):
                          position=int(q.get("position", ZIDOO["position"])), duration=int(q.get("duration", ZIDOO["duration"])),
                          playing=q.get("playing", "1") == "1", since=time.time())
             return self.send_json(zidoo_status())
+
+        # Offline LogVar-compatible API. Alias + season/episode matching, all-episode manual search,
+        # stable source URLs and count suffixes exercise the client without private services.
+        if path in ("/danmu/api/v2/match", "/danmu/api/v2/search/episodes"):
+            matching = path.endswith("/match")
+            file_name = self.body().get("fileName", "") if matching else ""
+            episode_match = re.search(r"\b(?:S(\d+))?E(\d+)\b", file_name, re.I)
+            name = re.sub(r"\s+(?:\(\d{4}\)|(?:S\d+)?E\d+)(?=\s|$)", "", file_name, flags=re.I).strip() if matching else q.get("anime", "")
+            name = name.replace("菜鸟伙房兵", "菜鸟炊事兵")
+            movie = matching and episode_match is None or not matching and q.get("episode") == "movie"
+            season = int(episode_match[1] or 1) if episode_match else 1
+            number = int(episode_match[2]) if episode_match else int(q.get("episode", "1")) if q.get("episode", "1").isdigit() else 1
+            aid = int(hashlib.sha256(name.encode()).hexdigest()[:6], 16) + 1
+            if "纪录片" in name:  # nothing for the documentaries: 未匹配 and an empty search
+                return self.send_json({"errorCode": 0, "success": True, "isMatched": False, "matches": []} if matching
+                                      else {"errorCode": 0, "success": True, "animes": []})
+            def target(ep):
+                return {"episodeId": aid * 10000 + season * 100 + ep, "animeId": aid,
+                        "animeTitle": f"{name}(2023)〖{'电影' if movie else '电视剧'}〗from mock",
+                        "episodeTitle": "正片" if movie else f"第{ep}集", "type": "电影" if movie else "电视剧",
+                        "url": f"https://mock.example/{aid}/s{season}/e{ep}", "shift": 0}
+            if matching:
+                return self.send_json({"errorCode": 0, "success": True, "isMatched": True, "matches": [target(number)]})
+            episodes = [target(ep) for ep in ([number] if "episode" in q else range(1, 13))]
+            return self.send_json({"errorCode": 0, "success": True, "animes": [
+                {**target(number), "episodes": episodes}]})
+        if path.startswith("/danmu/api/v2/comment/"):
+            eid = path.rsplit("/", 1)[-1]
+            colors = (16777215, 16777215, 16777215, 16744192, 65535)
+            comments = [{"cid": i, "p": f"{i * 0.7:.2f},1,{colors[i % len(colors)]},[mock]", "m": f"弹幕 {eid[-2:]}·{i} {'前方高能' if i % 9 == 0 else '好看'}\u200a♡{i % 7}"}
+                        for i in range(860)]
+            return self.send_json({"count": len(comments), "comments": comments})
 
         if path == "/_mock/stats":
             return self.send_json({"searches": cat.searches, "requests": cat.requests})
@@ -978,6 +1026,25 @@ class Emby(BaseHTTPRequestHandler):
                 return self.send_json({"error": "not allowed"}, 403)
             print(f"  [{cat.name}] {key} {'set' if method == 'POST' else 'cleared'} on {parts[3]}", flush=True)
             d["UserData"][key] = method == "POST"
+            if key == "Played" and method == "POST":
+                # As Emby: marking played clears the resume point and dates the play.
+                d["UserData"].update({"PlaybackPositionTicks": 0, "PlayedPercentage": None, "LastPlayedDate": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+            return self.send_json(d["UserData"])
+        if len(parts) == 5 and parts[0] == "Users" and parts[2] == "Items" and parts[4] == "UserData" and method == "POST":
+            # Partial user data update (在看 移除 clears the resume point); 公益服 A refuses writes.
+            d = cat.items.get(parts[3])
+            if not d:
+                return self.send_json({}, 404)
+            if cat.refuse_favorites:
+                print(f"  [{cat.name}] refuses user data write -> 403", flush=True)
+                return self.send_json({"error": "not allowed"}, 403)
+            b = self.body()
+            for k in ("PlaybackPositionTicks", "Played", "IsFavorite", "LastPlayedDate"):
+                if k in b:
+                    d["UserData"][k] = b[k]
+            if b.get("PlaybackPositionTicks") == 0:
+                d["UserData"]["PlayedPercentage"] = None
+            print(f"  [{cat.name}] user data of {parts[3]} <- {b}", flush=True)
             return self.send_json(d["UserData"])
         if len(parts) == 3 and parts[0] == "Items" and parts[2] == "PlaybackInfo":
             d = cat.items.get(parts[1])
@@ -1148,6 +1215,7 @@ def main():
                     help="answer only official Emby clients (User-Agent and client name), 403 HTML page for anything else")
     ap.add_argument("--suggestions", choices=("on", "404", "empty"), default="on",
                     help="Suggestions and Movies/Recommendations on 家里 NAS: answered, missing (404) or empty")
+    ap.add_argument("--segments", action="store_true", help="intro and credits markers on 漫长的季节 (for a 5-minute fake video)")
     ap.add_argument("--multi", action="store_true",
                     help="also run five more servers that disagree with this one, on --port+2 … --port+6 (see MULTI below)")
     a = ap.parse_args()
@@ -1164,6 +1232,13 @@ def main():
     MAIN.official_only = a.official_only
     OPTS.update(logo_delay=a.logo_delay, broken_logos=a.broken_logos, dark_logo=a.dark_logo)
     MAIN.suggestions = a.suggestions
+    if a.segments:
+        for ep in EPISODES:
+            ep["Chapters"] = [
+                {"Name": "片头", "StartPositionTicks": 10_000 * TICKS, "MarkerType": "IntroStart"},
+                {"Name": "正片", "StartPositionTicks": 70_000 * TICKS, "MarkerType": "IntroEnd"},
+                {"Name": "片尾", "StartPositionTicks": 240_000 * TICKS, "MarkerType": "CreditsStart"},
+            ]
 
     def serve(host, port, handler, cat):
         srv = ThreadingHTTPServer((host, port), handler)
