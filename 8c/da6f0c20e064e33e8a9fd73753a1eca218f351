@@ -1,0 +1,125 @@
+app/src/main/java/app/zmby/playback/EmbyPlayback.kt
+  s_ec047a3076d08b::t_c6ca58bf5315f4 95-96,138,146,216,271-273
+README.md
+  s_ec047a3076d08b::t_5774cd34bac3ed 7,9-10,12,14,16,18-27,31-32,35-36,39-40,44,46-49,51,53-57,59,61,63-67,69,71,73,75,77,79,81
+app/src/main/java/app/zmby/danmu/DandanplayApi.kt
+  s_ec047a3076d08b::t_f8c6b123c735a7 30-41,51-55
+app/src/main/java/app/zmby/danmu/DanmuMatch.kt
+  s_ec047a3076d08b::t_d20814ee3cd6b5 28-44,78-82,87-90,99
+THIRD_PARTY_NOTICES.md
+  s_ec047a3076d08b::t_3a15decbaf2c96 30-31
+app/src/test/java/app/zmby/ui/DanmuPanelTest.kt
+  s_ec047a3076d08b::t_7621811fdfc776 38
+app/src/test/java/app/zmby/danmu/DanmuQueryResolverTest.kt
+  s_ec047a3076d08b::t_1e6bfd98309c45 17-24
+app/src/test/java/app/zmby/net/RequestCacheTest.kt
+  s_ec047a3076d08b::t_c0244bd8197ee1 1-77
+app/src/main/java/app/zmby/playback/PlaybackMonitor.kt
+  s_ec047a3076d08b::t_3060ec81c85946 250-253
+app/src/main/java/app/zmby/danmu/DanmuAssFonts.kt
+  s_ec047a3076d08b::t_e6af51fbf68192 1-139
+app/src/main/java/app/zmby/danmu/DanmuQueryResolver.kt
+  s_ec047a3076d08b::t_50877214f41641 42-45,56
+tools/export_public.py
+  s_ec047a3076d08b::t_234f8bd8de5913 25-28,77
+docs/USAGE.md
+  s_ec047a3076d08b::t_8cb6af7642b9e7 1-88
+app/src/test/java/app/zmby/playback/NextEpisodePrefetchTest.kt
+  s_ec047a3076d08b::t_836feed544a936 1-68
+app/src/main/java/app/zmby/ui/screens/SegmentMarksPanel.kt
+  s_ec047a3076d08b::t_f521af2ddc4835 17,47-50,58-83,94,125-146
+app/src/main/java/app/zmby/segments/SegmentRepository.kt
+  s_ec047a3076d08b::t_38bb840547f534 12-15,26-31,48-52,59-62,64,66,70-72,80,83,86,96,105-108,115,155
+app/src/main/java/app/zmby/data/PhoneInput.kt
+  s_ec047a3076d08b::t_2450569b2004bd 18-20,177
+app/src/test/java/app/zmby/danmu/DanmuRepositoryTest.kt
+  s_ec047a3076d08b::t_0b439a31ac13af 30-31,48,58-62,65-67,98,102,105,108,143-144,209-417,420-423,432
+app/src/main/java/app/zmby/danmu/DanmuRepository.kt
+  s_ec047a3076d08b::t_86e6e1070f403a 18,26,30,32-38,46,48,51-52,56-58,62,64-66,71,77-79,83,85-86,89-90,92-100,102-103,108-114,116,118-119,125-140,142-143,146-153,161-162,164,166-175,183-184,191-193,196-206,210-217,231-234,236,261-263,269
+app/src/main/java/app/zmby/overlay/OverlayWindow.kt
+  s_ec047a3076d08b::t_27e1cfc3f5c4ff 40-41
+app/src/test/java/app/zmby/playback/PlaybackMonitorTest.kt
+  s_ec047a3076d08b::t_915cb7197010f5 127-147
+app/src/main/java/app/zmby/overlay/DanmuLayer.kt
+  s_ec047a3076d08b::t_b61561df822bc0 12,116-118,120,224,228-229,248,266,270-272
+app/src/main/java/app/zmby/danmu/DanmuAss.kt
+  s_ec047a3076d08b::t_34c5db7d7063f8 143,175
+app/src/main/java/app/zmby/ui/screens/DetailActions.kt
+  s_ec047a3076d08b::t_c0b9d7758879cc 149-153
+app/src/test/java/app/zmby/segments/SegmentLookupCacheTest.kt
+  s_ec047a3076d08b::t_28e81210c72d1c 1-60
+app/src/main/java/app/zmby/danmu/DanmuSeasonChoice.kt
+  s_ec047a3076d08b::t_f52556b985b02b 1-38
+docs/DEVELOPMENT.md
+  s_ec047a3076d08b::t_b7be4beb158cc0 1-105
+app/src/main/java/app/zmby/playback/NextEpisodePrefetch.kt
+  s_ec047a3076d08b::t_d1915762d39d41 1-50
+app/src/main/java/app/zmby/ui/screens/SeriesScreen.kt
+  s_ec047a3076d08b::t_e22397a7f7a5ba 620
+app/src/test/java/app/zmby/data/PhoneInputTest.kt
+  s_ec047a3076d08b::t_1b7489944a95ed 8,82-118
+app/src/main/java/app/zmby/playback/EpisodeContinuation.kt
+  s_ec047a3076d08b::t_c9b5c84ffe9bbd 1-48
+app/src/main/java/app/zmby/ui/screens/CatalogVersions.kt
+  s_ec047a3076d08b::t_21a28f8c0e2b85 100
+PUBLIC_MANIFEST.sha256
+  s_ec047a3076d08b::t_eacc030f46fe0b 2,7-9,23-24,50,52-57,59-60,69-70,90-91,98,100-101,105,108,122-123,144,163,165,167,172,184,188-189,191-192,226,229-230,232,234,240,254,261,265,268,279-280,295,297,317-321,323-326,335
+app/src/main/java/app/zmby/ui/screens/DanmuPanel.kt
+  s_ec047a3076d08b::t_9f3c7dd89db921 97-98,158,189,192,199,201,207,220,223-229,233-235,238-239,242,265,269-273,285,290,352-353
+app/src/test/java/app/zmby/ui/DetailActionsTest.kt
+  s_ec047a3076d08b::t_db915bbc938612 34-37
+app/src/test/java/app/zmby/segments/SegmentRepositoryTest.kt
+  s_ec047a3076d08b::t_65c7e85175982a 97-113
+app/src/main/java/app/zmby/net/RequestCache.kt
+  s_ec047a3076d08b::t_8ff8f6f6b82dd9 1-69
+app/src/main/java/app/zmby/segments/SegmentLookupCache.kt
+  s_ec047a3076d08b::t_9f697a0b279a44 1-29
+AGENTS.md
+  s_ec047a3076d08b::t_cc334473fc0329 3,23
+app/src/test/java/app/zmby/danmu/DanmuMatchTest.kt
+  s_ec047a3076d08b::t_9a0b0f9c90f40a 10-52
+app/src/main/java/app/zmby/ui/screens/DetailScreen.kt
+  s_ec047a3076d08b::t_c05f1e8013c74f 341
+app/src/main/java/app/zmby/PlaybackActivity.kt
+  s_ec047a3076d08b::t_d78549a77963a0 29-31,104-106,238-243,251-258,262-267,276-282,312-316,320,334,337,342,351,359-369,385-388,391,393,397-399,406,478-479,525,568,571-589,591,613-615
+app/src/main/java/app/zmby/data/Library.kt
+  s_ec047a3076d08b::t_c7552fdb63bf6a 27-28,355-373
+app/src/main/java/app/zmby/ui/components/Actions.kt
+  s_ec047a3076d08b::t_3d346550d6078e 76,98-99,105
+app/build.gradle.kts
+  s_ec047a3076d08b::t_f7470a37146b58 28-29
+app/src/main/java/app/zmby/ui/screens/SettingsScreen.kt
+  s_ec047a3076d08b::t_320645df757ba0 277-290
+app/src/test/java/app/zmby/danmu/DanmuAssFontsTest.kt
+  s_ec047a3076d08b::t_8e947f35439ab3 1-57
+app/src/main/java/app/zmby/danmu/DanmuProtocol.kt
+  s_ec047a3076d08b::t_867bc21912cf18 23-24
+app/src/main/java/app/zmby/ui/screens/PhoneInputDialog.kt
+  s_ec047a3076d08b::t_6e343238bfd19e 69-80
+app/src/main/java/app/zmby/danmu/DanmuNameSearch.kt
+  s_ec047a3076d08b::t_b92754cbe2bac2 1-28
+app/src/main/java/app/zmby/ui/screens/Versions.kt
+  s_ec047a3076d08b::t_1965af1389fe55 552
+app/src/test/java/app/zmby/danmu/DanmuNameSearchTest.kt
+  s_ec047a3076d08b::t_9be19ed719c09e 1-52
+app/src/main/java/app/zmby/ZmbyApp.kt
+  s_ec047a3076d08b::t_01016f55cc4798 139-142,370-390,394,396,400
+app/src/test/java/app/zmby/playback/EpisodeContinuationTest.kt
+  s_ec047a3076d08b::t_82a5d04359fe12 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8cda6f0c20e064e33e8a9fd73753a1eca218f351",
+  "prompts": {},
+  "sessions": {
+    "s_ec047a3076d08b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19ae8-bb27-7272-a8c4-18aff0bd6b26",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "zhenyuefu <56567636+zhenyuefu@users.noreply.github.com>"
+    }
+  }
+}
