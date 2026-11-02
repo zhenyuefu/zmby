@@ -274,10 +274,20 @@ private fun Danmu(overlay: Boolean) {
             ChoiceSetting("行数", rowChoices.map { "$it 行" }, rowChoices.indexOf(rows).coerceAtLeast(0), { settings.danmuRows.set(rowChoices[it]) })
             val opacityChoices = listOf(100, 75, 50)
             ChoiceSetting("不透明度", opacityChoices.map { "$it%" }, opacityChoices.indexOf(opacity).coerceAtLeast(0), { settings.danmuOpacity.set(opacityChoices[it]) })
-            Column(Modifier.padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Field("弹幕服务器（弹弹play 兼容）", base, { settings.danmuApiBase.set(it.trim()) }, KeyboardType.Uri, placeholder = "https://example.com")
-                Field("AppId（官方接口才需要）", appId, { settings.danmuAppId.set(it.trim()) }, KeyboardType.Ascii)
-                Field("AppSecret（官方接口才需要）", secret, { v -> ZLog.secret(v.trim()); settings.danmuAppSecret.set(v.trim()) }, KeyboardType.Password, secret = true, last = true)
+            var phone by remember { mutableStateOf<InputField?>(null) }
+            var remote by remember { mutableStateOf<InputField?>(null) }
+            PhoneInputRow("弹幕服务器（弹弹play 兼容）", if (base.isBlank()) "未设置" else "已设置") { phone = InputField.DanmuApiBase }
+            PhoneInputRow("AppId（官方接口才需要）", if (appId.isBlank()) "未设置" else "已设置") { phone = InputField.DanmuAppId }
+            PhoneInputRow("AppSecret（官方接口才需要）", if (secret.isBlank()) "未设置" else "已设置") { phone = InputField.DanmuAppSecret }
+            phone?.let { field -> PhoneInputDialog(field, onDismiss = { phone = null }, onRemote = { phone = null; remote = field }) }
+            remote?.let { field -> Column(Modifier.padding(horizontal = 24.dp, vertical = 10.dp)) {
+                when (field) {
+                    InputField.DanmuApiBase -> Field("弹幕服务器（弹弹play 兼容）", base, { settings.danmuApiBase.set(it.trim()) }, KeyboardType.Uri, placeholder = "https://example.com", last = true)
+                    InputField.DanmuAppId -> Field("AppId（官方接口才需要）", appId, { settings.danmuAppId.set(it.trim()) }, KeyboardType.Ascii, last = true)
+                    InputField.DanmuAppSecret -> Field("AppSecret（官方接口才需要）", secret, { v -> ZLog.secret(v.trim()); settings.danmuAppSecret.set(v.trim()) }, KeyboardType.Password, secret = true, last = true)
+                    else -> Unit
+                }
+            }
             }
         }
     }

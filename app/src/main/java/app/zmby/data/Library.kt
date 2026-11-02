@@ -24,6 +24,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * An item and the server it came from. Every cross-server operation passes the pair: the same item
@@ -350,12 +352,25 @@ class Library(
     suspend fun nextUp(server: String, seriesId: String) = emby.nextUp(session(server), seriesId).items.firstOrNull()
 
     /** The episode after [episode] in series order (across seasons), on the same server, or null at the end. */
-    suspend fun nextEpisode(episode: ServerItem): BaseItemDto? {
-        val seriesId = episode.item.seriesId ?: return null
-        val page = emby.episodes(session(episode.server), seriesId, startItemId = episode.item.id, limit = 2)
-        val i = page.items.indexOfFirst { it.id == episode.item.id }
-        // Servers that ignore StartItemId return the series from the top; then search the list.
-        return if (i >= 0) page.items.getOrNull(i + 1) else null
+    suspend fun nextEpisode(episode: ServerItem, previous: MediaSourceInfo? = null): BaseItemDto? = withContext(Dispatchers.Default) {
+        val seriesId = episode.item.seriesId ?: return@withContext null
+        val page = emby.episodes(session(episode.server), seriesId, startItemId = episode.item.id, limit = EPISODE_PAGE)
+        if (page.items.any { it.id == episode.item.id }) {
+            app.zmby.playback.EpisodeContinuation.next(episode.item, page.items, previous)?.let { return@withContext it }
+            if (page.items.size < EPISODE_PAGE) return@withContext null
+        }
+        // Servers may ignore StartItemId. Paginate rather than treating their first page as the end.
+        val all = mutableListOf<BaseItemDto>()
+        val seen = HashSet<String>()
+        var offset = 0
+        while (true) {
+            val p = emby.episodes(session(episode.server), seriesId, start = offset, limit = EPISODE_PAGE)
+            val fresh = p.items.filter { seen.add(it.id) }
+            all += fresh
+            offset += p.items.size
+            if (fresh.isEmpty() || offset >= p.totalRecordCount) break
+        }
+        app.zmby.playback.EpisodeContinuation.next(episode.item, all, previous)
     }
 
     suspend fun setPlayed(server: String, id: String, played: Boolean) = emby.setPlayed(session(server), id, played)

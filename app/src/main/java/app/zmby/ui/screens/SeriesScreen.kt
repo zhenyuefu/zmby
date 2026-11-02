@@ -617,7 +617,7 @@ private fun SeriesHeader(
             FavoriteAction(ref, listOf(ref))
             WatchlistAction(ref, emptyList())
             // 本地手动标记 of the episode the main button plays (or its whole season).
-            MarksAction(enabled = current != null && selected != null) { current?.let(onMarks) }
+            MarksAction(ref = selected?.ref) { current?.let(onMarks) }
             // 弹幕 (ui-spec §2.19): last, after 片头片尾; for the episode the main button plays.
             danmu?.let { DanmuAction(selected?.ref, it) }
         }

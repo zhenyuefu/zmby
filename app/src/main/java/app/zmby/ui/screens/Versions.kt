@@ -549,7 +549,7 @@ internal fun ServerCardHead(server: ServerStatus, trailing: String, note: String
             Text(trailing, fontSize = 17.sp, color = Z.textSecondary)
         }
         // 匹配理由: why this server's copy is taken for the same work.
-        if (note != null) Text(note, fontSize = 16.sp, color = Z.textTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 24.dp))
+        if (!note.isNullOrBlank()) Text(note, fontSize = 16.sp, color = Z.textTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 24.dp))
     }
 }
 

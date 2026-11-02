@@ -5,6 +5,7 @@ import app.zmby.log.ZLog
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -77,5 +78,42 @@ class PhoneInputTest {
         assertNull(InputSession.checkUserAgent("Mozilla/5.0 (Linux; Android 11)"))
         assertTrue(InputSession.checkUserAgent("浏览器") != null)
         assertTrue(InputSession.checkUserAgent("x".repeat(513)) != null)
+    }
+
+    @Test fun `danmu phone pages save each field without exposing the value in page or log`() {
+        val fields = mapOf(InputField.DanmuApiBase to "http://127.0.0.1:8096/private-path",
+            InputField.DanmuAppId to "example-app-id", InputField.DanmuAppSecret to "example-private-secret")
+        for ((field, value) in fields) {
+            val input = InputSession(lan, field, validate = {
+                if (field == InputField.DanmuApiBase) app.zmby.danmu.DanmuEndpoint.checkBase(it)
+                else app.zmby.danmu.DanmuEndpoint.checkCredential(it)
+            }, save = { saved += it })
+            try {
+                input.open()
+                val since = ZLog.buffer.lastSeq
+                val page = call(code = input.code).second
+                assertTrue(page.contains(field.title) && page.contains("保存到电视"))
+                assertTrue(page.contains("class=\"masked\""))
+                assertFalse(page.contains(value))
+                assertTrue(call(code = input.code, body = " $value ").second.contains("\"ok\":true"))
+                assertEquals(value, saved.last())
+                assertFalse(ZLog.buffer.since(since).any { value in it.message })
+            } finally { input.close() }
+        }
+    }
+
+    @Test fun `danmu addresses preserve token paths and reject malformed addresses without echoing them`() {
+        val good = "https://danmu.example/private-token/path/"
+        assertEquals(good, InputSession.clean(" $good\n", InputField.DanmuApiBase))
+        assertNull(app.zmby.danmu.DanmuEndpoint.checkBase(good))
+        val withCredentials = "https://danmu.example".toHttpUrl().newBuilder()
+            .username("example-user").password("example-password").build().toString()
+        for (bad in listOf("ftp://danmu.example", withCredentials, "https://danmu.example/?token=secret", "https://danmu.example/#secret", "https://danmu.example/white space")) {
+            val error = app.zmby.danmu.DanmuEndpoint.checkBase(bad)
+            assertTrue(error != null)
+            assertFalse(error!!.contains(bad))
+        }
+        assertNull(app.zmby.danmu.DanmuEndpoint.checkCredential("example-secret"))
+        assertTrue(app.zmby.danmu.DanmuEndpoint.checkCredential("x".repeat(2049)) != null)
     }
 }

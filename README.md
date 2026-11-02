@@ -4,241 +4,78 @@
 
 <h1 align="center">zmby</h1>
 
-<p align="center"><strong>把多个 Emby 媒体库，放进同一个电视界面。</strong></p>
-<p align="center">Android TV · Kotlin · Jetpack Compose · Zidoo 系统播放器</p>
-<p align="center"><a href="#开始使用">开始使用</a> · <a href="#从源码构建">源码构建</a> · <a href="#本地演示">本地演示</a> · <a href="#参与开发">参与开发</a> · <a href="LICENSE">GPL-3.0-or-later</a></p>
+<p align="center"><strong>聚合 Emby 片库，用芝杜系统播放器播放。</strong></p>
 
-![zmby 首页：来源切换、跨服务器继续观看与电视导航](docs/images/home.png)
+<p align="center">Android TV · 多服务器聚合 · Zidoo 原生播放</p>
+<p align="center"><a href="https://github.com/zhenyuefu/zmby/releases/tag/v0.5.1">下载 0.5.1</a> · <a href="#快速开始">快速开始</a> · <a href="docs/USAGE.md">使用指南</a> · <a href="docs/DEVELOPMENT.md">开发指南</a></p>
 
-zmby 是一个为芝杜（Zidoo）设备开发的 Emby 多服务器客户端。你可以在一个地方浏览媒体库、搜索影片、挑选不同服务器上的版本，再交给设备上的 Zidoo 播放器播放。应用直接连接你添加的 Emby 服务器，无需另搭聚合服务。
+![zmby 首页：真实媒体库与 TMDB 影视资料](docs/images/home.jpg)
 
-> 当前版本：**0.5.0，早期开发阶段**。主要目标设备为 Zidoo Z9X 8K（Android 11）。部分播放行为依赖设备固件；模拟器走查不能代替真机验收。
->
-> 以下截图均来自 **0.4.2**，在 Android TV 模拟器中实拍。服务器、账号和条目来自仓库自带 mock，封面与背景由程序生成；不包含真实媒体资源或第三方影视图片。
+zmby 是面向芝杜（Zidoo）的 Android TV Emby 客户端。把多台服务器的片库、版本和观看记录放在一起，选好片源后交给芝杜系统播放器播放。
 
-## 可以做什么
+## 功能
 
-| 功能 | 可以做什么 |
-| --- | --- |
-| 多服看片 | 一起看多台 Emby 的媒体库，也能切到单台服务器。 |
-| 搜索与选版本 | 一次搜索多个服务器，在详情页挑选画质、音轨和字幕。支持中文与拼音候选。 |
-| 追剧与续播 | 首页与「在看」页按作品合并各服务器的进度，接着看或找下一集；看完可自动连播，打不开时尝试其他片源。 |
-| 收藏与待看 | 收好喜欢的作品，把想看的片加入清单。 |
-| 影视资料 | 查看 TMDB / Bangumi 的简介、演员和季集目录，缺片源的集数也能看到。 |
-| 榜单与推荐 | 看媒体库推荐、TMDB 榜单，或从详情页发现相似作品。 |
-| 遥控器操作 | 左侧导航切换页面；详情页选版本、音轨和字幕，长按上下跨栏。 |
-| 芝杜播放 | 调用 Zidoo 系统播放器，向片源服务器回传观看进度；支持片头片尾跳过。 |
-| 缓存与来源 | 先显示本地缓存；可设置缓存大小、图片语言，以及每项功能使用哪些服务器。 |
-| 手机导入与备份 | 扫码批量添加服务器、填写 API 密钥，或导出和恢复加密配置备份。 |
-| 我的 | 追剧日历，以及按本机播放记录统计的观看时长、每日与每月分布、类型和最近看过。 |
+- **多服聚合**：统一浏览、搜索和比较不同服务器的片源，也可切到单台媒体库。
+- **芝杜原生播放**：选择版本、音轨和字幕，使用设备的解码、HDR 与音频直通能力。
+- **连续追剧**：继续观看、自动连播，下一集延续版本与语言选择。
+- **弹幕与跳过**：浮层弹幕或 ASS 第二路字幕、片头片尾标记、下集预取。
+- **影视资料**：TMDB / Bangumi 简介、演员、季集目录与榜单。
+- **电视操作**：遥控器焦点、快速选集，手机扫码添加服务器和填写 API 配置。
+
+## 界面
+
+以下是 **0.5.1 Android TV 模拟器实拍**，使用真实媒体库与 TMDB 内容；服务器与线路显示名已替换为通用名称。
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/navigation.png" alt="侧栏导航：首页、电影、剧集、收藏与待看"><br><strong>切换页面</strong> · 按左或菜单键打开侧栏。</td>
-    <td width="50%"><img src="docs/images/browse.png" alt="电影浏览页：选择服务器和媒体库，排序与筛选影片"><br><strong>浏览媒体库</strong> · 选服务器、媒体库，再按喜好排序筛选。</td>
+    <td width="50%"><img src="docs/images/navigation.jpg" alt="侧栏导航与聚合首页"><br><strong>统一入口</strong> · 首页、电影、剧集、在看与收藏。</td>
+    <td width="50%"><img src="docs/images/browse.jpg" alt="真实电影媒体库"><br><strong>浏览片库</strong> · 按服务器、媒体库与类型筛选。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/images/detail.png" alt="新版详情页：各服务器的片源版本卡与音轨字幕摘要"><br><strong>选择片源</strong> · 比较各服版本，长按上下切到音轨和字幕。</td>
-    <td width="50%"><img src="docs/images/series.png" alt="剧集详情页：继续观看、选集与片源摘要"><br><strong>接着追剧</strong> · 选集时查看进度和可用片源。</td>
+    <td width="50%"><img src="docs/images/detail.jpg" alt="TMDB 电影资料与匿名服务器版本列表"><br><strong>比较版本</strong> · 画质、格式、音轨和字幕一眼可见。</td>
+    <td width="50%"><img src="docs/images/series.jpg" alt="TMDB 剧集资料与季集目录"><br><strong>接着追剧</strong> · 选季、选集，再挑当前集的片源。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/images/search.png" alt="搜索页：电视键盘与多服务器搜索结果"><br><strong>遥控器搜索</strong> · 输入片名或拼音，从多台服务器找片。</td>
-    <td width="50%"><img src="docs/images/settings.png" alt="设置页：六个分类与影视资料语言、连接设置"><br><strong>按需设置</strong> · 调整播放、字幕、资料来源和缓存。</td>
+    <td width="50%"><img src="docs/images/search.jpg" alt="多服务器影视搜索"><br><strong>聚合搜索</strong> · 中文、拼音与多来源候选。</td>
+    <td width="50%"><img src="docs/images/settings.jpg" alt="弹幕与手机扫码输入设置"><br><strong>配置播放</strong> · 弹幕、字幕、跳过与扫码输入。</td>
   </tr>
 </table>
 
-## 开始使用
+## 快速开始
 
-需要一台能运行本应用的 Android 设备，以及你有权使用的 Emby 服务器与账号。最低 Android 9（API 28）；完整播放流程面向装有 Zidoo 系统播放器的设备。普通 Android TV 和模拟器可以用于浏览与开发，不能保证播放功能。
+1. 从 [GitHub Releases](https://github.com/zhenyuefu/zmby/releases/latest) 下载 APK，安装到芝杜设备。
+2. 打开「服务器 → 扫码导入」，用手机填写服务器信息；也支持 AFuseKt 的 `media_server_export.json`。
+3. 在「设置 → 影视资料」扫码填写自己的 TMDB 读取访问令牌，开启资料与榜单。
+4. 浏览或搜索影片，在详情页选择服务器版本、音轨和字幕，确认播放。
 
-1. 从 [GitHub Releases](https://github.com/zhenyuefu/zmby/releases) 下载 APK，或[从源码构建](#从源码构建)，再通过 ADB 或设备的安装工具侧载。
-2. 在「服务器」中添加 Emby 地址、用户名和密码，或打开手机导入页批量添加。
-3. 多台服务器可分别配置线路、媒体库开关、参与聚合与收藏同步策略。
-4. 在「设置 → 服务器与来源」中选择各项功能的服务器来源。
-5. 在「设置 → 影视资料」填写自己的 **TMDB API Read Access Token**（按「用手机输入」扫码，在手机上粘贴后保存到电视），分别选择文字、海报和 Logo 语言；首页榜单在「设置 → 首页」中选择。没有填写时仍能使用 Emby；TMDB 搜索和轮播需要凭据。凭据保存在应用私有偏好中，不加入 URL 或日志。
-   TMDB API 默认使用 `https://api.tmdb.org/3/`；可在同页通过手机或遥控器填写自定义 API 地址，保存后立即用于后续请求。仅填域名会自动补 `/3/`，带路径则保留该路径；可一键恢复默认地址。令牌会发送到所配置的地址，请使用你信任的服务。图片继续使用 `https://image.tmdb.org`。
-6. 打开影片或剧集详情，选版本、音轨和字幕，确认播放。目录中的「暂无资源」仍可浏览；未映射条目可单独展开查看。
-
-版本和跨服务器剧集目录的成功查找结果在本次应用运行中缓存 **6 小时**；看完一集返回、再次选到同一集时复用结果。选到已缓存的单集时立即显示版本，首次查找完成前显示查找中。版本行的「刷新」会重新搜索，剧集同时刷新资源目录。断连与临时服务器错误会在原有超时内自动重试一次，持续失败时短暂停用 30 秒；详情页保持打开时会自动再查，也可手动重试。认证失效和限流保留手动处理。
-
-首页和「在看」页会记住在本机成功起播的版本、音轨和字幕选择，重启后仍保留。记忆按具体电影或单集保存；新的一集没有记录时进入详情页。恢复前核对原服务器、片源和轨道，选项失效或核对失败时也进入详情页选择；不会自动改播其他版本。记忆不包含芝杜播放器内临时切换的轨道，也不包含在其他设备上选择的版本。
-
-电影详情可用勾选图标切换已观看状态；剧集详情作用于当前选中的一集。剧集头部的网格图标可打开快速选集，直接选择集数；返回季栏或头部时保留当前集。
-
-Zidoo 的加载背景与 Logo 优先使用已缓存的 TMDB 图片，再使用已缓存的服务器图片，通过本机地址读取；为起播不额外下载图片，缺少 Logo 时显示普通标题。
-
-弹幕在「设置 → 播放」中配置：填写自己的弹弹play 兼容 API 地址并打开「显示弹幕」。默认「浮层」方式需要打开「播放浮层」并授予显示在其他应用上层的权限；也可选择「播放器字幕」，将弹幕转为 ASS 交给芝杜第二路字幕显示，不需要浮层权限。第一次使用播放器字幕时，按提示在播放器菜单中打开双字幕模式，并在「字幕2」选择名字带 danmu 的字幕；主字幕仍按原选择播放。主字幕的外挂数量变化时，可能需要重新选择第二路字幕，跨影片恢复仍需真机验证。LogVar 优先使用 `match` 接口识别片名与季集；没有启用 AI 也能使用服务端规则匹配。客户端接受服务端的译名和季集映射，未命中时补充同一 TMDB／Bangumi 作品的其他译名；不支持 `match` 的服务回退到名称搜索。
-
-影片或剧集详情的「弹幕匹配」可以查看当前结果、输入其他译名搜索分集，并为当前电影或单集保存手动选择；「恢复自动匹配」会清除该选择并立即重新匹配。选择保存在本机，清理缓存后仍保留。弹幕保留服务端的合并计数和点赞后缀；超量时覆盖完整时间轴抽样，避免长片后半段完全没有弹幕。浮层实际滚动流畅度与芝杜视频层的合成效果仍需对应设备验证。
-
-播放浮层还可显示片头片尾跳过按钮与下一集卡片。在「设置 → 播放」开启并授予权限后使用；按确认执行提示、返回收起，自动跳过与连播按各自设置处理。
-
-「服务器 → 这台服务器 → 取流方式」的「自动」一律先直连，包括官方/自定义登录身份及 302 服务器。播放器明确返回播放错误时，同一片源会尝试一次本地转发；正常退出和播放结束不重试。若没有返回足够信息且尚未确认起播，界面提供「通过本地转发重试」。固定「直连」不回退，固定「本地转发」从开始就转发。不同固件的错误返回尚需真机验证；登录 UA 限制不作为播放必须转发的依据。
-
-电视上使用方向键移动焦点，确认键进入或执行，返回键回到上一层。首页、电影、剧集、收藏、待看之间用左侧导航栏切换：在任一行最左再按左，或在首页按菜单键打开；首页「在看」卡片上的菜单键用于打开条目操作浮窗，也可长按确认并松手打开，独立「在看」页同样支持这两种操作，短按确认优先恢复有效的本机播放记忆，没有记忆时打开详情页选择。电影、剧集、收藏、待看页也可按返回打开导航栏。导航栏打开时按返回收起。首页内容区首次按返回提示「再按一次返回键退出」，2 秒内再按一次退出；移动焦点、打开面板或离开首页会取消本次确认。其他页面的影片卡片保留菜单键快捷操作。
-
-### 当前边界
-
-- 解码、HDR/Dolby Vision 和音频直通由 Zidoo 播放器与硬件决定，zmby 不提供独立解码器，也不执行转码。
-- 观看进度回传到当前片源服务器；跨服务器统一续播尚未实现。
-- 拼音候选来自本地已见条目及实时搜索结果。服务器无拼音支持、本地也未见过的片名，不保证能用首字母搜到。
-- 302 签名直链换链、真实高码率转发、HTTP 原盘 ISO/BDMV 和各固件的字幕行为仍需更多真机验证。
-- Z9X 8K 上首页冷启动与行滚动已基本达到性能目标（仍有少量长帧），浏览页、详情页尚未实测；Baseline Profile 是手写规则。
-- 片头片尾跳过由 zmby 通过播放器的本机控制接口跳转，跳转在进入片段后约一秒内发生；Zidoo 播放器 1.3.60 本身不使用 `skipOpening` 等跳过参数。
-- 暂不支持音乐、有声书、直播、服务器管理和 SMB/NFS 直连。
-- 本地 STRM 外挂字幕需要 Android 10（API 29）及以上；Android 9 可启动应用，尝试该字幕流程时会提示系统版本要求。
-
-### 影视资料与季集匹配
-
-规范资料来自 TMDB / Bangumi，始终在原有的电影与剧集详情页内更新，保留选季、选集和遥控位置。列表已带回 TMDB ID 时，立即取数据库资料，并发查找服务器片源；数据库先返回就直接显示，不先请求服务器简介或演员。缺 ID 时先轻量补查，仍无法定位或数据库不可用时才读取服务器完整资料；较慢时可以先显示已有的条目快照。作品、演员与图片不再向所有 Emby 服务器补拉择优；未填写 TMDB 令牌、或作品无法在数据库中定位时，详情只显示当前所打开服务器的资料，不做跨服务器合并（番剧仍可通过 bangumi-data 别名取 Bangumi 资料）。Emby 仍用于查询资源、播放与回传进度。元数据缓存按提供方、ID 和完整地区语言分开，升级会清理旧的服务器合并视图，保留收藏、待看与资源 / 观看记录。
-
-海报和 Logo 优先精确语言地区，缺失时回退作品原语言；无法确认简繁的通用 `zh` 图片不会冒充 `zh-CN`。已用公开 API 核验 `language=zh-CN` / `zh-TW` 和 `include_image_language` 的地区筛选，图片对象通过 `iso_639_1` 与 `iso_3166_1` 区分语言及地区；选图时再做客户端精确校验。
-
-`bangumi-data/bangumi-data` 提供原名、译名与 Bangumi 入口，并不是 TMDB / Bangumi 的逐季逐集偏移表。分季关系不明确时保留独立目录与 TMDB 候选入口，不猜测集数偏移。资源优先按外部 ID 确认作品；缺 ID 时，精确同名、年份兼容且候选唯一的剧，也可按明确的 TMDB 季集号归类。同一集的多个文件保留为版本；网盘服将剧 ID 复制到单集时仍可按季集号对应。明确 ID 冲突、同名歧义、缺少或对不上目录的集号保留在「未归类」。服务器未响应时显示待确认，可重试。
-
-剧集资源按全剧目录映射，「未归类」也是全剧共用的一份列表，切季不会改变它的范围。优先加载当前季，后台补齐其他季；季目录尚未加载或加载失败时，不把该季资源当作目录缺项。服务器单集指向同剧另一个父剧条目时，会轻量核对其外部 ID，确认后保留原资源地址参与映射。
-
-单集优先按 TMDB ID 对齐；没有 TMDB 单集 ID 时，用 IMDb / TVDB 单集 ID 查询其所属作品和规范单集，确认后可绕过服务器错误的季集号。查询成功但没有单集结果时，已确认属于同剧且季集号明确的资源可按目录编号归类；明确的身份冲突、有效 TMDB 单集 ID 对不上目录，或编号不在目录时保留未归类。网络失败保留待确认并可重试。相同外部身份的多个文件共用核对结果，各项完成后逐步更新。
-
-对于缺少单集 ID 或服务器分部编号不同的资源，在剧集页选季条同一行打开「季集映射」，或在「未归类」条目下选择「映射季集」：可指定这一集，或把某台服务器、某个父剧的一个季／编号范围映射到规范季，并设置集号偏移。保存前显示可归入和仍未归类的数量；明确的单集 ID 优先于季范围规则，单文件指定则优先于自动识别。已有映射可修改、删除，不同分段不能重叠。映射只保存在本机，不写回服务器；版本卡保留片源原编号，和规范编号不同会同时显示。配置备份暂不包含季集映射。
-
-### 添加服务器与配置备份
-
-服务器页的「扫码导入」打开局域网页面，手机、平板和电脑都能使用。可粘贴分享信息、手动填写，或选择 AFuseKt 的 `media_server_export.json`；只导入 Emby 配置，保留账号和命名线路，核对后点击「登录并添加到电视」。密码仅用于这次登录。
-
-在「服务器 → 备份与恢复」扫码，在网页上导出名称、线路和优先级，并选择是否包含账号名、登录令牌、服务器设置及应用设置。包含令牌或应用 API 凭据时须设置至少 8 位备份密码，正文以 PBKDF2-HMAC-SHA256 与 AES-256-GCM 加密。备份文件请自行保管，恢复时仍需原备份密码。
-
-盒子没有系统文件选择界面，备份与恢复都在手机、平板或电脑上完成：电视的「备份与恢复」只显示二维码、地址、导入码、进度与结果，网页负责下载备份文件和上传恢复。每次下载备份或恢复备份，电视都会弹出确认，显示请求设备与内容摘要，用遥控器选「允许」才继续，60 秒未确认视为拒绝。恢复前显示逐台预览；「合并到现有」保留当前线路并合并新线路，「全部替换」需再确认一次。令牌失效的服务器保留并提示扫码重新登录。备份包含配置，不包含收藏、待看、观看记录和图片缓存。
-
-### 本地缓存容量
-
-在「设置 → 缓存」的两张容量卡中分别设置资料和图片缓存上限，并查看用量条与已用容量：
-
-- 元数据：32 MB～1 GB，默认 **128 MB**。修改后立即按最近使用顺序清理超出部分，后续写入也受上限约束。
-- 图片：100 MB～2 GB，默认 **300 MB**。修改后需**重启应用**生效，随后按最近使用顺序清理超出部分。
-
-上限分别按元数据内容和图片文件计算，不包含收藏、待看、观看记录及登录配置；这些记录单独保留。元数据数据库还含索引、日志与可复用空间，文件实际大小可能大于缓存内容容量。超过单条缓存预算的响应仍可显示，但不会保存到磁盘。
-
-### 数据与隐私
-
-应用直连 TMDB、Bangumi 与提供 bangumi-data 的 jsDelivr / unpkg，查询会向相应提供方发送影视 ID、搜索词或语言偏好；不会发送 Emby 地址、登录令牌或账号。
-
-配置弹幕服务后，会向该服务发送片名、其他译名、年份、季集号及其返回的弹幕 ID；不发送 Emby 服务器地址、登录令牌、真实文件路径或播放 URL。只填写你信任的弹幕服务地址。
-
-应用将服务器地址、登录令牌、偏好与缓存保存在应用私有目录中，当前服务器令牌未额外加密；系统备份已关闭。播放 URL 可能携带令牌，并传给外部播放器。请勿分享包含真实登录信息的配置、播放地址、数据库或设备备份。
-
-应用提供局域网日志与手机导入 HTTP 页面，默认从 `8790` 端口起尝试绑定。日志接口限制局域网来源但没有登录认证；密码、令牌与常见签名参数会脱敏，日志仍可能包含服务器域名、片名和设备信息。仅在可信局域网中使用，不要将端口映射到公网。手机导入使用 HTTP，导入码不能替代传输加密。导入页在输入正确导入码之前不返回任何服务器信息；同一设备连续输错 5 次会被暂停 10 分钟，累计错误过多时页面关闭并需在电视上生成新码。「用手机输入」页沿用同样的输入码与错误限制，值只在按「保存到电视」时随一次请求发送，电视验证通过才保存，日志只记录「已保存」。
-
-## 从源码构建
-
-工具链：**JDK 21**、**Android SDK Platform 36**。Gradle Wrapper 固定为 **8.14.3**，无需全局安装 Gradle。应用 `minSdk 28` / `targetSdk 30`；当前目标是侧载到芝杜设备。
-
-设置 `JAVA_HOME` 与 `ANDROID_HOME`，或在不提交的 `local.properties` 中配置 `sdk.dir`。macOS/Linux 执行：
-
-```bash
-./gradlew :app:testDebugUnitTest :app:assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-Windows 可将 `./gradlew` 换成 `gradlew.bat`。macOS 上已有 mise 的开发者也可使用仓库的 `mise.toml`（其中 SDK 路径为 macOS 默认位置）：
-
-```bash
-mise install
-mise exec -- ./gradlew :app:testDebugUnitTest :app:assembleDebug
-```
-
-构建经过 R8 压缩的版本：
-
-```bash
-./gradlew :app:assembleRelease
-```
-
-未提供签名配置时，产物为 `app/build/outputs/apk/release/app-release-unsigned.apk`。正式发布使用独立发布密钥，通过 `ZMBY_SIGNING_PROPERTIES` 指向仓库外的私有配置：
-
-```properties
-storeFile=release.p12
-storePassword=<your-store-password>
-keyAlias=zmby-release
-keyPassword=<your-key-password>
-```
-
-`storeFile` 相对于该配置文件所在目录，也可使用绝对路径。配置完成后构建：
-
-```bash
-ZMBY_SIGNING_PROPERTIES=/path/outside/repo/release.properties ./gradlew :app:assembleRelease
-```
-
-签名产物为 `app/build/outputs/apk/release/app-release.apk`。密钥与密码请单独备份，不要提交到 Git。GitHub Release APK 使用固定发布签名；从此前 debug 签名的开发版切换时，需要先卸载旧版（应用数据会随之删除）。
-
-## 本地演示
-
-没有真实服务器时，可使用自带 Python mock。仅需 Python 3 标准库：
-
-```bash
-python3 -I tools/mock_emby.py --multi
-```
-
-在 Android TV 模拟器中添加 `http://10.0.2.2:8096`，用户名和密码任意。额外服务器端口为 `8098`–`8102`，模拟多译名、缺失 ID、收藏拒写、慢服务器、离线和客户端限制。mock 会监听宿主机网络端口，只在可信的开发网络运行，结束后用 Ctrl+C 停止。
-
-需要模拟外部播放器与进度回传时：
-
-```bash
-./gradlew :devtools:fake-zidoo-player:assembleDebug
-adb -s emulator-5580 install -r devtools/fake-zidoo-player/build/outputs/apk/debug/fake-zidoo-player-debug.apk
-adb -s emulator-5580 reverse tcp:9529 tcp:9529
-```
-
-将 `emulator-5580` 换成 `adb devices` 中的模拟器序列号。假播放器只用于验证 Intent 与进度协议，不解码视频。**不要安装到真实 Zidoo 设备上**：它使用系统播放器的兼容包名，可能发生冲突。
-
-mock 加 `--many-tracks` 可让「沙丘：第二部」的 REMUX 版本提供 25 条音轨与 60 条字幕，用于验证卡内滚动。
-
-mock 还支持 `--pinyin`、`--redirect`、`--sign-ttl`、`--require-ua`、`--video` 和 `--suggestions`（主推区建议接口的有无），并提供相似作品、建议、电影推荐与一个只接受假令牌的最小 TMDB（调试构建用 `adb shell setprop debug.zmby.tmdb_base http://10.0.2.2:8096/_mock/tmdb/3/` 指向它）；用 `python3 -I tools/mock_emby.py --help` 查看参数。真实播放测试请使用你有权分发的测试视频，仓库不附带影片。
-
-## 代码结构
-
-```mermaid
-flowchart LR
-    UI[Compose TV 界面] --> Store[Room 本地缓存]
-    UI --> Agg[聚合搜索与作品匹配]
-    Agg --> Emby[各 Emby 服务器]
-    Emby --> Store
-    UI --> Prep[片源 / 音轨 / 字幕准备]
-    Prep --> Player[Zidoo 系统播放器]
-    Prep --> Relay[可选：本机 HTTP 转发]
-    Relay --> Emby
-    Player --> Report[播放状态与进度回传]
-    Report --> Emby
-```
-
-| 目录 | 职责 |
+| 想做什么 | 在哪里设置 |
 | --- | --- |
-| `app/src/main/java/app/zmby/ui/` | 页面、导航、遥控焦点与 Compose 组件。 |
-| `aggregate/`、`search/` | 并发扇出、作品合并、版本排序与拼音搜索。 |
-| `emby/`、`data/` | Emby API、服务器注册表、媒体库与设置。 |
-| `store/`、`favorites/` | Room 数据、元数据合并、收藏与待看。 |
-| `playback/`、`zidoo/` | 播放准备、流地址、字幕、转发和 Zidoo 协议。 |
-| `log/`、`net/` | 脱敏日志与小型 HTTP 服务。 |
-| `app/src/test/` | JUnit、MockWebServer 与 Robolectric 测试。 |
-| `devtools/fake-zidoo-player/`、`tools/mock_emby.py` | 模拟器测试工具。 |
+| 添加弹幕服务 | 设置 → 播放 → 弹幕 → 用手机输入 |
+| 片头片尾跳过、下一集提示 | 设置 → 播放；详情页可查看和调整标记 |
+| 切换参与聚合的服务器 | 设置 → 服务器与来源 |
+| 导出或恢复配置 | 服务器 → 备份与恢复 |
+| 调整图片、资料缓存 | 设置 → 缓存 |
 
-表中包名目录均相对于 `app/src/main/java/app/zmby/`，完整目录除外。
+遥控器用方向键移动、确认键选择、返回键退回；最左侧再按左键可打开导航。更多操作见[使用指南](docs/USAGE.md)。
 
-## 参与开发
+## 设备与播放
 
-开发约定见 [AGENTS.md](AGENTS.md)。提交前执行与改动相关的测试；完整本地检查：
+- Android 9 及以上；完整播放功能面向装有系统播放器的芝杜设备，当前主要适配 Z9X 8K（Android 11）。
+- 解码、HDR / Dolby Vision 和音频直通由芝杜硬件与固件提供；zmby 不转码。
+- 浮层弹幕需授予悬浮窗权限。ASS 弹幕作为第二路字幕，首次需在播放器中开启双字幕并选中 danmu 字幕。
+- 观看进度回传实际播放的服务器；跨服务器统一进度尚未实现。
+- 模拟器可验证浏览与交互，不能代替芝杜真机的播放、字幕与画面合成验证。
 
-```bash
-./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
-```
+## 开发与反馈
 
-修复播放问题时请提供设备型号、固件版本、复现步骤、预期与实际行为，并说明使用 mock 还是真实服务器。提交日志前请手工复查脱敏结果；不要公开账号、令牌、签名链接或私人服务器地址。
+构建、测试、本地 mock、代码结构和签名说明见[开发指南](docs/DEVELOPMENT.md)，贡献约定见 [AGENTS.md](AGENTS.md)。
+
+[反馈问题](https://github.com/zhenyuefu/zmby/issues)时，请附设备型号、固件版本和复现步骤；不要公开账号、令牌、私人服务器地址或签名播放链接。
 
 ## 许可与致谢
 
-Copyright © 2026 zmby contributors。项目自有源码与配图依据自由软件基金会发布的 **GNU General Public License 第 3 版，或由你选择的更新版本**分发，全文见 [LICENSE](LICENSE)。第三方组件保留各自许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。Gradle Wrapper 按其随附的 Apache-2.0 版权与许可声明分发。
+项目自有源码与界面采用 [GPL-3.0-or-later](LICENSE)。第三方组件的许可与归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。截图中的影视海报、剧照与标志归各自权利人所有。
 
-项目不提供任何明示或暗示的担保。分发修改版或 APK 时，请遵循 GPL 的许可证、版权声明及对应源码提供要求；随附的第三方组件仍需保留各自必要的许可材料。
+影视资料来自 [TMDB](https://www.themoviedb.org)、[Bangumi](https://bgm.tv)，番剧别名来自 [bangumi-data](https://github.com/bangumi-data/bangumi-data)。This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-影视数据来源：[TMDB](https://www.themoviedb.org)、[Bangumi](https://bgm.tv)；番剧别名来源 [bangumi-data/bangumi-data](https://github.com/bangumi-data/bangumi-data)，数据按 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 使用。This product uses the TMDB API but is not endorsed or certified by TMDB.
-
-感谢 Kotlin、AndroidX / Jetpack Compose、Room、OkHttp、Coil、kotlinx.coroutines、kotlinx.serialization、pinyin4j 和 ZXing 等开源项目。Emby 与 Zidoo 为各自权利人的产品与商标，本项目是独立客户端，与其没有隶属关系。
+Emby 与 Zidoo 为各自权利人的产品与商标，本项目为独立客户端。应用不提供任何明示或暗示的担保。

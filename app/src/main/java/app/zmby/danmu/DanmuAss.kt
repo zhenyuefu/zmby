@@ -140,7 +140,7 @@ object DanmuAss {
     }
 
     /** The whole file, as `AssWriter` writes it. */
-    fun build(items: List<Item>, config: Config): String {
+    fun build(items: List<Item>, config: Config, renderText: (String) -> String = ::escape): String {
         val sb = StringBuilder()
         val w = config.width
         val h = config.height
@@ -172,7 +172,7 @@ object DanmuAss {
             sb.append("Dialogue: 2,").append(time(d.item.timeline)).append(',').append(time(d.item.timeline + config.duration))
             sb.append(",Float,,0,0,0,,{\\move(${d.x0}, ${d.y}, ${d.x1}, ${d.y})")
             sb.append("\\c&H%02x%02x%02x&}".format(c and 0xFF, c shr 8 and 0xFF, c shr 16 and 0xFF))
-            sb.append(escape(d.item.content)).append('\n')
+            sb.append(renderText(d.item.content)).append('\n')
         }
         return sb.toString()
     }

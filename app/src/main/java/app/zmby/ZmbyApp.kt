@@ -136,7 +136,10 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     val backups by lazy { app.zmby.backup.BackupRepository(this) }
 
     /** 弹幕 (danmu design): matched and cached per playback; the server is the one the user typed. */
-    val danmu by lazy { app.zmby.danmu.DanmuRepository(cacheDir.resolve("danmu"), app.zmby.danmu.DandanplayApi(http), choicesDir = filesDir.resolve("danmu-selections")) }
+    val danmu by lazy { app.zmby.danmu.DanmuRepository(cacheDir.resolve("danmu"), app.zmby.danmu.DandanplayApi(http),
+        choicesDir = filesDir.resolve("danmu-selections"), aliasContext = {
+            listOf(settings.tmdbApiBase.value, settings.tmdbToken.value, settings.metadataLanguage.value).joinToString("|")
+        }) }
     val danmuQueries by lazy { app.zmby.danmu.DanmuQueryResolver(
         parent = { server, id -> store.detail(server, id)?.item ?: library.item(server, id) },
         cached = catalog::cached, resolve = catalog::resolve, aliases = catalog::danmuAliases,
@@ -364,16 +367,37 @@ class ZmbyApp : Application(), ImageLoaderFactory {
      * episode's series supplies the external IDs; Emby markers need the full item (chapters), from
      * the store or, failing that, one request.
      */
-    suspend fun segmentPlan(server: String, item: app.zmby.emby.BaseItemDto, durationMs: Long?): app.zmby.segments.SegmentPlan {
+    suspend fun segmentPlan(server: String, item: app.zmby.emby.BaseItemDto, durationMs: Long?): app.zmby.segments.SegmentPlan =
+        segmentLookup(server, item, durationMs).plan
+
+    private val segmentLookups = app.zmby.segments.SegmentLookupCache()
+
+    suspend fun segmentLookup(server: String, item: app.zmby.emby.BaseItemDto, durationMs: Long?): app.zmby.segments.SegmentLookup = withContext(Dispatchers.IO) {
+        val providers = sources.providers()
+        if (providers.none { it.enabled }) return@withContext app.zmby.segments.SegmentLookup()
+        val request = app.zmby.segments.SegmentLookupCache.Key(server, item.id, durationMs, providers,
+            segments.changes.value, registry.session(server), settings.publicMetaDbKey.value)
+        segmentLookups.get(request, isCurrent = {
+            request.providers == sources.providers() && request.revision == segments.changes.value &&
+                request.connection == registry.session(server) && request.providerKey == settings.publicMetaDbKey.value
+        }) { fetchSegments(server, item, durationMs) }
+    }
+
+    private suspend fun fetchSegments(server: String, item: app.zmby.emby.BaseItemDto, durationMs: Long?): app.zmby.segments.SegmentLookup {
+        var embyUnavailable = false
+        suspend fun fullItem(): app.zmby.emby.BaseItemDto = try { library.item(server, item.id) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { embyUnavailable = true; item }
         val seriesId = item.seriesId?.takeIf { item.type == "Episode" }
         val series = seriesId?.let { id -> store.detail(server, id)?.item ?: runCatching { library.providerIdsOf(server, id) }.getOrNull() }
         val full = if (item.chapters.isNotEmpty()) item else store.detail(server, item.id)?.item?.takeIf { it.chapters.isNotEmpty() }
-            ?: if (sources.providers().any { it.enabled && it.provider == SegmentProvider.Emby }) runCatching { library.item(server, item.id) }.getOrNull() ?: item else item
+            ?: if (sources.providers().any { it.enabled && it.provider == SegmentProvider.Emby }) fullItem() else item
         val key = workKeyOf(server, item)
-        return segments.plan(full, series, key, durationMs) {
+        val result = segments.lookup(full, series, key, durationMs) {
             val order = registry.all.associate { it.id to it.order }
             store.copiesOfWork(key, server).sortedBy { order[it.server] ?: Int.MAX_VALUE }.map { it.item }
         }
+        return result.copy(unavailable = result.unavailable + if (embyUnavailable) setOf(SegmentProvider.Emby) else emptySet())
     }
 
     /** An explicit user action updates only this server's item, then the local progress views. */

@@ -94,4 +94,21 @@ class SegmentRepositoryTest {
         assertEquals(1_234_000L, repo.lastStop(key))
         assertTrue(repo.plan(ep, series, key, 2_700_000) { emptyList() }.values.none { it.first == SegmentProvider.Local })
     }
+
+    @Test fun `lookup exposes server times even when local marks win and preserves failure status with cache`() = runBlocking {
+        repo.saveManual(key, ManualMarks(introEndMs = 80_000))
+        var result = repo.lookup(ep, series, key, 2_700_000) { emptyList() }
+        assertEquals(SegmentProvider.Local, result.plan[SegmentKind.Intro]?.first)
+        assertEquals(150_000L, result.answers[SegmentProvider.TheIntroDB]?.first()?.endMs)
+        assertTrue(result.unavailable.isEmpty())
+        now += SegmentRules.FOUND_TTL_MS
+        tidb.answer = ProviderAnswer.Failed("offline")
+        result = repo.lookup(ep, series, key, 2_700_000) { emptyList() }
+        assertTrue(SegmentProvider.TheIntroDB in result.unavailable)
+        assertTrue(result.answers[SegmentProvider.TheIntroDB]!!.isNotEmpty())
+        assertTrue(SegmentProvider.TheIntroDB in repo.lookup(ep, series, key, 2_700_000) { emptyList() }.unavailable)
+        tidb.answer = ProviderAnswer.Empty
+        repo.retryUnavailable()
+        assertTrue(repo.lookup(ep, series, key, 2_700_000) { emptyList() }.unavailable.isEmpty())
+    }
 }

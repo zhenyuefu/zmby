@@ -27,9 +27,8 @@ GitHub Release 同时提供第三方材料 ZIP：包含实际解析的运行依�
 OkHttp 对应版本的源码 JAR。pinyin4j 的源码 JAR 同时包含 Java 源码和拼音资源表；
 其源码许可声明优先于 POM 的 BSD 标签。
 
-README 的 PNG 截图由本项目在 Android TV 模拟器中运行产生；演示封面、背景与占位 logo
-由 `tools/mock_emby.py` 生成。`docs/images/mark.svg` 按本项目 Android 矢量标志绘制。
-仓库不附带影视海报、视频、真实服务器配置、第三方 APK 或反编译源码。
+README 的界面截图来自本项目在 Android TV 模拟器中的实际运行。0.5.1 截图使用已授权的真实媒体库和 TMDB 内容，服务器与线路显示名已匿名化；影视海报、剧照、Logo 与元数据归各自权利人所有，不随本项目源码许可证重新授权。`docs/images/mark.svg` 按本项目 Android 矢量标志绘制。`tools/mock_emby.py` 生成的测试封面和占位图继续用于本地开发演示。
+除上述界面截图外，仓库不附带单独的影视海报或视频，也不附带真实服务器配置、第三方 APK 或反编译源码。
 
 Emby 与 Zidoo 的名称用于说明兼容目标，商标与产品归各自权利人所有。
 

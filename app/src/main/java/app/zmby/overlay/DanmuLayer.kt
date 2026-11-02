@@ -9,6 +9,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.View
+import android.view.Choreographer
 import app.zmby.danmu.DanmuClock
 import app.zmby.danmu.DanmuStage
 import app.zmby.danmu.nextDanmuFrameDelay
@@ -112,8 +113,11 @@ class DanmuView(
         updateChipGeometry()
         requestFrame()
     }
-    private val frame = Runnable {
+    private val choreographer = Choreographer.getInstance()
+    private var frameTimeMs: Long? = null
+    private val frame = Choreographer.FrameCallback { timeNs ->
         framePending = false
+        frameTimeMs = timeNs / 1_000_000
         if (canRender()) invalidate()
     }
     private val wake = Runnable {
@@ -217,11 +221,12 @@ class DanmuView(
         wakeAtMs = 0L
         if (!canRender() || framePending) return
         framePending = true
-        postOnAnimation(frame)
+        choreographer.postFrameCallback(frame)
     }
 
     private fun cancelFrames() {
-        removeCallbacks(frame)
+        choreographer.removeFrameCallback(frame)
+        frameTimeMs = null
         removeCallbacks(wake)
         framePending = false
         wakeAtMs = 0L
@@ -240,7 +245,7 @@ class DanmuView(
             waitingForMeasurement = next != null && next <= position && current.active.isEmpty(),
         )
         if (delay == 0L) { requestFrame(); return }
-        removeCallbacks(frame)
+        choreographer.removeFrameCallback(frame)
         framePending = false
         stats.idle()
         if (delay == null) {
@@ -258,11 +263,13 @@ class DanmuView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        removeCallbacks(frame)
+        choreographer.removeFrameCallback(frame)
         framePending = false
         if (released) return
         val startedNs = System.nanoTime()
-        val now = SystemClock.uptimeMillis()
+        // Use the display's frame timestamp; time spent waiting in this frame must not change x.
+        val now = frameTimeMs ?: SystemClock.uptimeMillis()
+        frameTimeMs = null
         val current = stage ?: return
         val renderTime = clock.renderTime(now)
         if (clock.hasSample) current.update(clock.position(now), renderTime)

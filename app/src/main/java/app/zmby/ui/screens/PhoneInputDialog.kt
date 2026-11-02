@@ -66,6 +66,18 @@ internal fun ZmbyApp.inputTarget(field: InputField, server: String? = null): Pai
         { v -> catalog.verifyToken(v) },
         { v -> ZLog.secret(v); settings.tmdbToken.set(v) },
     )
+    InputField.DanmuApiBase -> Pair(
+        { v -> app.zmby.danmu.DanmuEndpoint.checkBase(v) },
+        { v -> app.zmby.danmu.DandanplayApi.url(v, "/api/v2/match", emptyList()); settings.danmuApiBase.set(v) },
+    )
+    InputField.DanmuAppId -> Pair(
+        { v -> app.zmby.danmu.DanmuEndpoint.checkCredential(v) },
+        { v -> settings.danmuAppId.set(v) },
+    )
+    InputField.DanmuAppSecret -> Pair(
+        { v -> app.zmby.danmu.DanmuEndpoint.checkCredential(v) },
+        { v -> ZLog.secret(v); settings.danmuAppSecret.set(v) },
+    )
     InputField.PublicMetaDbKey -> Pair(
         { v -> if (v.length < 8 || v.length > 512) "密钥长度不对，请检查是否复制完整" else null },
         { v -> ZLog.secret(v); settings.publicMetaDbKey.set(v) },

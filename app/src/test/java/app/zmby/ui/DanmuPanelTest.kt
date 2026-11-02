@@ -35,6 +35,7 @@ class DanmuPanelTest {
         assertNull(danmuEpisodeLabel(BaseItemDto(id = "m", type = "Movie")))
         assertEquals("按服务器季集识别 · 下次播放生效", danmuStatusSource(DanmuStatus.Auto, null))
         assertEquals("搜索「漫长的季节」后选择 · 下次播放生效", danmuStatusSource(DanmuStatus.Manual, sel("a", 1, "x", manual = true)))
+        assertEquals("本季沿用所选来源 · 下次播放生效", danmuStatusSource(DanmuStatus.Manual, sel("a", 1, "第1集", manual = true).copy(season = true)))
     }
 
     @Test fun `results are grouped by anime in server order and the chosen row is found`() {

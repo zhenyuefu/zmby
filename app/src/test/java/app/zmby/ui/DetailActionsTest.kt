@@ -31,6 +31,10 @@ import org.junit.Test
 
 /** ui-spec §2.15: header button states, names, results and the version bar's hints. */
 class DetailActionsTest {
+    @Test fun `read only status queries keep their panels accessible while busy`() {
+        assertTrue(actionAccepts(busy = true, enabled = true, allowWhileBusy = true))
+        assertFalse(actionAccepts(busy = true, enabled = false, allowWhileBusy = true))
+    }
     @Test fun `on is a ring on glass and focus is white so the two never look the same`() {
         val rest = actionLook(focused = false, on = false, busy = false, enabled = true)
         assertFalse(rest.white || rest.ring || rest.solidGlyph || rest.spinner)

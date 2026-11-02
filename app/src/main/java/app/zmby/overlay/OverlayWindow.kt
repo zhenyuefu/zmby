@@ -37,7 +37,8 @@ fun designScale(context: Context): Float {
 /** `TYPE_APPLICATION_OVERLAY` layout for a window over the system player. */
 fun overlayParams(focusable: Boolean, gravity: Int = Gravity.FILL, x: Int = 0, y: Int = 0, fullScreen: Boolean = !focusable): WindowManager.LayoutParams {
     val size = if (fullScreen) WindowManager.LayoutParams.MATCH_PARENT else WindowManager.LayoutParams.WRAP_CONTENT
-    var flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+    var flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+        WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
     // The passive layer never takes keys: they stay with the player (overlay research §2).
     if (!focusable) flags = flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
     return WindowManager.LayoutParams(size, size, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT).apply {

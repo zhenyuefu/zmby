@@ -94,7 +94,8 @@ internal fun danmuEpisodeLabel(item: BaseItemDto): String? {
 /** The status card's second line: where the choice came from, and when it applies. */
 internal fun danmuStatusSource(status: DanmuStatus, selection: DanmuSelection?): String = when (status) {
     DanmuStatus.Auto -> "按服务器季集识别 · 下次播放生效"
-    DanmuStatus.Manual -> "搜索「${selection?.searchTitle.orEmpty()}」后选择 · 下次播放生效"
+    DanmuStatus.Manual -> if (selection?.season == true) "本季沿用所选来源 · 下次播放生效"
+        else "搜索「${selection?.searchTitle.orEmpty()}」后选择 · 下次播放生效"
     DanmuStatus.Unmatched -> "可搜索其他译名后手动选择"
     DanmuStatus.Matching -> "正在向弹幕服务器查询"
 }
@@ -154,6 +155,7 @@ internal fun DanmuAction(ref: ServerItem?, panel: DanmuPanelState) {
         Glyph.Danmu, danmuTip(status), onClick = { panel.open = ref }, Modifier.focusRequester(panel.button),
         on = status == DanmuStatus.Manual, busy = status == DanmuStatus.Matching, solidWhenOn = false,
         focusKey = "action:danmu", dot = status == DanmuStatus.Unmatched,
+        allowWhileBusy = true,
     )
 }
 
@@ -184,23 +186,25 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
     val footer = remember { FocusRequester() }
     val list = rememberLazyListState()
     var query by remember(ref.key) { mutableStateOf<DanmuQuery?>(null) }
+    val resolvedQuery = remember(ref.key) { kotlinx.coroutines.CompletableDeferred<DanmuQuery?>() }
     var current by remember(ref.key) { mutableStateOf<DanmuSelection?>(null) }
     var matching by remember(ref.key) { mutableStateOf(true) }
-    var keyword by remember(ref.key) { mutableStateOf("") }
+    var keyword by remember(ref.key) { mutableStateOf(ref.item.seriesName ?: ref.item.name.orEmpty()) }
     var results by remember(ref.key) { mutableStateOf<List<DanmuSelection>>(emptyList()) }
     var searched by remember(ref.key) { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     var focusTick by remember { mutableIntStateOf(0) }
+    var selectionRevision by remember(ref.key) { mutableIntStateOf(0) }
 
-    suspend fun runSearch() {
+    suspend fun runSearch(refresh: Boolean = false) {
         val term = keyword.trim()
         if (term.isEmpty()) return
         searching = true
         note = null
         try {
-            results = app.danmu.search(endpoint, term)
+            results = app.danmu.search(endpoint, term, refresh)
             searched = true
         } catch (e: CancellationException) {
             throw e
@@ -213,24 +217,31 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
         }
     }
     fun search() {
-        if (!searching) scope.launch { runSearch(); focusTick++ }
+        if (!searching) scope.launch { runSearch(refresh = true); focusTick++ }
     }
 
-    LaunchedEffect(ref.key) {
+    // The explicit picker is a search surface: never wait for the automatic matcher or aliases.
+    LaunchedEffect(ref.key, endpoint) {
+        runSearch()
+        focusTick++
+    }
+    LaunchedEffect(ref.key, endpoint) {
+        val revision = selectionRevision
         try {
             val q = app.danmuQueries.query(ref.server, ref.item)
             query = q
-            current = q?.let { app.danmu.current(endpoint, ref.key, it, app.danmuQueries::enrich) }
-            keyword = current?.takeIf { it.manual }?.searchTitle?.ifBlank { null } ?: q?.names?.firstOrNull().orEmpty()
+            resolvedQuery.complete(q)
+            val matched = q?.let { app.danmu.current(endpoint, ref.key, it, app.danmuQueries::enrich) }
+            if (revision == selectionRevision) current = matched
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (revision == selectionRevision) note = e.userMessage()
             keyword = keyword.ifBlank { ref.item.seriesName ?: ref.item.name.orEmpty() }
         } finally {
+            resolvedQuery.complete(query)
             matching = false
         }
-        // Prefilled: show the episodes at once, so the current one can be seen and changed.
-        runSearch()
         focusTick++
     }
     // Initial focus: the chosen episode when it is listed, else the search field.
@@ -250,14 +261,16 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
     }
 
     fun choose(option: DanmuSelection) {
-        val q = query ?: return
         if (saving) return
+        selectionRevision++
         saving = true
         scope.launch {
             try {
-                app.danmu.saveChoice(endpoint, ref.key, q, option)
-                current = option.copy(manual = true)
-                note = null
+                val q = query ?: resolvedQuery.await() ?: error("暂时无法确定影片，请关闭后重试")
+                val saved = app.danmu.saveChoice(endpoint, ref.key, q, option, followSeason = !q.movie)
+                current = saved
+                matching = false
+                note = if (!q.movie && !saved.season) "无法确认分集编号，仅保存当前集" else null
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -268,12 +281,13 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
         }
     }
     fun resetToAuto() {
-        val q = query ?: return
         if (saving) return
+        selectionRevision++
         saving = true
         matching = true
         scope.launch {
             try {
+                val q = query ?: resolvedQuery.await() ?: error("暂时无法确定影片，请关闭后重试")
                 app.danmu.reset(endpoint, ref.key, q)
                 current = app.danmu.current(endpoint, ref.key, q, app.danmuQueries::enrich)
                 note = null
@@ -335,7 +349,8 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         // Down from the last result lands here, not on 完成, so a stray press does not close the panel.
-                        GlassButton("恢复自动匹配", ::resetToAuto, Modifier.focusRequester(footer), height = 60.dp, horizontalPadding = 28.dp, fontSize = 21)
+                        GlassButton(if (current?.season == true) "本季恢复自动匹配" else "恢复自动匹配",
+                            ::resetToAuto, Modifier.focusRequester(footer), height = 60.dp, horizontalPadding = 28.dp, fontSize = 21)
                         GlassButton("完成", onDismiss, height = 60.dp, horizontalPadding = 28.dp, fontSize = 21)
                         Spacer(Modifier.weight(1f))
                         KeyHint("返回", "关闭")

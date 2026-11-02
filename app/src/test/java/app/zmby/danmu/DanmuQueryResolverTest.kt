@@ -14,6 +14,14 @@ class DanmuQueryResolverTest {
         seriesName = "菜鸟伙房兵", parentIndexNumber = 5, indexNumber = 3, productionYear = 2030,
         providerIds = mapOf("Tmdb" to "999"))
 
+    @Test fun `next episode without series name resolves parent before deciding there is no query`() = runBlocking {
+        val resolver = DanmuQueryResolver({ _,_ -> parent }, { work }, { ref }, { emptyList() })
+        val query = resolver.query("s", episode.copy(id = "next", seriesName = null, indexNumber = 4))!!
+        assertEquals(4, query.episode)
+        assertTrue(parent.name in query.names)
+        assertEquals("tmdb:tv:10", query.workId)
+    }
+
     @Test fun `parent names and first year are used and episode IDs never resolve a TV work`() = runBlocking {
         var resolved: BaseItemDto? = null
         val resolver = DanmuQueryResolver({ server,id -> assertEquals("s", server); assertEquals("series", id); parent },

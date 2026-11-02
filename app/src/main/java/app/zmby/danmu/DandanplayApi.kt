@@ -27,6 +27,18 @@ data class DanmuEndpoint(val base: String, val appId: String = "", val appSecret
 
     /** What the cache files are keyed by: the address only, never the secret. */
     val cacheKey: String get() = base.trimEnd('/')
+
+    companion object {
+        fun checkBase(raw: String): String? {
+            val value = raw.trim()
+            val url = value.toHttpUrlOrNull()
+            return if (value.length > 2048 || value.any { it.isWhitespace() || it == '\\' } || url == null ||
+                url.username.isNotEmpty() || url.password.isNotEmpty() || url.query != null || url.fragment != null)
+                "请输入 HTTP 或 HTTPS 弹幕地址；可带路径，不含账号、密码、查询参数或片段" else null
+        }
+        fun checkCredential(value: String): String? = if (value.length > 2048 || value.any { it.code !in 0x21..0x7e })
+            "请输入完整的 AppId 或 AppSecret（最多 2048 个英文字符）" else null
+    }
 }
 
 class DanmuHttpException(val code: Int) : IOException("弹幕请求失败（HTTP $code）")
@@ -36,7 +48,11 @@ class DanmuHttpException(val code: Int) : IOException("弹幕请求失败（HTTP
  * self-hosted one (no signature). Only names, numbers and episode ids are sent.
  */
 class DandanplayApi(http: OkHttpClient, private val clock: () -> Long = System::currentTimeMillis) {
-    private val http = http.newBuilder().callTimeout(20, TimeUnit.SECONDS).build()
+    // Isolate danmu scheduling from Emby/TMDB and allow every requested alias to start together.
+    private val http = http.newBuilder().dispatcher(okhttp3.Dispatcher().apply {
+        maxRequests = Int.MAX_VALUE
+        maxRequestsPerHost = Int.MAX_VALUE
+    }).callTimeout(20, TimeUnit.SECONDS).build()
 
     suspend fun match(endpoint: DanmuEndpoint, fileName: String): String =
         request(endpoint, "/api/v2/match", body = buildJsonObject { put("fileName", fileName) }.toString())

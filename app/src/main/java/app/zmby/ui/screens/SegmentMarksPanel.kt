@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +44,10 @@ import app.zmby.media.formatClock
 import app.zmby.segments.ManualMarks
 import app.zmby.segments.SegmentMarks
 import app.zmby.segments.SegmentRepository
+import app.zmby.segments.SegmentLookup
+import app.zmby.segments.SegmentKind
+import app.zmby.data.ServerItem
+import app.zmby.data.SegmentProvider
 import app.zmby.ui.components.ChoiceSetting
 import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.SelectableRow
@@ -50,6 +55,32 @@ import app.zmby.ui.components.groupCard
 import app.zmby.ui.theme.Z
 import app.zmby.zmby
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+
+internal data class SegmentStatus(val lookup: SegmentLookup? = null, val loading: Boolean = false, val failed: Boolean = false)
+
+internal fun segmentTip(state: SegmentStatus): String = when {
+    state.loading -> "片头片尾 · 正在查询…"
+    state.failed -> "片头片尾 · 来源无法连接"
+    state.lookup?.plan?.isNotEmpty() == true -> "片头片尾 · 已获取标记"
+    else -> "片头片尾 · 未获取标记"
+}
+
+@Composable
+internal fun rememberSegmentStatus(ref: ServerItem?): SegmentStatus {
+    val app = LocalContext.current.zmby
+    val revision by app.segments.changes.collectAsState()
+    var status by remember(ref?.key, revision) { mutableStateOf(SegmentStatus(loading = ref != null)) }
+    LaunchedEffect(ref?.key, revision) {
+        if (ref == null) return@LaunchedEffect
+        status = try {
+            val result = app.segmentLookup(ref.server, ref.item, ref.item.runtimeMs)
+            SegmentStatus(result, failed = result.unavailable.isNotEmpty())
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { SegmentStatus(failed = true) }
+    }
+    return status
+}
 
 /**
  * 本地手动标记 (local-data spec): 片头结束 and 片尾开始 of [item], typed with the remote. Left and
@@ -60,6 +91,7 @@ import kotlinx.coroutines.launch
 fun SegmentMarksPanel(server: String, item: BaseItemDto, onDismiss: () -> Unit) {
     val app = LocalContext.current.zmby
     val scope = rememberCoroutineScope()
+    val status = rememberSegmentStatus(ServerItem(server, item))
     BackHandler(onBack = onDismiss)
     var key by remember { mutableStateOf<String?>(null) }
     var intro by remember { mutableStateOf<Long?>(null) }
@@ -90,6 +122,28 @@ fun SegmentMarksPanel(server: String, item: BaseItemDto, onDismiss: () -> Unit) 
                 listOfNotNull(visibleText(item.seriesName), episodeCode(item), titleOf(item).takeUnless { it == visibleText(item.seriesName) }).joinToString("  ·  "),
                 fontSize = 21.sp, color = Z.textSecondary, maxLines = 1,
             )
+            Column(Modifier.groupCard(RoundedCornerShape(18.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (status.loading) Text("正在查询片段标记…", fontSize = 19.sp, color = Z.textSecondary)
+                val answers = status.lookup?.answers.orEmpty().filterKeys { it != SegmentProvider.Local }
+                val found = answers.filterValues { it.isNotEmpty() }
+                found.forEach { (provider, segments) ->
+                    Text(provider.label + " · " + segments.joinToString("  ·  ") { s ->
+                        when (s.kind) {
+                            SegmentKind.Intro -> "片头 ${formatClock(s.startMs)}–${s.endMs?.let(::formatClock) ?: "结束"}"
+                            SegmentKind.Credits -> "片尾 ${formatClock(s.startMs)}–${s.endMs?.let(::formatClock) ?: "结束"}"
+                            else -> "${s.kind.label} ${formatClock(s.startMs)}–${s.endMs?.let(::formatClock) ?: "结束"}"
+                        }
+                    }, fontSize = 19.sp, color = Z.textSecondary)
+                }
+                if (!status.loading && found.isEmpty()) Text("未获取到服务器片段标记，可在下方手动设置", fontSize = 19.sp, color = Z.textSecondary)
+                if (status.failed) {
+                    val names = status.lookup?.unavailable.orEmpty().joinToString { it.label }.ifBlank { "片段标记来源" }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        Text("$names · 无法连接", fontSize = 18.sp, color = Z.warn, modifier = Modifier.weight(1f))
+                        GlassButton("重试", { app.segments.retryUnavailable() }, height = 48.dp, fontSize = 18)
+                    }
+                }
+            }
             if (key == null) return@Column
             MarkRow("片头结束", intro, { intro = it }, default = SegmentMarks.INTRO_DEFAULT_MS, runtime, lastStop, Modifier.focusRequester(first))
             MarkRow("片尾开始", credits, { credits = it }, default = runtime?.let { (it - SegmentMarks.CREDITS_DEFAULT_BEFORE_END_MS).coerceAtLeast(0) } ?: 0, runtime, lastStop)

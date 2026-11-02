@@ -22,9 +22,10 @@ FILES = (
     'app/build.gradle.kts', 'app/compose-stability.conf', 'app/proguard-rules.pro',
     'devtools/fake-zidoo-player/build.gradle.kts',
     'tools/mock_emby.py', 'tools/export_public.py',
-    'docs/images/mark.svg', 'docs/images/home.png', 'docs/images/browse.png',
-    'docs/images/detail.png', 'docs/images/search.png', 'docs/images/settings.png',
-    'docs/images/navigation.png', 'docs/images/series.png',
+    'docs/DEVELOPMENT.md', 'docs/USAGE.md',
+    'docs/images/mark.svg', 'docs/images/home.jpg', 'docs/images/browse.jpg',
+    'docs/images/detail.jpg', 'docs/images/search.jpg', 'docs/images/settings.jpg',
+    'docs/images/navigation.jpg', 'docs/images/series.jpg',
     'LICENSES/Apache-2.0.txt', 'LICENSES/LGPL-2.1.txt', 'LICENSES/MIT-danmu2ass.txt',
 )
 TREES = {
@@ -73,7 +74,7 @@ def audit(paths):
         # Enforce the same 1 MiB limit used by the local jj snapshot policy.
         if path.stat().st_size > 1024 * 1024:
             errors.append(f'{rel}: over 1 MiB, review separately')
-        if rel in BINARY_FILES or path.suffix == '.png':
+        if rel in BINARY_FILES or path.suffix in {'.png', '.jpg'}:
             continue
         try:
             body = path.read_text(encoding='utf-8')

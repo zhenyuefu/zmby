@@ -73,7 +73,7 @@ internal fun actionLook(focused: Boolean, on: Boolean, busy: Boolean, enabled: B
 )
 
 /** OK does something only when the button is available and not already working on a press. */
-internal fun actionAccepts(busy: Boolean, enabled: Boolean): Boolean = enabled && !busy
+internal fun actionAccepts(busy: Boolean, enabled: Boolean, allowWhileBusy: Boolean = false): Boolean = enabled && (!busy || allowWhileBusy)
 
 /**
  * `.ibtn` with the 2.15 states and the focus name tag: a dark 72 % capsule (17/600) 14 below the
@@ -95,12 +95,14 @@ fun ActionIconButton(
     focusKey: String,
     /** A 12 px amber dot at the top right: something needs attention (弹幕 未匹配, ui-spec §2.19). */
     dot: Boolean = false,
+    /** Read-only status queries must not prevent opening their search/editor panel. */
+    allowWhileBusy: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     Box(modifier.onFocusChanged { focused = it.hasFocus }) {
         val look = actionLook(focused, on, busy, enabled)
         Focusable(
-            { if (actionAccepts(busy, enabled)) onClick() },
+            { if (actionAccepts(busy, enabled, allowWhileBusy)) onClick() },
             Modifier.semantics { contentDescription = tip },
             shape = CircleShape,
             focusedScale = 1.08f,

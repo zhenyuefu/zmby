@@ -26,7 +26,9 @@ import app.zmby.emby.BaseItemDto
 import app.zmby.log.ZLog
 import app.zmby.media.episodeCode
 import app.zmby.media.episodeName
-import app.zmby.playback.matchesPlaybackPath
+import app.zmby.playback.matchesPlaybackAttempt
+import app.zmby.playback.NextEpisodePrefetch
+import app.zmby.playback.EpisodeContinuation
 import app.zmby.playback.PreparedPlayback
 import app.zmby.playback.PlaybackMonitor
 import app.zmby.playback.SubtitlePrepareException
@@ -99,6 +101,9 @@ class PlaybackActivity : ComponentActivity() {
     private var requestedStartMs = 0L
     /** Languages of the last playback, for the next episode or another version. */
     private var carried: TrackLanguages? = null
+    private var carriedVersion: app.zmby.emby.MediaSourceInfo? = null
+    private var nextPrefetch: NextEpisodePrefetch? = null
+    private var nextCardJob: kotlinx.coroutines.Deferred<UpNextCard?>? = null
     private var launchedAt = 0L
     /** A switch to another version is in progress (shown instead of the error). */
     private var switching = false
@@ -230,7 +235,12 @@ class PlaybackActivity : ComponentActivity() {
         alternates = emptyList()
         tried.clear()
         requestedStartMs = ep.resumeMs
-        start(ep, ep.resumeMs, null, TrackChoice(), carried)
+        lifecycleScope.launch {
+            val full = try { zmby.library.item(server, ep.id) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { ep }
+            start(full, full.resumeMs, null, TrackChoice(), carried)
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -238,9 +248,23 @@ class PlaybackActivity : ComponentActivity() {
         outState.putBoolean(KEY_LAUNCHED, zmby.activePlayback != null)
     }
 
+    override fun onDestroy() {
+        if (isFinishing) {
+            nextCardJob?.cancel()
+            nextPrefetch?.cancel()
+        }
+        super.onDestroy()
+    }
+
     private fun start(item: BaseItemDto, startMs: Long, sourceId: String?, tracks: TrackChoice = TrackChoice(), languages: TrackLanguages? = null, retry: (suspend () -> PreparedPlayback)? = null) {
         val app = zmby
         val session = app.registry.session(server) ?: return fail("这台服务器已删除")
+        nextCardJob?.cancel()
+        nextCardJob = null
+        val previousPrefetch = nextPrefetch
+        val warmed = previousPrefetch?.completedFor(server, item.id)
+        if (warmed == null) previousPrefetch?.cancel()
+        nextPrefetch = null
         current = item
         failed.value = false
         retryRelay.value = null
@@ -249,6 +273,13 @@ class PlaybackActivity : ComponentActivity() {
         switching = false
         val percent = app.settings.watchedPercent.value
         val playServer = server
+        val danmuEndpoint = app.danmuEndpoint()
+        val danmuRows = app.settings.danmuRows.value
+        val versionHint = item.mediaSources.firstOrNull { it.id == sourceId }
+            ?: carriedVersion ?: item.mediaSources.firstOrNull { it.supportsDirectPlay || it.supportsDirectStream }
+        // Start the next episode's lookup and both downloads beside this episode's preparation.
+        val earlyNext = prefetchNext(item, playServer, versionHint)
+        nextPrefetch = earlyNext
         // 播放浮层 (ui-spec §2.16): only when switched on and allowed; otherwise skips stay automatic.
         val overlayOn = app.settings.playbackOverlay.value && OverlayPermission.granted(this)
         // 片头片尾: looked up beside the preparation and never waited for (local-data spec).
@@ -271,8 +302,6 @@ class PlaybackActivity : ComponentActivity() {
         // 弹幕: matched and loaded beside the preparation (danmu design). 播放器字幕 bakes them into
         // an ASS for com.zidoo.player (local STRM); any other player, or the overlay mode, draws them
         // on the overlay once ready.
-        val danmuEndpoint = app.danmuEndpoint()
-        val danmuRows = app.settings.danmuRows.value
         val delivery = ZidooIntents.installedPlayer(this)?.subtitles ?: ZidooPlayer.SubtitleDelivery.IntentExtras
         val danmuWanted = app.settings.danmu.value && danmuEndpoint.enabled
         val danmuAsSubtitle = danmuWanted && danmuSubtitleMode(app.settings.danmuMode.value, delivery)
@@ -280,10 +309,15 @@ class PlaybackActivity : ComponentActivity() {
             ZLog.i(TAG, "弹幕 as subtitle needs com.zidoo.player; ${if (overlayOn) "using the overlay" else "no 弹幕 this time"}")
         }
         val danmuOnOverlay = danmuWanted && !danmuAsSubtitle && overlayOn
-        val danmu = if (danmuAsSubtitle || danmuOnOverlay) app.appScope.async(Dispatchers.IO) {
+        val prefetched = warmed?.comments?.takeIf {
+            previousPrefetch?.endpoint == danmuEndpoint && previousPrefetch.rows == danmuRows && !it.isCancelled
+        }
+        if (prefetched == null) warmed?.comments?.cancel()
+        val danmu = if (danmuAsSubtitle || danmuOnOverlay) prefetched ?: app.appScope.async(Dispatchers.IO) {
             val query = app.danmuQueries.query(playServer, item)
             app.danmu.load(danmuEndpoint, "$playServer:${item.id}", item, danmuRows, query, app.danmuQueries::enrich)
         } else null
+        if (danmu == null) prefetched?.cancel()
 
         lifecycleScope.launch {
             val prepared = try {
@@ -297,12 +331,15 @@ class PlaybackActivity : ComponentActivity() {
                         comments = { danmu.await() },
                         config = DanmuAss.Config.of(danmuRows, app.settings.danmuOpacity.value),
                     ) else null,
+                    preferredVersion = if (item.type == "Episode") carriedVersion else null,
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
+                earlyNext?.cancel()
                 skipper.cancel()
                 danmu?.cancel()
                 throw e
             } catch (e: SubtitlePrepareException) {
+                earlyNext?.cancel()
                 ZLog.w(TAG, "subtitle prepare failed for ${item.id}", e)
                 skipper.cancel()
                 danmu?.cancel()
@@ -311,6 +348,7 @@ class PlaybackActivity : ComponentActivity() {
                 }
                 return@launch fail("所选字幕无法加载：${e.userMessage()}")
             } catch (e: Exception) {
+                earlyNext?.cancel()
                 ZLog.w(TAG, "prepare failed for ${item.id}", e)
                 skipper.cancel()
                 danmu?.cancel()
@@ -318,6 +356,17 @@ class PlaybackActivity : ComponentActivity() {
                 return@launch fail("无法获取播放地址：${e.userMessage()}")
             }
             carried = prepared.languages
+            carriedVersion = prepared.version
+            // Correct a speculative release as soon as PlaybackInfo resolves, including while
+            // the user is reading the first-use subtitle guide.
+            val actual = prepared.version
+            val hintFromCurrentItem = item.mediaSources.any { it.id == versionHint?.id }
+            val sameRelease = actual == null || versionHint?.id == actual.id || !hintFromCurrentItem && versionHint != null &&
+                withContext(Dispatchers.Default) { EpisodeContinuation.score(versionHint, actual) >= 128 }
+            val nextTask = if (sameRelease) earlyNext else {
+                earlyNext?.cancel()
+                prefetchNext(item, playServer, actual).also { nextPrefetch = it }
+            }
             if (prepared.local?.baseName == LocalStrm.DANMU_BASE && !app.settings.danmuDualGuideSeen.value) {
                 val confirmed = kotlinx.coroutines.CompletableDeferred<Unit>()
                 dualGuide.value = confirmed
@@ -333,21 +382,28 @@ class PlaybackActivity : ComponentActivity() {
                 }
                 app.settings.danmuDualGuideSeen.set(true)
             }
+            val nextCard = upNextCard(nextTask, playServer, prepared.languages)
+            nextCardJob = nextCard
+            val subtitleLate = danmuAsSubtitle && prepared.local?.baseName != LocalStrm.DANMU_BASE
+            if (subtitleLate && overlayOn) ZLog.i(TAG, "弹幕字幕尚未就绪，本次在下载完成后用浮层显示")
             val overlay = if (overlayOn) PlaybackOverlay(
                 applicationContext, app.appScope, skipper,
-                upNext = upNextCard(item, playServer, prepared.languages),
+                upNext = nextCard,
                 countdown = app.settings.upNextCountdown.value,
-                danmu = danmu?.takeIf { danmuOnOverlay }?.let { DanmuLayer(applicationContext, app.appScope, it, danmuRows, app.settings.danmuOpacity.value) },
+                danmu = danmu?.takeIf { danmuOnOverlay || subtitleLate }?.let { DanmuLayer(applicationContext, app.appScope, it, danmuRows, app.settings.danmuOpacity.value) },
             ) else null
             val zidoo = ZidooIntents.installedPlayer(this@PlaybackActivity)
             val useZidoo = zidoo != null
+            // A fixed STRM name can leave the previous episode's final status in the HTTP API.
+            // Wait for a fresh sample before binding this episode's progress and overlay to it.
+            val beforeLaunch = if (useZidoo) app.zidooStatus.status() else null
             val playerIntent = if (zidoo != null) {
                 ZidooIntents.playerIntent(prepared.launch, zidoo)
             } else {
                 ZidooIntents.genericIntent(prepared.launch)
             }
             val monitor = PlaybackMonitor(app.zidooStatus, prepared.reporter, prepared.startPositionMs, prepared.runtimeMs, percent, skipper = skipper,
-                acceptsStatus = { status -> prepared.statusPaths.any { matchesPlaybackPath(status.path, it) } },
+                acceptsStatus = { status -> matchesPlaybackAttempt(status, beforeLaunch, prepared.statusPaths) },
                 onStarted = {
                     prepared.selection?.let { selection ->
                         val saved = SavedPlayback(playServer, item.id, selection, System.currentTimeMillis())
@@ -419,6 +475,8 @@ class PlaybackActivity : ComponentActivity() {
         }
         server = active.server
         current = active.item
+        carried = active.prepared.languages
+        carriedVersion = active.prepared.version
         val result = ZidooIntents.parseResult(data)
         val elapsed = android.os.SystemClock.elapsedRealtime() - active.launchedAt
         ZLog.i(TAG, "player returned $result after ${elapsed}ms (video seen: ${active.monitor.started}, skips: ${active.monitor.skips})")
@@ -464,7 +522,7 @@ class PlaybackActivity : ComponentActivity() {
             // Give the stop report a moment so the screen underneath reloads the new resume point.
             val done = withTimeoutOrNull(REPORT_WAIT_MS) { outcome.await() }
             if (item?.type != "Episode" || done?.watched != true || !app.settings.offerNextEpisode.value) return@launch finish()
-            val upNext = overlayNext ?: runCatching { app.library.nextEpisode(ServerItem(server, item)) }
+            val upNext = overlayNext ?: runCatching { app.library.nextEpisode(ServerItem(server, item), carriedVersion) }
                 .onFailure { ZLog.w(TAG, "next episode lookup failed", it) }
                 .getOrNull()
             if (upNext == null) return@launch finish()
@@ -507,13 +565,30 @@ class PlaybackActivity : ComponentActivity() {
      * The overlay's next-episode card (ui-spec §2.16 `PlayerNext`): looked up while this episode plays,
      * on the same server, with the languages this playback uses. Null for films or with Up Next off.
      */
-    private fun upNextCard(item: BaseItemDto, playServer: String, languages: TrackLanguages?): kotlinx.coroutines.Deferred<UpNextCard?>? {
+    private fun prefetchNext(item: BaseItemDto, playServer: String, version: app.zmby.emby.MediaSourceInfo?): NextEpisodePrefetch? {
         val app = zmby
         if (item.type != "Episode" || !app.settings.offerNextEpisode.value) return null
+        val endpoint = app.danmuEndpoint()
+        val rows = app.settings.danmuRows.value
+        return NextEpisodePrefetch(app.appScope, playServer, endpoint, rows,
+            lookup = {
+                try { app.library.nextEpisode(ServerItem(playServer, item), version) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { ZLog.w(TAG, "next episode lookup failed", e); null }
+            },
+            comments = if (app.settings.danmu.value && endpoint.enabled) ({ ep ->
+                val query = app.danmuQueries.query(playServer, ep)
+                app.danmu.load(endpoint, "$playServer:${ep.id}", ep, rows, query, app.danmuQueries::enrich)
+            }) else null,
+            segments = { ep -> app.segmentLookup(playServer, ep, ep.runtimeMs) },
+        )
+    }
+
+    private fun upNextCard(prefetch: NextEpisodePrefetch?, playServer: String, languages: TrackLanguages?): kotlinx.coroutines.Deferred<UpNextCard?>? {
+        prefetch ?: return null
+        val app = zmby
         return app.appScope.async(Dispatchers.IO) {
-            val ep = runCatching { app.library.nextEpisode(ServerItem(playServer, item)) }
-                .onFailure { ZLog.w(TAG, "next episode lookup for the overlay failed", it) }
-                .getOrNull() ?: return@async null
+            val ep = prefetch.ready.await()?.episode ?: return@async null
             UpNextCard(
                 episode = ep,
                 title = listOfNotNull(episodeCode(ep), episodeName(ep)).joinToString(" · ").ifBlank { ep.displayTitle },
@@ -535,6 +610,9 @@ class PlaybackActivity : ComponentActivity() {
         mode == DanmuMode.Subtitle && delivery == ZidooPlayer.SubtitleDelivery.LocalStrm
 
     private fun fail(text: String) {
+        nextPrefetch?.cancel()
+        nextPrefetch = null
+        nextCardJob?.cancel()
         ZLog.w(TAG, "playback screen shows: $text")
         message.value = text
         failed.value = true

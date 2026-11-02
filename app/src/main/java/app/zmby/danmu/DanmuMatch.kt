@@ -25,6 +25,23 @@ data class DanmuQuery(
  * match. Pure, for tests.
  */
 object DanmuMatch {
+    /** Supplemental aliases must still name this known work, not an unrelated fuzzy result. */
+    fun knownTitle(query: DanmuQuery, target: DanmuTarget): Boolean =
+        parse(target.animeTitle).base.let { base -> base.isNotBlank() && query.names.any { parse(it).base == base } }
+    private val EPISODE_NUMBER = Regex("(?:第\\s*(\\d+)\\s*[集话話])|(?:\\b(?:EP?|Episode)\\s*0*(\\d+)\\b)|(?:^\\s*(\\d+)\\s*$)", RegexOption.IGNORE_CASE)
+
+    /** Never infer episode numbers from transient IDs or list positions (trailers may be mixed in). */
+    fun episodeNumber(title: String): Int? = EPISODE_NUMBER.find(title)?.groupValues
+        ?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toIntOrNull()?.takeIf { it > 0 }
+
+    fun chooseTarget(query: DanmuQuery, targets: List<DanmuTarget>): DanmuTarget? {
+        val groups = targets.groupBy { Triple(it.animeId, it.animeTitle, it.type) }.values.toList()
+        val episodes = groups.map { group -> if (query.movie) group else group.filter { episodeNumber(it.episodeTitle) == query.episode } }
+        val candidates = groups.mapIndexed { index, group ->
+            DanmuCandidate(group.first().animeTitle, group.first().type, episodes[index].map { it.episodeId })
+        }
+        return chooseIndex(query, candidates)?.let { episodes[it].single() }
+    }
     /** A candidate title taken apart. */
     data class Parsed(val base: String, val year: Int?, val season: Int?, val qualifiers: List<String>)
 
@@ -58,14 +75,19 @@ object DanmuMatch {
     }
 
     /** The episode id to load, or null when nothing matches clearly. */
-    fun choose(query: DanmuQuery, candidates: List<DanmuCandidate>): Long? {
-        val names = query.names.map(Titles::normalize).filter { it.isNotEmpty() }.toSet()
+    fun choose(query: DanmuQuery, candidates: List<DanmuCandidate>): Long? =
+        chooseIndex(query, candidates)?.let { candidates[it].episodes.single() }
+
+    private fun chooseIndex(query: DanmuQuery, candidates: List<DanmuCandidate>): Int? {
+        val names = query.names.map { parse(it).base }.filter { it.isNotEmpty() }.toSet()
         if (names.isEmpty()) return null
         val ok = candidates.mapIndexedNotNull { index, c ->
             val p = parse(c.title)
             if (p.base !in names) return@mapIndexedNotNull null
-            if (query.year != null && p.year != null && kotlin.math.abs(query.year - p.year) > 1) return@mapIndexedNotNull null
-            val isMovie = c.type.contains("电影") || c.type.contains("movie", ignoreCase = true)
+            // The query year belongs to the whole work, not to later seasons.
+            if ((query.movie || (query.season ?: 1) <= 1) && query.year != null && p.year != null && kotlin.math.abs(query.year - p.year) > 1) return@mapIndexedNotNull null
+            if (c.type.contains("music", true) || c.type.contains("音乐") || c.type.contains("MV", true)) return@mapIndexedNotNull null
+            val isMovie = c.type.contains("电影") || c.type.contains("剧场版") || c.type.contains("movie", ignoreCase = true)
             if (isMovie != query.movie) return@mapIndexedNotNull null
             if (!query.movie) {
                 val season = query.season ?: 1
@@ -74,7 +96,7 @@ object DanmuMatch {
             if (c.episodes.size != 1) return@mapIndexedNotNull null
             Triple(rank(p.qualifiers), index, c.episodes.single())
         }
-        return ok.minWithOrNull(compareBy<Triple<Int, Int, Long>> { it.first }.thenBy { it.second })?.third
+        return ok.minWithOrNull(compareBy<Triple<Int, Int, Long>> { it.first }.thenBy { it.second })?.second
     }
 
     /** 0 no version tag, 1 original language, 2 other tags, 3 dubbed. */

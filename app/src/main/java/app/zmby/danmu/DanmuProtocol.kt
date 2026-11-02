@@ -20,7 +20,8 @@ data class DanmuTarget(
 }
 
 @Serializable
-data class DanmuSelection(val target: DanmuTarget, val searchTitle: String, val manual: Boolean = false)
+data class DanmuSelection(val target: DanmuTarget, val searchTitle: String, val manual: Boolean = false,
+    val season: Boolean = false)
 
 /** Only structural and clear media-type checks for a server-confirmed match; no local title,
  * year or season/episode equality checks can undo LogVar's alias and cross-season mapping. */

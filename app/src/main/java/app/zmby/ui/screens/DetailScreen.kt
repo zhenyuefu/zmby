@@ -338,7 +338,7 @@ private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: Detai
             FavoriteAction(ref, copies)
             WatchlistAction(ref, copies)
             // 本地手动标记: 片头结束 and 片尾开始 for skipping.
-            MarksAction(enabled = playItem != null, onClick = onMarks)
+            MarksAction(ref = danmuRef, onClick = onMarks)
             // 弹幕 (ui-spec §2.19): last, after 片头片尾.
             DanmuAction(danmuRef, danmu)
         }

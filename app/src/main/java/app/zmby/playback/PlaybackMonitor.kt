@@ -247,6 +247,10 @@ fun resolveFinalPosition(result: ZidooResult?, lastPolledMs: Long?, runtimeMs: L
     return result?.positionMs?.takeIf { it > 0 } ?: lastPolledMs
 }
 
+/** A fixed STRM name must not bind a new monitor to the previous episode's cached final sample. */
+fun matchesPlaybackAttempt(status: app.zmby.zidoo.ZidooStatus, beforeLaunch: app.zmby.zidoo.ZidooStatus?, paths: Set<String>): Boolean =
+    status != beforeLaunch && paths.any { matchesPlaybackPath(status.path, it) }
+
 /**
  * Match an actual path, never the previous video's title or mere API availability. For an http(s)
  * stream the Zidoo player (Z9X 8K, 2026-10-26) reports only the URL's path, without host or query:

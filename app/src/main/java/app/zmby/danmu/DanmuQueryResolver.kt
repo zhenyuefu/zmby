@@ -30,7 +30,6 @@ class DanmuQueryResolver(
     }
 
     suspend fun query(server: String, item: BaseItemDto): DanmuQuery? = withContext(Dispatchers.IO) {
-        val basic = DanmuRepository.queryOf(item) ?: return@withContext null
         val hint = synchronized(hints) { hints["$server:${item.id}"] ?: item.seriesId?.let { hints["$server:$it"] } }
         val identity = if (item.type == "Episode") {
             // A version selected from the catalogue already has its parent work and mapping.
@@ -40,6 +39,10 @@ class DanmuQueryResolver(
         } else item
         val ref = hint?.work?.ref ?: identity?.let { optional { withTimeoutOrNull(3_000) { resolve(it) } } }
         val work = hint?.work ?: ref?.let { optional { cached(it) } }
+        // Episode-list responses may omit SeriesName; resolve the parent before rejecting them.
+        val basic = DanmuRepository.queryOf(item.copy(
+            seriesName = item.seriesName?.takeIf { it.isNotBlank() } ?: work?.title ?: identity?.name,
+        )) ?: return@withContext null
         val names = (basic.names + listOfNotNull(identity?.name, work?.title, identity?.originalTitle, work?.originalTitle) +
             work?.aliases.orEmpty()).map { it.trim() }.filter { it.isNotBlank() }.distinct()
         basic.copy(names = names,
@@ -50,7 +53,7 @@ class DanmuQueryResolver(
             catalogRef = ref)
     }
 
-    /** Extra provider requests happen only after the initial names fail. */
+    /** Collect the known work's aliases before launching all distinct name requests together. */
     suspend fun enrich(query: DanmuQuery): DanmuQuery = withContext(Dispatchers.IO) {
         val ref = query.catalogRef ?: return@withContext query
         val extra = optional { withTimeoutOrNull(5_000) { aliases(ref) } }.orEmpty()

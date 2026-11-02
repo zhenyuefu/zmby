@@ -146,8 +146,11 @@ internal fun WatchlistAction(ref: ServerItem, instances: List<ServerItem>) {
 
 /** 片头片尾 (本地手动标记) of the version that plays; unavailable until there is one. */
 @Composable
-internal fun MarksAction(enabled: Boolean, onClick: () -> Unit) {
-    ActionIconButton(Glyph.Marks, actionTip(HeaderAction.Marks, enabled = enabled), onClick, enabled = enabled, solidWhenOn = false, focusKey = "action:marks")
+internal fun MarksAction(ref: ServerItem?, onClick: () -> Unit) {
+    val state = rememberSegmentStatus(ref)
+    ActionIconButton(Glyph.Marks, segmentTip(state), onClick, enabled = ref != null,
+        on = state.lookup?.plan?.isNotEmpty() == true, busy = state.loading, dot = state.failed,
+        solidWhenOn = false, focusKey = "action:marks", allowWhileBusy = true)
 }
 
 @Composable

@@ -92,6 +92,8 @@ data class PreparedPlayback(
     /** Revokes this attempt's relay URL when the player has returned or launch failed. */
     val releaseRelay: () -> Unit = {},
     val selection: PlaybackSelection? = null,
+    /** Actual release selected by PlaybackInfo, carried to the next episode only. */
+    val version: MediaSourceInfo? = null,
 )
 
 /** The user's track picks in Emby stream indexes; null = the server's default for this user. */
@@ -133,6 +135,7 @@ class PlaybackPreparer(
         subtitleLanguage: String = TrackPreference.SERVER,
         /** 弹幕 baked into the subtitle the player shows; only with [SubtitleDelivery.LocalStrm]. */
         danmu: DanmuSubtitle? = null,
+        preferredVersion: MediaSourceInfo? = null,
     ): PreparedPlayback {
         val startPositionMs = WatchThreshold.startPosition(requestedStartMs, item.runtimeMs, watchedPercent)
         if (startPositionMs != requestedStartMs) {
@@ -140,7 +143,7 @@ class PlaybackPreparer(
         }
         val info = client.playbackInfo(session, item.id, startPositionMs, mediaSourceId)
         info.errorCode?.let { throw EmbyException("服务器拒绝播放（$it）") }
-        val source = chooseSource(info.mediaSources, mediaSourceId)
+        val source = chooseSource(info.mediaSources, mediaSourceId ?: EpisodeContinuation.source(info.mediaSources, preferredVersion)?.id)
         val tracks = TrackPreference.choose(source, picked, audioLanguage, subtitleLanguage)
         val runTimeTicks = source.runTimeTicks ?: item.runTimeTicks
         val images = try { artwork(session, item) }
@@ -210,6 +213,7 @@ class PlaybackPreparer(
                     statusPaths = setOfNotNull(url, local?.uri),
                     releaseRelay = { relayUrl?.let { relay?.unregister(it) } },
                     selection = PlaybackSelection.capture(source, tracks),
+                    version = source,
                 )
             } catch (e: Exception) {
                 relayUrl?.let { relay?.unregister(it) }
@@ -264,7 +268,9 @@ class PlaybackPreparer(
         val main = external?.let { stream ->
             stream to (StreamUrls.subtitle(session.baseUrl, item.id, source, stream, session.accessToken) ?: throw SubtitlePrepareException("字幕没有下载地址"))
         }
-        val ass = app.zmby.danmu.DanmuAss.bytes(app.zmby.danmu.DanmuAss.build(app.zmby.danmu.DanmuAss.items(comments), danmu.config))
+        val ass = withContext(Dispatchers.Default) {
+            app.zmby.danmu.DanmuAss.bytes(app.zmby.danmu.DanmuAssFonts.build(app.zmby.danmu.DanmuAss.items(comments), danmu.config))
+        }
         return try {
             localStrm.prepareDanmu(url, main, ass).also {
                 ZLog.i(TAG, "弹幕 subtitle: ${comments.size} comments -> ${it.extras.joinToString { f -> f.path }}; main ${external?.let { s -> "external ${s.index}, pid ${it.subtitlePid}" } ?: "by index"}")

@@ -124,6 +124,27 @@ class PlaybackMonitorTest {
         assertEquals(listOf("start@123000", "stopped@123000"), reporter.events)
     }
 
+    @Test fun fixedDanmuStrmNameWaitsForFreshEpisodeStatusBeforeReportingOrSeeking() = runTest {
+        val path = "/storage/emulated/0/Movies/zmby_danmu.strm"
+        val old = playing(8_999_000, path).copy(playing = false)
+        val player = FakePlayer().apply { status = old }
+        val reporter = Recorder()
+        val monitor = PlaybackMonitor(player, reporter, 5_000, 9_000_000,
+            now = { testScheduler.currentTime },
+            acceptsStatus = { matchesPlaybackAttempt(it, old, setOf("file://$path")) }, reportScope = this)
+        val job = launch { monitor.watch() }
+        advanceTimeBy(1_000)
+        assertTrue(reporter.events.isEmpty())
+        assertTrue(player.seeks.isEmpty())
+        player.status = playing(5_000, path)
+        advanceTimeBy(1_000)
+        assertEquals(listOf("start@5000"), reporter.events)
+        assertTrue(player.seeks.isEmpty())
+        job.cancel()
+        monitor.finish(ZidooResult(5_000, 9_000_000, "user"))
+        assertEquals(listOf("start@5000", "stopped@5000"), reporter.events)
+    }
+
     @Test
     fun reportsStartThenProgressEveryTenSeconds() = runTest {
         val player = FakePlayer()

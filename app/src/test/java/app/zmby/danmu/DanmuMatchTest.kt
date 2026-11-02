@@ -7,6 +7,49 @@ import org.junit.Test
 class DanmuMatchTest {
     private fun c(title: String, id: Long, type: String = "电视剧") = DanmuCandidate(title, type, listOf(id))
 
+    @Test fun `full search selects explicit episode numbers and ignores trailers music and similarly named works`() {
+        val q = DanmuQuery(listOf("末日地堡"), false, 2, 3, 2023)
+        val group = listOf(
+            DanmuTarget(1, "one", "末日地堡 第二季(2024)【电视剧】from source", "预告片", "电视剧"),
+            DanmuTarget(2, "one", "末日地堡 第二季(2024)【电视剧】from source", "【source】 第01集", "电视剧"),
+            DanmuTarget(3, "one", "末日地堡 第二季(2024)【电视剧】from source", "【source】 第03集", "电视剧"),
+            DanmuTarget(4, "two", "末日地堡，被豢养的良心(2026)【电视剧】", "第3集", "电视剧"),
+        )
+        assertEquals(3L, DanmuMatch.chooseTarget(q, group)?.episodeId)
+        assertNull(DanmuMatch.chooseTarget(q.copy(season = 4), group))
+        assertNull(DanmuMatch.chooseTarget(q.copy(episode = 4), group))
+        assertNull(DanmuMatch.chooseTarget(q.copy(names = listOf("Lupin"), season = 1, episode = 1, year = null),
+            listOf(DanmuTarget(9, "mv", "Lupin", "第1话", "musicvideo"))))
+    }
+
+    @Test fun `ambiguous episode numbers in one source are not guessed from order or transient IDs`() {
+        val q = DanmuQuery(listOf("某剧"), false, 1, 2)
+        val rows = listOf(DanmuTarget(100, "a", "某剧", "EP02", "电视剧"), DanmuTarget(5, "a", "某剧", "第2集", "电视剧"))
+        assertNull(DanmuMatch.chooseTarget(q, rows))
+        assertEquals(2, DanmuMatch.episodeNumber("【source】 第02集：标题"))
+        assertEquals(3, DanmuMatch.episodeNumber("Episode 03"))
+        assertNull(DanmuMatch.episodeNumber("预告"))
+    }
+
+    @Test fun `identical transient episode IDs in different groups cannot replace the accepted source`() {
+        val wrong = DanmuTarget(100, "wrong", "另一个作品", "第1集", "电视剧")
+        val right = DanmuTarget(100, "right", "某剧", "第1集", "电视剧")
+        assertEquals(right, DanmuMatch.chooseTarget(DanmuQuery(listOf("某剧"), false, 1, 1), listOf(wrong, right)))
+    }
+
+    @Test fun `a manual season follows the chosen platform within a merged multi platform group`() {
+        val q = DanmuQuery(listOf("某剧"), false, 1, 1, workId = "tmdb:tv:1")
+        val anchor = DanmuTarget(100, "group", "某剧 from aggregator", "【platform-a】 第01集", "电视剧", "https://a.example/1")
+        val next = anchor.copy(episodeId = 103, episodeTitle = "【platform-a】 第02集", url = "https://a.example/2")
+        val other = next.copy(episodeId = 102, episodeTitle = "【platform-b】 第02集", url = "https://b.example/2")
+        val rule = DanmuSeasonChoice.of(q, DanmuSelection(anchor, "某剧"))!!
+        assertEquals(next, rule.select(2, listOf(anchor, other, next)).target)
+        try {
+            rule.select(2, listOf(anchor, other))
+            org.junit.Assert.fail("must not switch platforms")
+        } catch (_: java.io.IOException) { }
+    }
+
     @Test fun `titles are taken apart into base, year, season and version tags`() {
         assertEquals(DanmuMatch.Parsed("漫长的季节", 2023, null, emptyList()), DanmuMatch.parse("漫长的季节(2023)【电视剧】from tencent"))
         assertEquals(DanmuMatch.Parsed("漫长的季节", 2023, null, listOf("卫视版", "卫视版")), DanmuMatch.parse("漫长的季节[卫视版][卫视版](2023)【电视剧】from tencent"))

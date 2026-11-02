@@ -97,7 +97,7 @@ internal fun rememberCatalogVersions(
     return remember(servers, results, targets, pending, pattern, quality, nonDisc, manual, onRefresh, lookupKey, progress, episode, directoryPending) {
         val groups = results.values.filterIsInstance<Outcome.Ok<List<Version>>>().mapNotNull { o ->
             val status = servers.firstOrNull { it.id == o.server } ?: return@mapNotNull null
-            if (o.value.isEmpty()) null else VersionGroup(status, o.value.map { Version(status, it.ref.withPlaybackProgress(progress).item, it.source, episode) }, "作品与季集已匹配")
+            if (o.value.isEmpty()) null else VersionGroup(status, o.value.map { Version(status, it.ref.withPlaybackProgress(progress).item, it.source, episode) }, "")
         }.sortedBy { it.server.order }
         val prefs = VersionPrefs(manual = manual, pattern = VersionPrefs.pattern(pattern), quality = quality, preferNonDisc = nonDisc)
         val ordered = rankCatalogVersions(groups.flatMap { it.versions }, prefs)

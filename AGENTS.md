@@ -1,6 +1,6 @@
 # 开发约定
 
-zmby 是 Kotlin + Jetpack Compose 的 Android TV Emby 多服务器客户端，播放委托给 Zidoo 系统播放器。先读 [README](README.md) 了解构建、功能边界与本地 mock。
+zmby 是 Kotlin + Jetpack Compose 的 Android TV Emby 多服务器客户端，播放委托给 Zidoo 系统播放器。先读 [README](README.md) 了解功能边界，再读[开发指南](docs/DEVELOPMENT.md)了解构建与本地 mock。
 
 ## 构建与验证
 
@@ -20,7 +20,7 @@ zmby 是 Kotlin + Jetpack Compose 的 Android TV Emby 多服务器客户端，�
 ## 公开内容与安全
 
 - 不提交真实服务器地址、账号、令牌、签名直链、设备备份、私钥、签名库、原始日志、第三方 APK 或反编译源码。
-- 示例使用 mock、回环地址或保留示例域名；配图使用自有资产。添加依赖时核对许可证并更新第三方声明。
+- 示例使用 mock、回环地址或保留示例域名；公开截图须经授权并隐藏真实服务器名称、地址与凭据；第三方影视配图保留其归属。添加依赖时核对许可证并更新第三方声明。
 - 项目采用 GPL-3.0-or-later。pinyin4j 按源码 GPL-2.0-or-later 声明处理，不根据其 POM 的 BSD 字样省略 GPL；内含 Sparta 保留 LGPL 声明。分发 APK 时同步提供对应源码和必要许可材料。
 - 凭据不进日志；新增 URL / 请求头格式需检查 `log/Redactor.kt` 是否覆盖。报告问题前仍需人工检查日志。
 - `.gitignore` 不能清除已跟踪内容或旧历史。公开前检查拟发布文件与历史，不把本地工作区整体推到公共远端。
