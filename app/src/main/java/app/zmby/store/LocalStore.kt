@@ -227,6 +227,20 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
         works.upsertInstances(listOf(row.copy(positionTicks = 0, itemJson = json.encodeToString(BaseItemDto.serializer(), item.copy(userData = data)))))
     }
 
+    /**
+     * 观看进度回写 reached [server]: its copy takes the written position or played state but keeps
+     * its last played date, so 取最新 still points at the server that actually played.
+     */
+    suspend fun recordSynced(server: String, itemId: String, positionTicks: Long?, played: Boolean?) {
+        val row = works.instance(server, itemId) ?: return
+        val nowPlayed = played ?: row.played
+        val ticks = if (played == true) 0 else positionTicks ?: row.positionTicks
+        works.setUserData(server, itemId, ticks, nowPlayed)
+        val item = decode(row)?.item ?: return
+        val data = (item.userData ?: app.zmby.emby.UserItemData()).copy(playbackPositionTicks = ticks, played = nowPlayed, playedPercentage = null)
+        works.upsertInstances(listOf(row.copy(positionTicks = ticks, played = nowPlayed, itemJson = json.encodeToString(BaseItemDto.serializer(), item.copy(userData = data)))))
+    }
+
     // ---- favourites (favorites spec; FavoriteLogic decides, this only persists)
 
     suspend fun loadFavorites(): FavoritesState? {

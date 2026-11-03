@@ -344,6 +344,17 @@ class EmbyClient(
         }
     }
 
+    /**
+     * 观看进度回写 (cross-server-watch-sync): sends only the fields given, so the server keeps the
+     * rest of the user data (favourite, last played date) as it was.
+     */
+    suspend fun setUserData(s: ServerSession, itemId: String, positionTicks: Long?, played: Boolean?) {
+        val body = listOfNotNull(played?.let { "\"Played\":$it" }, positionTicks?.let { "\"PlaybackPositionTicks\":$it" }).joinToString(",", "{", "}")
+        call(s.baseUrl, s, s.ua, expectJson = false) { id ->
+            request(s.baseUrl, s, "Users/${s.userId}/Items/$itemId/UserData", id) {}.post(body.toRequestBody(JSON)).build()
+        }
+    }
+
     /** Films and series by id with the list fields (在看: a series' ProviderIds, Status and artwork). */
     suspend fun itemsByIds(s: ServerSession, ids: List<String>): ItemsResult =
         get(s.baseUrl, s, "Users/${s.userId}/Items") {

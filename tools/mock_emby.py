@@ -26,6 +26,10 @@ that matches on title + year, one with the wrong year) and, on --port+6, 严格�
 but only for official Emby clients: anything else, zmby and the Zidoo player's okhttp included, gets
 an nginx-style 403 page). Log in to each as its own server. --official-only makes the main server strict.
 
+GET /_mock/userdata lists every server's POST /Users/{uid}/Items/{id}/UserData writes (count and the
+last 20 bodies, refused ones with status 403), for checking 观看进度回写; GET /_mock/reset clears them
+with the request counts.
+
 --segments gives 漫长的季节 Emby segment markers (intro 0:10–1:10, credits from 4:00), timed for a
 five-minute fake video (`adb shell setprop debug.zmby.fake_zidoo_duration 300000`), to try the
 playback overlay's skip buttons and next-episode card on the emulator.
@@ -386,6 +390,9 @@ class Catalog:
         self.image_scale = image_scale
         # Requests by kind, for checking that a server outside a data source is not asked (GET /_mock/stats).
         self.requests = {}
+        # POST /Users/{uid}/Items/{id}/UserData as received, refused ones included (GET /_mock/userdata):
+        # 观看进度回写 and 在看 移除 are checked against these.
+        self.userdata_writes = []
         CATALOGS.append(self)
         self.official_only = official_only
         self.pinyin, self.ignore_ids, self.refuse_favorites, self.delay, self.hang = pinyin, ignore_ids, refuse_favorites, delay, hang
@@ -495,7 +502,9 @@ def build_friend():
                                                                        [video(3840, 2160, ext="Hdr10", bitrate=24_000_000), audio(1, "eng", "eac3", "Dolby Digital Plus + Dolby Atmos", 6, default=True)]),
                                                                 source("f-dune-1080", "/movies/Dune2/Dune.Part.Two.2024.1080p.mkv", 9.0, 9_000_000, h264(1920, 1080))]),
         copy_of("m0", "f-inter", "星际效应", {"TMDB": "157336"}, [source("f-inter-s", "/movies/Interstellar.2014.2160p.mkv", 40.0, 40_000_000, [video(3840, 2160, ext="DolbyVision", sub="DoviProfile81"), audio(1, "eng", "truehd", "TrueHD + Atmos", 8, default=True)])]),
-        copy_of("m1", "f-blade", "银翼杀手 2049", {"IMDB": "tt1856101"}, [source("f-blade-s", "/movies/BR2049.1080p.mkv", 12.0, 12_000_000, h264(1920, 1080))]),
+        # Another cut (163 minutes against 140): 观看进度回写 sends it played, never a position.
+        copy_of("m1", "f-blade", "银翼杀手 2049", {"IMDB": "tt1856101"}, [source("f-blade-s", "/movies/BR2049.Extended.1080p.mkv", 12.0, 12_000_000, h264(1920, 1080))],
+                RunTimeTicks=163 * 60_000 * TICKS),
         copy_of("testclip", "f-test", "测试片（朋友的服）", {"TMDB": "990001"}),
     ]:
         d["_lib"] = "lib-movies"
@@ -821,12 +830,15 @@ class Emby(BaseHTTPRequestHandler):
             return self.send_json({"count": len(comments), "comments": comments})
 
         if path == "/_mock/stats":
-            return self.send_json({"searches": cat.searches, "requests": cat.requests})
+            return self.send_json({"searches": cat.searches, "requests": cat.requests, "userdata_writes": cat.userdata_writes})
         if path == "/_mock/allstats":  # every server's request counts by kind, by server name
             return self.send_json({c.name: c.requests for c in CATALOGS})
+        if path == "/_mock/userdata":  # every server's user data writes: count and the last 20, by server name
+            return self.send_json({c.name: {"count": len(c.userdata_writes), "last": c.userdata_writes[-20:]} for c in CATALOGS})
         if path == "/_mock/reset":
             for c in CATALOGS:
                 c.requests.clear()
+                c.userdata_writes.clear()
             return self.send_json({"ok": True})
         # bangumi-data stand-in (over 2 MB, like the real ~8 MB dataset) and a tiny Bangumi API for its
         # one real alias, so alias matching can be tested offline. Debug builds read the URL from
@@ -1037,10 +1049,12 @@ class Emby(BaseHTTPRequestHandler):
             d = cat.items.get(parts[3])
             if not d:
                 return self.send_json({}, 404)
+            b = self.body()
+            write = {"item": parts[3], "name": d.get("Name"), "body": b, "status": 403 if cat.refuse_favorites else 200}
+            cat.userdata_writes.append(write)
             if cat.refuse_favorites:
                 print(f"  [{cat.name}] refuses user data write -> 403", flush=True)
                 return self.send_json({"error": "not allowed"}, 403)
-            b = self.body()
             for k in ("PlaybackPositionTicks", "Played", "IsFavorite", "LastPlayedDate"):
                 if k in b:
                     d["UserData"][k] = b[k]

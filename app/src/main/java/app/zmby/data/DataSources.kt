@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** 设置 › 数据来源 (local-data spec): each feature picks its own servers. */
-enum class SourceFeature(val key: String, val label: String) {
+enum class SourceFeature(val key: String, val label: String, val defaultOn: Boolean = true) {
     Aggregate("aggregate", "资源聚合（详情）"),
     Search("search", "搜索来源"),
     WatchHistory("watch", "观看记录来源"),
@@ -15,6 +15,8 @@ enum class SourceFeature(val key: String, val label: String) {
     Segments("segments", "片段标记来源"),
     Favorites("favorites", "收藏数据来源"),
     Stats("stats", "观影统计"),
+    /** 观看进度回写 (cross-server-watch-sync): writes go to other servers, so nothing is written until switched on. */
+    WatchSync("watchsync", "观看进度回写", defaultOn = false),
     ;
 
     /** Segment markers come from providers in order, the rest from servers. */
@@ -48,9 +50,9 @@ object SourceRules {
         else -> "$selected ${if (providers) "个" else "台"}"
     }
 
-    /** A server is in a feature unless switched off there (missing row = on). */
+    /** A server is in a feature unless switched off there (missing row = the feature's default, on except 观看进度回写). */
     fun enabled(rows: Map<String, DataSourceRow>, feature: SourceFeature, server: String): Boolean =
-        rows[rowKey(feature.key, server)]?.enabled ?: true
+        rows[rowKey(feature.key, server)]?.enabled ?: feature.defaultOn
 
     /** Fan-out scope: enabled servers in priority order that are in the feature's source. Cooling ones FanOut skips. */
     fun scope(rows: Map<String, DataSourceRow>, feature: SourceFeature, servers: List<ServerStatus>): List<String> =

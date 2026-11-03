@@ -134,6 +134,9 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     /** 我的 › 追剧日历: TMDB air dates of followed series, cached. */
     lateinit var airing: app.zmby.stats.AiringCalendar
         private set
+    /** 观看进度回写: after a playback, the same film or episode on the other servers chosen for it. */
+    lateinit var watchSync: app.zmby.playback.WatchSync
+        private set
 
     val backups by lazy { app.zmby.backup.BackupRepository(this) }
 
@@ -154,16 +157,19 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         return e
     }
 
-    /** Versions to fall back on per playback request (播放失败自动换源), handed over by token. */
-    private val alternates = java.util.concurrent.ConcurrentHashMap<String, List<app.zmby.playback.Alternate>>()
+    /**
+     * Per playback request, handed over by token: the versions to fall back on (播放失败自动换源) and
+     * the copies of the same film or episode the screen had matched (观看进度回写).
+     */
+    private val handoffs = java.util.concurrent.ConcurrentHashMap<String, PlayHandoff>()
 
-    fun putAlternates(list: List<app.zmby.playback.Alternate>): String? {
-        if (list.isEmpty()) return null
-        if (alternates.size > 8) alternates.clear()
-        return UUID.randomUUID().toString().also { alternates[it] = list }
+    fun putHandoff(alternates: List<app.zmby.playback.Alternate>, copies: List<ServerItem> = emptyList()): String? {
+        if (alternates.isEmpty() && copies.isEmpty()) return null
+        if (handoffs.size > 8) handoffs.clear()
+        return UUID.randomUUID().toString().also { handoffs[it] = PlayHandoff(alternates, copies) }
     }
 
-    fun takeAlternates(token: String?): List<app.zmby.playback.Alternate> = token?.let { alternates.remove(it) }.orEmpty()
+    fun takeHandoff(token: String?): PlayHandoff = token?.let { handoffs.remove(it) } ?: PlayHandoff()
 
     /** The LAN log server; [lanAddress] is what to type on the Mac, or null while it is off. */
     val lanServer = LanServer()
@@ -304,6 +310,17 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         playSessions = app.zmby.stats.PlaySessionRecorder(store)
         me = app.zmby.stats.MeFeed(store, { sources.enabled(SourceFeature.Stats, it) }, { sources.servers(SourceFeature.Stats) }, sources.rows)
         airing = app.zmby.stats.AiringCalendar(catalog, app.zmby.catalog.CatalogResources(library, fanOut), { key -> store.episodeMappings.observe(key).first() })
+        watchSync = app.zmby.playback.WatchSync(
+            allowed = { sources.enabled(SourceFeature.WatchSync, it) && registry.get(it)?.enabled == true },
+            fetch = library::resourceItem,
+            send = { server, id, w -> library.setUserData(server, id, w.positionTicks, w.played) },
+            recorded = { server, id, w -> store.recordSynced(server, id, w.positionTicks, w.played) },
+            refused = { server, code ->
+                sources.set(SourceFeature.WatchSync, server, false)
+                store.sources.upsertSync(app.zmby.store.SyncState(SourceFeature.WatchSync.key, server, System.currentTimeMillis(), "服务器拒绝写入（$code），已关闭"))
+            },
+            name = { library.status(it)?.name ?: it },
+        )
         // No playback survives a new process: what the last run left open ends at its last checkpoint.
         appScope.launch(Dispatchers.IO) { playSessions.closeAbandoned() }
         appScope.launch(Dispatchers.IO) { runCatching { store.trim() }.onFailure { ZLog.w(TAG, "trim failed", it) } }
@@ -443,8 +460,11 @@ class ZmbyApp : Application(), ImageLoaderFactory {
                         record(target)
                     }
                     if (ids.isNotEmpty()) {
+                        // Some servers copy the series' IDs onto every episode: an episode found by ID
+                        // must also carry the same season and episode number.
                         val extra = library.byProviderIds(server, requireNotNull(ref.item.type), ids)
                             .filter { app.zmby.catalog.ResourceMapping.same(ref.item, it) && knownCopies.none { copy -> copy.item.id == it.id } }
+                            .filter { ref.item.type != "Episode" || it.parentIndexNumber == ref.item.parentIndexNumber && it.indexNumber == ref.item.indexNumber }
                         for (item in extra.distinctBy { it.id }) {
                             library.setPlayed(server, item.id, played)
                             record(ServerItem(server, item))
@@ -483,6 +503,12 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         const val SOURCES_MIGRATED = "migration:data_sources"
     }
 }
+
+class PlayHandoff(
+    val alternates: List<app.zmby.playback.Alternate> = emptyList(),
+    /** Every matched copy, the version started included; 观看进度回写 writes the ones on other servers. */
+    val copies: List<ServerItem> = emptyList(),
+)
 
 class ActivePlayback(
     val monitor: PlaybackMonitor, val watchJob: Job, val local: LocalStrmSession?,

@@ -210,7 +210,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                     playItem = playRef?.item,
                     watchedRef = if (ref.server == "catalog") ref.copy(item = ref.item.copy(userData = playRef?.item?.userData)) else playRef ?: ref,
                     instances = versions.instances,
-                    onPlay = { startMs -> playRef?.let { play(context, it, startMs, selected?.source?.id, tracksFor(selected), versions.alternatesTo(selected)) } },
+                    onPlay = { startMs -> playRef?.let { play(context, it, startMs, selected?.source?.id, tracksFor(selected), versions.alternatesTo(selected), versions.copies) } },
                     // Back on the header: scroll all the way up so the title shows again, not just the buttons.
                     onFocused = { accordion.showHeader() },
                     onMarks = { marking = playRef },
@@ -232,7 +232,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                                 library.rememberVersion(Keys.work(server, it), v.server.id, v.source.id)
                             }, onPreview = { v -> preview = v }, onPlay = { card ->
                                 val v = merged.of(card)
-                                play(context, v.ref, v.item.resumeMs, v.source.id, tracksFor(v), versions.alternatesTo(v))
+                                play(context, v.ref, v.item.resumeMs, v.source.id, tracksFor(v), versions.alternatesTo(v), versions.copies)
                             }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
                         }
                     }

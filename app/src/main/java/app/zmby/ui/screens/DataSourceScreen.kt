@@ -75,12 +75,19 @@ private fun Servers(feature: SourceFeature, rows: Map<String, DataSourceRow>) {
     val scope = rememberCoroutineScope()
     val initial = rememberInitialFocus(servers.firstOrNull()?.id)
     val label = remember(rows, servers) { app.sources.label(feature) }
+    // 观看进度回写: why a server was switched off by a refused write.
+    val refusals by androidx.compose.runtime.produceState(emptyMap<String, String>(), feature, rows) {
+        if (feature == SourceFeature.WatchSync) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            app.store.sources.syncs(feature.key).mapNotNull { r -> r.lastError?.let { r.serverId to it } }.toMap()
+        }
+    }
     SettingsGroup(label) {
         servers.forEachIndexed { i, s ->
             // Why a server cannot serve this feature now; it can still be switched for later.
             val reason = when {
                 !s.enabled -> "已停用"
                 feature == SourceFeature.Favorites && s.config.favoriteSync == FavoriteSync.Off -> s.config.favoriteSyncNote?.let { "拒绝写入收藏" } ?: "收藏同步为不同步"
+                feature == SourceFeature.WatchSync && !SourceRules.enabled(rows, feature, s.id) && refusals[s.id] != null -> refusals[s.id]
                 s.health == Health.Off -> "暂时连不上"
                 else -> null
             }

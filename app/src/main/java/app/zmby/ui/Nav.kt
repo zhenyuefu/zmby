@@ -86,13 +86,16 @@ fun resumeMsOf(item: BaseItemDto): Long {
 
 /**
  * Plays [ref] on its own server; progress goes back to that server. [alternates] are the other
- * versions in default order, tried in turn if this one fails to start (播放失败自动换源).
+ * versions in default order, tried in turn if this one fails to start (播放失败自动换源). [copies]
+ * are the same film or episode as matched on screen; after the stop, 观看进度回写 may write to the
+ * ones on other servers.
  */
-fun play(context: Context, ref: ServerItem, startMs: Long, mediaSourceId: String? = null, tracks: TrackChoice = TrackChoice(), alternates: List<app.zmby.playback.Alternate> = emptyList()) {
+fun play(context: Context, ref: ServerItem, startMs: Long, mediaSourceId: String? = null, tracks: TrackChoice = TrackChoice(),
+    alternates: List<app.zmby.playback.Alternate> = emptyList(), copies: List<ServerItem> = emptyList()) {
     require(ref.server != "catalog") { "Catalogue entries have no playback address" }
     val app = context.zmby
     val json = app.library.itemJson(ref.item)
-    context.startActivity(PlaybackActivity.intent(context, ref.server, json, startMs, mediaSourceId, tracks, app.putAlternates(alternates)))
+    context.startActivity(PlaybackActivity.intent(context, ref.server, json, startMs, mediaSourceId, tracks, app.putHandoff(alternates, copies)))
 }
 
 /**

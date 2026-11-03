@@ -127,14 +127,6 @@ class WatchingFeed(private val library: Library, private val fanOut: FanOut, pri
         RemoveOutcome(failed, hidden = !everyServerFailed)
     }
 
-    /** 标记为已观看: the card's current episode or film on the server it plays from, nowhere else. */
-    suspend fun markWatched(card: WatchCard) {
-        val target = card.target ?: return
-        library.setPlayed(target.server, target.item.id, true)
-        store.recordProgress(target.server, target.item.id, 0, played = true)
-        ZLog.i(TAG, "marked ${card.key} watched on ${library.status(target.server)?.name}")
-    }
-
     private suspend fun <T> collect(servers: List<String>, what: String, call: suspend (String) -> T): List<Pair<String, T>> {
         val out = mutableListOf<Pair<String, T>>()
         fanOut.run(servers, FanOut.LIST_TIMEOUT_MS) { call(it) }.collect { o ->

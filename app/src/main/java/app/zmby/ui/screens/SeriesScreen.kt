@@ -348,7 +348,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                 SeriesHeader(ref, display, heading, shown?.item, selected, recCopies,
                     watchedRef = shown?.canonical?.let { ep -> canonical?.let { ServerItem("catalog", it.item(ep).copy(userData = shown.item.userData)) } } ?: selected?.ref,
                     episodeCopies = versions.instances + shown?.resources.orEmpty(),
-                    onPlay = { _, v, start -> v?.let { play(context, it.ref, start, it.source.id, tracks(it), versions.alternatesTo(it)) } },
+                    onPlay = { _, v, start -> v?.let { play(context, it.ref, start, it.source.id, tracks(it), versions.alternatesTo(it), versions.copies) } },
                     playButton = playButton,
                     initialFocusKey = seriesId, onFocusChanged = { headerFocused = it; if (it) accordion.showHeader() },
                     onMarks = { selected?.let { marking = it.ref } },
@@ -398,7 +398,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                             val status = episodeStatus(row.resources, row.canonical?.date, today, searching = pending > 0, failed = failed.isNotEmpty())
                             MediaCard16x9(row.image, onClick = {
                                     currentKey = row.key
-                                    if(row.key == shown?.key && selected != null) play(context,selected.ref,selected.item.resumeMs,selected.source.id,tracks(selected),versions.alternatesTo(selected))
+                                    if(row.key == shown?.key && selected != null) play(context,selected.ref,selected.item.resumeMs,selected.source.id,tracks(selected),versions.alternatesTo(selected), versions.copies)
                                     else row.resources.firstOrNull()?.let { play(context,it,it.item.resumeMs) }
                                 }, width = 340.dp,
                                 topEnd = status.label,
@@ -428,7 +428,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                             ?: SummaryText(if (versions.searching > 0) "正在查找资源…" else "这一集暂无可播放的版本")
                     }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
-                            VersionSection(versions, selected, { picked = it }, { preview = it }, { card -> val v = merged.of(card); play(context, v.ref, v.item.resumeMs, v.source.id, tracks(v), versions.alternatesTo(v)) }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
+                            VersionSection(versions, selected, { picked = it }, { preview = it }, { card -> val v = merged.of(card); play(context, v.ref, v.item.resumeMs, v.source.id, tracks(v), versions.alternatesTo(v), versions.copies) }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
                         }
                     }
                 }

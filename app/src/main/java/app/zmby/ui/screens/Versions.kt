@@ -162,6 +162,8 @@ data class VersionGroup(
     val versions: List<Version>,
     /** 「当前服务器」 or the match reason. */
     val note: String,
+    /** Matched on title and year only (可能匹配): shown and playable, but never written to. */
+    val possible: Boolean = false,
 )
 
 /**
@@ -190,6 +192,9 @@ class VersionsState(
             .take(MAX_ALTERNATES)
             .map { app.zmby.playback.Alternate(it.server.id, it.item, it.source.id, "${it.server.name} · ${versionTitle(it.source)}") }
     }
+
+    /** Every copy matched for certain (one per server item, no 可能匹配), for 观看进度回写. */
+    val copies: List<ServerItem> get() = groups.filterNot { it.possible }.flatMap { g -> g.versions.map { it.ref } }.distinctBy { it.key }
 
     private companion object { const val MAX_ALTERNATES = 6 }
     /** Items of this work on other servers (for favourites). */
@@ -294,7 +299,8 @@ internal fun versionCards(
     fun card(s: ServerStatus, r: ServerVersions.Found) {
         if (r.sources.isEmpty()) return
         val note = r.verdict.reason + if (r.verdict.confidence == Confidence.Possible) " · 可能匹配" else ""
-        groups += VersionGroup(s, uniqueVersions(r.sources.sortedWith(versionOrder).map { Version(s, r.item, it) }), note)
+        groups += VersionGroup(s, uniqueVersions(r.sources.sortedWith(versionOrder).map { Version(s, r.item, it) }), note,
+            possible = r.verdict.confidence != Confidence.Strong)
     }
     for (s in others) {
         when (val r = results[s.id]) {

@@ -99,6 +99,8 @@ class PlaybackActivity : ComponentActivity() {
     private val countdown = mutableStateOf<Int?>(null)
     /** 播放失败自动换源: the other versions in default order, and which were tried. */
     private var alternates: List<Alternate> = emptyList()
+    /** The same film or episode on other servers, as the screen matched it (观看进度回写). */
+    private var copies: List<ServerItem> = emptyList()
     private val tried = mutableSetOf<String>()
     private var requestedStartMs = 0L
     /** Languages of the last playback, for the next episode or another version. */
@@ -157,7 +159,9 @@ class PlaybackActivity : ComponentActivity() {
         lifecycleScope.launch {
             // Normally ready long ago; after the process was killed this screen can come first.
             zmby.awaitReady()
-            alternates = zmby.takeAlternates(intent.getStringExtra(EXTRA_ALTERNATES))
+            val handoff = zmby.takeHandoff(intent.getStringExtra(EXTRA_ALTERNATES))
+            alternates = handoff.alternates
+            copies = handoff.copies
             val json = intent.getStringExtra(EXTRA_ITEM) ?: return@launch fail("缺少播放条目")
             val item = withContext(Dispatchers.Default) { zmby.emby.json.decodeFromString(BaseItemDto.serializer(), json) }
             requestedStartMs = intent.getLongExtra(EXTRA_START_MS, 0)
@@ -235,6 +239,7 @@ class PlaybackActivity : ComponentActivity() {
         next.value = null
         // A new episode: its own versions are not known here, so nothing to fall back on.
         alternates = emptyList()
+        copies = emptyList()
         tried.clear()
         requestedStartMs = ep.resumeMs
         lifecycleScope.launch {
@@ -525,6 +530,9 @@ class PlaybackActivity : ComponentActivity() {
         val outcome = app.appScope.async { active.monitor.finish(result) }
         val item = current
         val playedServer = server
+        val playedVersion = active.prepared.version
+        val matched = copies
+        val startedAt = System.currentTimeMillis() - elapsed
         // The local rows change at once (local-data spec: 从播放器回来时先用本地上报结果更新).
         if (item != null) app.appScope.launch(Dispatchers.IO) {
             val done = outcome.await() ?: return@launch
@@ -534,6 +542,9 @@ class PlaybackActivity : ComponentActivity() {
             // 本地手动标记 › 取上次停止位置.
             done.positionMs?.let { pos -> runCatching { app.segments.recordStop(app.workKeyOf(playedServer, item), pos) } }
             app.onPlayed(ServerItem(playedServer, item), done)
+            if (matched.isNotEmpty()) runCatching {
+                app.watchSync.afterPlayback(ServerItem(playedServer, item), playedVersion?.runTimeTicks?.let(::ticksToMs) ?: item.runtimeMs, done, matched, startedAt)
+            }.onFailure { ZLog.w(TAG, "观看进度回写 failed", it) }
         }
         lifecycleScope.launch {
             // Give the stop report a moment so the screen underneath reloads the new resume point.

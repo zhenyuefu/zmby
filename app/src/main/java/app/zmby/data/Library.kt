@@ -387,6 +387,7 @@ class Library(
 
     suspend fun setPlayed(server: String, id: String, played: Boolean) = emby.setPlayed(session(server), id, played)
     suspend fun clearResume(server: String, id: String) = emby.clearResume(session(server), id)
+    suspend fun setUserData(server: String, id: String, positionTicks: Long?, played: Boolean?) = emby.setUserData(session(server), id, positionTicks, played)
 
     /** 在看: the films and episodes most recently finished on [server], newest first. */
     suspend fun recentlyPlayed(server: String, limit: Int = 60): List<BaseItemDto> = emby.playedItems(session(server), 0, limit, listFields = true).items

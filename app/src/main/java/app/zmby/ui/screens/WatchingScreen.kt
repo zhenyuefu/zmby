@@ -185,13 +185,13 @@ internal fun WatchingMenuHost(card: WatchCard?, nav: Nav, vm: HomeViewModel, onC
     val app = LocalContext.current.zmby
     val feedback = LocalActionFeedback.current
     fun markWatched() {
-        vm.markWatched(card) { error ->
+        vm.markWatched(card) { error, unsynced ->
             if (error != null) feedback?.failure(error) { markWatched() }
             else feedback?.success(watchedNotice(
                 card.target?.item?.indexNumber.takeIf { card.target?.item?.type == "Episode" },
                 played = true,
                 server = card.target?.server?.let { app.registry.get(it)?.name },
-            ))
+            ) + if (unsynced > 0) " · 已存本地，$unsynced 台尚未同步" else "")
         }
     }
     WatchingMenu(
@@ -332,7 +332,7 @@ internal fun rememberWatchingPlayback(nav: Nav): (WatchCard) -> Unit {
                     if (restored == null) nav.open(card.target ?: card.shown)
                     else {
                         val start = WatchThreshold.startPosition(card.startMs, restored.ref.item.runtimeMs, app.settings.watchedPercent.value)
-                        play(context, restored.ref, start, restored.sourceId, restored.tracks)
+                        play(context, restored.ref, start, restored.sourceId, restored.tracks, copies = candidates)
                     }
                 } finally { opening = false }
             }

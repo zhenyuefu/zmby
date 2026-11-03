@@ -84,18 +84,23 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
         }
     }
 
-    /** 标记为已观看 on the server the card plays from. */
-    fun markWatched(card: WatchCard, onDone: (String?) -> Unit) {
+    /**
+     * 标记为已观看, as the detail page's button: the card's episode or film on its server and on
+     * every server holding the same one ([WatchCard.alternates]); [onDone] gets the servers not reached.
+     */
+    fun markWatched(card: WatchCard, onDone: (error: String?, unsynced: Int) -> Unit) {
+        val target = card.target ?: return
         if (!busy.add(card.key)) return
         viewModelScope.launch {
             try {
-                app.home.watching.markWatched(card)
-                onDone(null)
+                val unsynced = app.setWatched(target, true, card.alternates)
+                ZLog.i("Home", "marked ${card.key} watched on ${1 + card.alternates.size} copies, $unsynced server(s) not reached")
+                onDone(null, unsynced)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 ZLog.w("Home", "mark watched failed: ${e.message}")
-                onDone("未能标记为已观看：${card.target?.server?.let { app.registry.get(it)?.name } ?: "服务器"}")
+                onDone("未能标记为已观看：${app.registry.get(target.server)?.name ?: "服务器"}", 0)
             } finally {
                 busy.remove(card.key)
                 refresh()

@@ -414,6 +414,7 @@ private fun sourceGlyph(f: app.zmby.data.SourceFeature): Glyph = when (f) {
     app.zmby.data.SourceFeature.Segments -> Glyph.Skip
     app.zmby.data.SourceFeature.Favorites -> Glyph.Heart
     app.zmby.data.SourceFeature.Stats -> Glyph.Chart
+    app.zmby.data.SourceFeature.WatchSync -> Glyph.Swap
 }
 
 @Composable

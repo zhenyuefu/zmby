@@ -26,6 +26,15 @@ class DataSourcesTest {
         assertEquals(listOf("a", "b"), SourceRules.scope(rows, SourceFeature.Metadata, registry.all))
     }
 
+    @Test fun `观看进度回写 is off for every server until switched on there`() {
+        val registry = ServerRegistry(MemoryRegistryStore(listOf(config("a"), config("b"))))
+        assertEquals(emptyList<String>(), SourceRules.scope(emptyMap(), SourceFeature.WatchSync, registry.all))
+        val rows = listOf(DataSourceRow(SourceFeature.WatchSync.key, "b", enabled = true)).associateBy { SourceRules.rowKey(it.feature, it.source) }
+        assertEquals(listOf("b"), SourceRules.scope(rows, SourceFeature.WatchSync, registry.all))
+        assertFalse(SourceRules.enabled(rows, SourceFeature.WatchSync, "a"))
+        assertTrue("other features stay on by default", SourceRules.enabled(rows, SourceFeature.WatchHistory, "a"))
+    }
+
     @Test fun `the old 允许聚合 switch carries over to aggregation, search and watch history`() {
         val rows = SourceRules.migrate(listOf(config("a"), config("b", aggregate = false)))
         assertEquals(setOf("aggregate", "search", "watch"), rows.map { it.feature }.toSet())
