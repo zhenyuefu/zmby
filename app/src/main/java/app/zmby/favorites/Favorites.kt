@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CancellationException
+import app.zmby.catalog.CatalogId
+import app.zmby.catalog.ResourceMapping
 import app.zmby.store.LocalStore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -95,7 +97,7 @@ object FavoriteLogic {
             instances = known.map { (s, id) -> FavoriteInstance(s, id, old?.instances?.firstOrNull { it.server == s && it.itemId == id }?.synced ?: false) },
             imageTag = lead.item.imageTags["Primary"] ?: old?.imageTag,
         )
-        val writes = known.filter { (s, _) -> policy(s) != FavoriteSync.Off }.map { (s, id) -> PendingWrite(s, id, adding) }
+        val writes = known.filter { (s, _) -> s != "catalog" && policy(s) != FavoriteSync.Off }.map { (s, id) -> PendingWrite(s, id, adding) }
         // A newer intent replaces queued writes for the same item.
         val queue = state.queue.filterNot { q -> writes.any { it.server == q.server && it.itemId == q.itemId } } + writes
         return state.copy(favorites = state.favorites.filterNot { it.workKey == key } + fav, queue = queue)
@@ -182,12 +184,7 @@ class Favorites(
     private val _items = MutableStateFlow(active(state.value))
     val items: StateFlow<List<Favorite>> = _items.asStateFlow()
 
-    /** The latest state to write; conflated, so a burst of changes is one transaction. */
-    private val pending = Channel<FavoritesState>(Channel.CONFLATED)
-
-    init {
-        scope.launch(Dispatchers.IO) { for (next in pending) runCatching { store.saveFavorites(next) }.onFailure { ZLog.w(TAG, "saving favourites failed", it) } }
-    }
+    private val drainLock = Mutex()
 
     /** Reads the favourites from the store (startup, background); the first time, imports the old JSON. */
     suspend fun load() {
@@ -210,10 +207,10 @@ class Favorites(
     private fun policy(server: String): FavoriteSync =
         if (!inSource(server)) FavoriteSync.Off else library.status(server)?.config?.favoriteSync ?: FavoriteSync.Off
 
-    private fun save(next: FavoritesState) {
+    private suspend fun save(next: FavoritesState) {
+        store.saveFavorites(next)
         state.value = next
         _items.value = active(next)
-        pending.trySend(next)
     }
 
     fun isFavorite(ref: ServerItem): Boolean = _items.value.any { f ->
@@ -231,17 +228,45 @@ class Favorites(
         val all = if (lead === ref) instances else listOf(lead)
         lock.withLock { save(FavoriteLogic.toggle(state.value, lead, all, clock(), ::policy)) }
         ZLog.i(TAG, "${if (isFavorite(lead)) "added" else "removed"} ${lead.item.name} (${all.size} instances)")
-        scope.launch(Dispatchers.IO) { drain() }
+        scope.launch(Dispatchers.IO) {
+            if (lead.server == "catalog") discover(lead)
+            drain()
+        }
+    }
+
+    /** Discover the work independently of the currently rendered version list. Re-read the
+     * local intent under the lock so a slow lookup cannot undo a newer removal. */
+    private suspend fun discover(ref: ServerItem) {
+        val ids = ref.item.providerIds.map { (k, id) -> "${k.lowercase()}.$id" }
+        val type = ref.item.type ?: return
+        if (ids.isEmpty()) return
+        val key = Keys.work(ref.server, ref.item)
+        val targets = library.registry.enabled.map { it.id }.filter { policy(it) != FavoriteSync.Off }
+        fanOut.run(targets, FanOut.SEARCH_TIMEOUT_MS, listOf("favorite-instances", key), FanOut.RESOURCE_CACHE_MS) { server ->
+            library.byProviderIds(server, type, ids).filter { ResourceMapping.same(ref.item, it) }.map { it.id }.distinct()
+        }.collect { result ->
+            if (result !is Outcome.Ok) return@collect
+            lock.withLock {
+                val state = state.value
+                val old = FavoriteLogic.find(state, key) ?: return@withLock
+                val extra = result.value.filter { id -> old.instances.none { it.server == result.server && it.itemId == id } }
+                if (extra.isEmpty()) return@withLock
+                val updated = old.copy(instances = old.instances + extra.map { FavoriteInstance(result.server, it) })
+                save(state.copy(favorites = state.favorites - old + updated,
+                    queue = state.queue + extra.map { PendingWrite(result.server, it, old.active) }))
+            }
+        }
     }
 
     /** Sends queued writes to servers whose policy allows it; a refusing server is switched to 不同步. */
-    suspend fun drain() {
+    suspend fun drain() = drainLock.withLock {
         val writes = lock.withLock { state.value.queue.toList() }
         for (w in writes) {
-            if (policy(w.server) == FavoriteSync.Off || library.status(w.server)?.enabled != true) continue
+            if (w !in state.value.queue || policy(w.server) == FavoriteSync.Off || library.status(w.server)?.enabled != true) continue
             val result = try {
                 library.setFavorite(w.server, w.itemId, w.favorite)
                 WriteResult.Ok
+            } catch (e: CancellationException) { throw e
             } catch (e: EmbyException) {
                 if (FavoriteLogic.refusal(e.code)) WriteResult.Refused(e.code!!) else WriteResult.Error(e.message.orEmpty())
             } catch (e: Exception) {
@@ -271,6 +296,12 @@ class Favorites(
                 is Outcome.Failed -> ZLog.w(TAG, "pull from ${library.status(o.server)?.name} failed: ${o.error.message}")
                 is Outcome.Skipped -> Unit
             }
+        }
+        for (fav in state.value.favorites) {
+            val anchor = fav.instances.firstOrNull { it.server == "catalog" } ?: continue
+            val id = CatalogId.fromItemId(anchor.itemId) ?: continue
+            discover(ServerItem("catalog", BaseItemDto(anchor.itemId, name = fav.title, type = fav.type,
+                productionYear = fav.year, providerIds = mapOf(id.source to id.id))))
         }
         drain()
     }

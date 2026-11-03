@@ -97,6 +97,8 @@ fun ActionIconButton(
     dot: Boolean = false,
     /** Read-only status queries must not prevent opening their search/editor panel. */
     allowWhileBusy: Boolean = false,
+    /** The glyph's opacity at rest (弹幕 · 已关闭 is 55 % white, ui-spec §2.19); focus is always full. */
+    restingGlyphAlpha: Float = 1f,
 ) {
     var focused by remember { mutableStateOf(false) }
     Box(modifier.onFocusChanged { focused = it.hasFocus }) {
@@ -121,7 +123,8 @@ fun ActionIconButton(
                     contentAlignment = Alignment.Center,
                 ) {
                     if (look.spinner) Spinner(30.dp)
-                    else Icon(glyph, size = 28.dp, strokeWidth = 2.4f, fill = glyph.filled || look.solidGlyph && solidWhenOn)
+                    else Icon(glyph, size = 28.dp, strokeWidth = 2.4f, fill = glyph.filled || look.solidGlyph && solidWhenOn,
+                        color = LocalContentColor.current.let { if (look.white) it else it.copy(alpha = it.alpha * restingGlyphAlpha) })
                     if (dot && !look.spinner) {
                         // `.dot`: 12 px at top 8 · right 8, with a 3 px dark ring around it.
                         Box(

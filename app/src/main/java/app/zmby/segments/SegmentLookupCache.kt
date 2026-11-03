@@ -14,6 +14,8 @@ class SegmentLookupCache(clock: () -> Long = { System.nanoTime() / 1_000_000 }) 
         val revision: Long,
         val connection: ServerSession? = null,
         val providerKey: String? = null,
+        /** The version played, when known (its own item may carry the Emby markers). */
+        val version: String? = null,
     )
     private val cache = RequestCache<Key, SegmentLookup>(128, {
         when {

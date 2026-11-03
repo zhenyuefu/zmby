@@ -47,6 +47,18 @@ fun ServerItem.withPlaybackProgress(progress: Map<String, app.zmby.emby.UserItem
     return copy(item = item.copy(userData = data))
 }
 
+/** Two sets of progress records by [ServerItem.key]: per key the one played last; one without a time loses. */
+fun newestProgress(a: Map<String, app.zmby.emby.UserItemData>, b: Map<String, app.zmby.emby.UserItemData>): Map<String, app.zmby.emby.UserItemData> {
+    if (a.isEmpty()) return b
+    if (b.isEmpty()) return a
+    fun time(value: app.zmby.emby.UserItemData?) = value?.lastPlayedDate?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+    return (a.keys + b.keys).associateWith { k ->
+        val x = a[k]; val y = b[k]
+        val tx = time(x); val ty = time(y)
+        if (x == null || tx == null || ty != null && ty >= tx) y ?: x!! else x
+    }
+}
+
 data class LibraryView(val server: String, val id: String, val name: String, val collectionType: String?, val onHome: Boolean, val inSearch: Boolean)
 
 /**

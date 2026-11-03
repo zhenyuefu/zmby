@@ -34,6 +34,7 @@ internal data class DanmuTexture(val bitmap: Bitmap, val insetX: Float, val base
 internal class DanmuTextRenderer(
     private val scope: CoroutineScope,
     private val workerDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val fontSize: Int = 34,
     private val onReady: () -> Unit,
 ) {
     private data class Request(val comments: List<Danmaku>, val active: List<Danmaku>, val positionMs: Long)
@@ -85,7 +86,7 @@ internal class DanmuTextRenderer(
         val chip = chipText
         job = scope.launch {
             try {
-                val painter = withContext(workerDispatcher) { TextPainter(painterScale, chip) }
+                val painter = withContext(workerDispatcher) { TextPainter(painterScale, chip, fontSize) }
                 val plan = withContext(workerDispatcher) {
                     val needed = LinkedHashSet<DanmuTextKey>()
                     for (d in request.active) needed += DanmuTextKey(d.text, d.color)
@@ -141,9 +142,9 @@ internal class DanmuTextRenderer(
         }
     }
 
-    private class TextPainter(scale: Float, chipText: String) {
+    private class TextPainter(scale: Float, chipText: String, fontSize: Int) {
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 34 * scale
+            textSize = fontSize * scale
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
         private val stroke = Paint(fill).apply {

@@ -109,6 +109,8 @@ def item(iid, name, typ, year=None, runtime_min=None, overview="", genres=(), co
 
 COLORS = {}
 ITEMS = {}
+# Items reachable by id only (another cut's own item), never listed.
+HIDDEN = {}
 VIDEO = None
 OPTS = {"direct_stream_url": True, "range_only_under_emby": False, "pinyin": False,
         "redirect": False, "signed_port": 8097, "sign_ttl": 60, "require_ua": None, "throttle_kbps": 0,
@@ -993,7 +995,7 @@ class Emby(BaseHTTPRequestHandler):
                 return self.send_json({"Items": [], "TotalRecordCount": len(res)})
             return self.send_json(page_of([brief(d, people=with_people) for d in res], q))
         if len(parts) == 4 and parts[:3] == ["Users", USER, "Items"]:
-            d = cat.items.get(parts[3]) or cat.persons.get(parts[3])
+            d = cat.items.get(parts[3]) or (HIDDEN.get(parts[3]) if cat is MAIN else None) or cat.persons.get(parts[3])
             return self.send_json(brief(d, keep_sources=True)) if d else self.send_json({}, 404)
         if path.startswith("/Shows/") and path.endswith("/Seasons"):
             sid = parts[1]
@@ -1215,7 +1217,7 @@ def main():
                     help="answer only official Emby clients (User-Agent and client name), 403 HTML page for anything else")
     ap.add_argument("--suggestions", choices=("on", "404", "empty"), default="on",
                     help="Suggestions and Movies/Recommendations on 家里 NAS: answered, missing (404) or empty")
-    ap.add_argument("--segments", action="store_true", help="intro and credits markers on 漫长的季节 (for a 5-minute fake video)")
+    ap.add_argument("--segments", action="store_true", help="intro and credits markers on 漫长的季节 (for a 5-minute fake video) and on three cuts of 奥本海默")
     ap.add_argument("--multi", action="store_true",
                     help="also run five more servers that disagree with this one, on --port+2 … --port+6 (see MULTI below)")
     a = ap.parse_args()
@@ -1239,6 +1241,23 @@ def main():
                 {"Name": "正片", "StartPositionTicks": 70_000 * TICKS, "MarkerType": "IntroEnd"},
                 {"Name": "片尾", "StartPositionTicks": 240_000 * TICKS, "MarkerType": "CreditsStart"},
             ]
+        # Three cuts of 奥本海默 with their own markers, as Emby lists them: each source names its item
+        # (ItemId, the source ID never being an item ID). The theatrical and extended sources carry their
+        # chapters; the IMAX one does not, its chapters are only on its own (unlisted) item.
+        def marks(intro_end_s, credits_s):
+            return [{"Name": "片头结束", "StartPositionTicks": intro_end_s * 1000 * TICKS, "MarkerType": "IntroEnd"},
+                    {"Name": "片尾", "StartPositionTicks": credits_s * 1000 * TICKS, "MarkerType": "CreditsStart"}]
+        opp = ITEMS["oppen"]
+        theatrical = opp["MediaSources"][0]
+        theatrical.update(Id="mediasource_oppen", ItemId="oppen", RunTimeTicks=180 * 60_000 * TICKS, Chapters=marks(60, 170 * 60))
+        extended = dict(theatrical, Id="mediasource_oppen-ext", ItemId="oppen-ext", RunTimeTicks=200 * 60_000 * TICKS, Chapters=marks(120, 190 * 60),
+                        Name="Oppenheimer.2023.Extended.2160p.mkv", Path="/movies/Oppenheimer.2023.Extended.2160p.mkv")
+        imax = {k: v for k, v in theatrical.items() if k != "Chapters"}
+        imax.update(Id="9f2c4e6a8b0d1f3e5a7c9e1b3d5f7a9c", ItemId="oppen-imax", RunTimeTicks=190 * 60_000 * TICKS,
+                    Name="Oppenheimer.2023.IMAX.2160p.mkv", Path="/movies/Oppenheimer.2023.IMAX.2160p.mkv")
+        opp["MediaSources"] = [theatrical, extended, imax]
+        opp["Chapters"] = marks(60, 170 * 60)
+        HIDDEN["oppen-imax"] = dict(opp, Id="oppen-imax", RunTimeTicks=190 * 60_000 * TICKS, Chapters=marks(90, 180 * 60), MediaSources=[imax])
 
     def serve(host, port, handler, cat):
         srv = ThreadingHTTPServer((host, port), handler)

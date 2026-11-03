@@ -6,6 +6,23 @@ import org.junit.Test
 
 /** Unit checks of the danmu2ass port; byte parity with the CLI is in [DanmuAssParityTest]. */
 class DanmuAssTest {
+    @Test fun `fixed comments stay centered on separate lanes and expire on both renderers`() {
+        val list = listOf(requireNotNull(DanmuText.parse("0,5,255", "顶")), requireNotNull(DanmuText.parse("0,4,255", "底")),
+            Danmaku(0, "滚动"))
+        val stage = DanmuStage(list, { 100f }, 1920f, 2, 20f)
+        stage.update(0)
+        assertEquals(listOf(0, 0, 1), stage.active.map { it.row })
+        assertEquals(910f, stage.x(stage.active.first(), 2000), 0f)
+        stage.update(DanmuStage.FIXED_MS)
+        assertEquals(listOf("滚动"), stage.active.map { it.danmaku.text })
+
+        val config = DanmuAss.Config.of(2, 100, fontSize = 30, lineGap = 4, topMargin = 12)
+        val ass = DanmuAss.build(DanmuAss.items(list), config)
+        assertTrue(ass.contains("0:00:04.00,Top,,0,0,0,,{\\an8\\pos(960, 12)"))
+        assertTrue(ass.contains(",Bottom,,0,0,0,,{\\an2\\pos(960, 1068)"))
+        assertTrue(ass.contains("\\move(1920, 46,"))
+    }
+
     @Test fun `text length is danmu2ass's thirds of an em times the width ratio`() {
         val c = DanmuAss.Config(fontSize = 42, widthRatio = 1.2)
         // 4 non-ASCII (3 each) + 2 ASCII (2 each) = 16 thirds: 42 × 16 / 3 = 224 (integer), × 1.2.

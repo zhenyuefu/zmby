@@ -82,6 +82,8 @@ class DanmuStage(
     private val placed = ArrayList<Placed>()
     private val rowTail = arrayOfNulls<Placed>(rows)
 
+    private val bottomTail = arrayOfNulls<Placed>(rows)
+
     val size: Int get() = comments.size
     val active: List<Placed> get() = placed
     val nextTimeMs: Long? get() = comments.getOrNull(next)?.timeMs
@@ -95,11 +97,12 @@ class DanmuStage(
             if (age > LATE_MS) { next++; continue }
             val start = renderTimeMs - age
             var row = 0
-            while (row < rows && !free(rowTail[row], start)) row++
+            val tails = if (d.position == DanmuPosition.Bottom) bottomTail else rowTail
+            while (row < rows && !free(tails[row], d.position, start)) row++
             if (row == rows) { next++; continue }
             val width = widthOf(d) ?: break
             val p = Placed(d, row, start, width)
-            rowTail[row] = p
+            tails[row] = p
             placed += p
             next++
         }
@@ -107,7 +110,7 @@ class DanmuStage(
         var i = 0
         while (i < placed.size) {
             val p = placed[i++]
-            if (x(p, renderTimeMs) + p.widthPx >= 0) placed[kept++] = p
+            if (visible(p, renderTimeMs)) placed[kept++] = p
         }
         while (placed.size > kept) placed.removeAt(placed.lastIndex)
     }
@@ -129,14 +132,22 @@ class DanmuStage(
     fun reset(positionMs: Long) {
         placed.clear()
         rowTail.fill(null)
+        bottomTail.fill(null)
         next = lowerBound(positionMs)
         initialized = true
     }
 
-    private fun free(tail: Placed?, atMs: Long): Boolean =
-        tail == null || x(tail, atMs) + tail.widthPx + gapPx <= screenPx
+    private fun visible(p: Placed, time: Long) = if (p.danmaku.position == DanmuPosition.Scroll)
+        x(p, time) + p.widthPx >= 0 else time - p.startMs < FIXED_MS
 
-    fun x(p: Placed, renderTimeMs: Long): Float = screenPx - (renderTimeMs - p.startMs) * screenPx / CROSS_MS
+    private fun free(tail: Placed?, position: DanmuPosition, atMs: Long): Boolean = when {
+        tail == null -> true
+        position != DanmuPosition.Scroll || tail.danmaku.position != DanmuPosition.Scroll -> !visible(tail, atMs)
+        else -> x(tail, atMs) + tail.widthPx + gapPx <= screenPx
+    }
+
+    fun x(p: Placed, renderTimeMs: Long): Float = if (p.danmaku.position != DanmuPosition.Scroll)
+        (screenPx - p.widthPx) / 2 else screenPx - (renderTimeMs - p.startMs) * screenPx / CROSS_MS
 
     private fun lowerBound(t: Long): Int {
         var lo = 0
@@ -150,6 +161,7 @@ class DanmuStage(
 
     companion object {
         /** A comment crosses the screen in this long. */
+        const val FIXED_MS = 4_000L
         const val CROSS_MS = 8_000f
         /** One still not placed this long after its time is dropped. */
         const val LATE_MS = 1_000L

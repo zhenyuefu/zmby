@@ -51,6 +51,32 @@ enum class DanmuMode(val label: String) { Overlay("浮层"), Subtitle("播放器
 /** Quality preference for the default version (settings › 播放 › 版本选择). */
 enum class QualityPreference(val label: String) { UHD("4K"), FHD("1080p"), Auto("自动") }
 
+/** 画质偏好 › HDR 格式 (ui-spec §2.22), ranked by the user; [SDR] also stands for no HDR. */
+enum class HdrFormat(val label: String) {
+    DolbyVision("杜比视界"), HDR10Plus("HDR10+"), HDR10("HDR10"), HLG("HLG"), SDR("SDR");
+
+    companion object {
+        /** The stored order (comma-separated names): unknown names dropped, missing formats appended in default order. */
+        fun parse(raw: String): List<HdrFormat> {
+            val named = raw.split(',').mapNotNull { n -> entries.firstOrNull { it.name == n.trim() } }.distinct()
+            return named + entries.filter { it !in named }
+        }
+        fun store(order: List<HdrFormat>): String = parse(order.joinToString(",") { it.name }).joinToString(",") { it.name }
+    }
+}
+
+/** 画质偏好 › 画幅 › IMAX. */
+enum class ImaxMode(val label: String) { Prefer("优先"), Neutral("不区分"), Avoid("避开") }
+
+/** 画质偏好 › 码率 › 同档码率. */
+enum class BitrateOrder(val label: String) { High("高优先"), Low("低优先") }
+
+/** 画质偏好 › 编码与文件 › 视频编码: the avoided codec sorts last within its tier. */
+enum class CodecAvoid(val label: String) { None("不区分"), AV1("避开 AV1"), H264("避开 H.264") }
+
+/** 画质偏好 › 排序方式: picture before server priority, or the other way round. */
+enum class RankOrder(val label: String) { Quality("画质优先"), Route("线路优先") }
+
 /** App-wide preferences shown on the settings screen. Construct off the main thread (it reads the file). */
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -72,6 +98,8 @@ class Settings(context: Context) {
     private fun skipMode(key: String) = registered(Pref(prefs, key, app.zmby.segments.SkipMode.Auto,
         { k, d -> getString(k, null)?.let { runCatching { app.zmby.segments.SkipMode.valueOf(it) }.getOrNull() } ?: d }, { k, v -> putString(k, v.name) }))
     private fun bool(key: String, default: Boolean) = registered(Pref(prefs, key, default, { k, d -> getBoolean(k, d) }, { k, v -> putBoolean(k, v) }))
+    private inline fun <reified E : Enum<E>> enumPref(key: String, default: E) = registered(Pref(prefs, key, default,
+        { k, d -> getString(k, null)?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: d }, { k, v -> putString(k, v.name) }))
     private fun string(key: String, default: String) = registered(Pref(prefs, key, default, { k, d -> getString(k, d) ?: d }, { k, v -> putString(k, v) }))
 
     /** Serve the debug log on the LAN (on by default in debug builds). */
@@ -117,6 +145,11 @@ class Settings(context: Context) {
     /** The one-time 播放器字幕 guide (how to switch the player's 双字幕模式 on) has been confirmed. */
     val danmuDualGuideSeen = bool("danmu_dual_guide_seen", false)
     /** 弹幕 lines at the top of the screen (1–5). */
+    private fun pixels(key: String, default: Int, range: IntRange) = registered(Pref(prefs, key, default,
+        { k, d -> getInt(k, d) }, { k, v -> putInt(k, v) }, normalize = { it.coerceIn(range) }))
+    val danmuFontSize = pixels("danmu_font_size", 34, 20..60)
+    val danmuLineGap = pixels("danmu_line_gap", 4, 0..24)
+    val danmuTopMargin = pixels("danmu_top_margin", 12, 0..80)
     val danmuRows = registered(Pref(prefs, "danmu_rows", 3, { k, d -> getInt(k, d) }, { k, v -> putInt(k, v) }, normalize = { it.coerceIn(1, 5) }))
     /** 弹幕 opacity in percent. */
     val danmuOpacity = registered(Pref(prefs, "danmu_opacity", 100, { k, d -> getInt(k, d) }, { k, v -> putInt(k, v) }, normalize = { it.coerceIn(20, 100) }))
@@ -148,6 +181,18 @@ class Settings(context: Context) {
     /** Default version (播放 › 版本选择). */
     val quality = registered(Pref(prefs, "quality", QualityPreference.Auto, { k, d -> getString(k, null)?.let { runCatching { QualityPreference.valueOf(it) }.getOrNull() } ?: d }, { k, v -> putString(k, v.name) }))
     val preferNonDisc = bool("prefer_non_disc", true)
+    /** 画质偏好 (ui-spec §2.22). Off: versions below [quality] sort last and show dimmed. */
+    val acceptLowerResolution = bool("accept_lower_resolution", true)
+    val hdrOrder = registered(Pref(prefs, "hdr_order", HdrFormat.store(HdrFormat.entries), { k, d -> getString(k, d) ?: d }, { k, v -> putString(k, v) },
+        normalize = { HdrFormat.store(HdrFormat.parse(it)) }))
+    val imaxMode = enumPref("imax_mode", ImaxMode.Neutral)
+    /** 码率上限 in Mbps, 0 = 不限. */
+    val bitrateCapMbps = registered(Pref(prefs, "bitrate_cap_mbps", 0, { k, d -> getInt(k, d) }, { k, v -> putInt(k, v) }, normalize = { it.coerceIn(0, 1000) }))
+    val bitrateOrder = enumPref("bitrate_order", BitrateOrder.High)
+    val codecAvoid = enumPref("codec_avoid", CodecAvoid.None)
+    val preferLossless = bool("prefer_lossless", true)
+    /** Default 线路优先: server priority before picture, as zmby ranked before §2.22. */
+    val rankOrder = enumPref("rank_order", RankOrder.Route)
     /** Marks the preferred version by file or source name, e.g. `2160p.*REMUX`; never filters. Empty = off. */
     val versionPattern = string("version_pattern", "")
     /** PublicMetaDB's API key (片段标记来源); typed by the user, PublicMetaDB stays off without it. */

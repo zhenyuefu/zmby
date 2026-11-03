@@ -14,6 +14,15 @@ class FavoriteLogicTest {
     private val policies = mapOf("a" to FavoriteSync.TwoWay, "b" to FavoriteSync.PushOnly, "c" to FavoriteSync.Off)
     private fun policy(s: String) = policies[s] ?: FavoriteSync.Off
 
+    @Test fun `a catalog work can be saved before resources arrive and only real copies receive writes`() {
+        val catalog = ServerItem("catalog", dune.copy(id = "catalog:tmdb:movie:693134"))
+        val local = FavoriteLogic.toggle(FavoritesState(), catalog, listOf(catalog), 1) { FavoriteSync.TwoWay }
+        assertTrue(local.favorites.single().active)
+        assertTrue(local.queue.isEmpty())
+        val removed = FavoriteLogic.toggle(local, catalog, listOf(catalog, ServerItem("a", dune), ServerItem("b", duneB)), 2, ::policy)
+        assertEquals(listOf(PendingWrite("a", "d1", false), PendingWrite("b", "x9", false)), removed.queue)
+    }
+
     @Test fun `favouriting is local first and queues writes per policy`() {
         val s = FavoriteLogic.toggle(FavoritesState(), ServerItem("a", dune), listOf(ServerItem("a", dune), ServerItem("b", duneB), ServerItem("c", BaseItemDto(id = "c1", type = "Movie"))), 100, ::policy)
         assertTrue(s.favorites.single().active)

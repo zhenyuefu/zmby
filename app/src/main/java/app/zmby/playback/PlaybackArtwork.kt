@@ -14,7 +14,7 @@ import java.io.File
 import java.net.InetAddress
 import java.util.UUID
 
-data class PlaybackImages(val backdrop: String? = null, val logo: String? = null)
+data class PlaybackImages(val backdrop: String? = null, val logo: String? = null, val originalLanguage: String? = null)
 
 /** Resolves only already known metadata and image bytes. Episode IDs are never mistaken for series IDs. */
 class PlaybackArtworkResolver(
@@ -48,6 +48,7 @@ class PlaybackArtworkResolver(
         PlaybackImages(
             serve((listOfNotNull(work?.backdrop) + resources.mapNotNull(backdrop)).distinct()),
             serve((listOfNotNull(work?.logo) + resources.mapNotNull(logo)).distinct()),
+            resource.originalLanguage ?: work?.originalLanguage ?: saved?.originalLanguage ?: parent?.originalLanguage,
         )
     }
 }

@@ -149,6 +149,19 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
     suspend fun detail(server: String, itemId: String): ServerItem? = works.instance(server, itemId)?.let { decode(it, full = true) }
 
     /**
+     * The stored user data of [refs] by [ServerItem.key], as it changes: what the 在看 lists and
+     * stop reports last wrote (list rows, not the older detail copy).
+     */
+    fun progressFlow(refs: List<ServerItem>): Flow<Map<String, app.zmby.emby.UserItemData>> {
+        val keys = refs.map { it.key }.toSet()
+        if (keys.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyMap())
+        return works.instancesFlow(refs.map { it.item.id }.distinct()).map { rows ->
+            rows.filter { "${it.serverId}:${it.itemId}" in keys }
+                .mapNotNull { row -> decode(row)?.let { ref -> ref.item.userData?.let { ref.key to it } } }.toMap()
+        }.distinctUntilChanged().flowOn(Dispatchers.Default)
+    }
+
+    /**
      * Stores a full item (detail page); returns its work key. Canonical metadata comes from
      * TMDB / Bangumi (catalog); server copies are never merged across servers.
      */
@@ -167,6 +180,8 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
     // ---- versions
 
     suspend fun versions(forKey: String): List<VersionSummary> = versionDao.versions(forKey)
+
+    suspend fun recentVersionKeys(limit: Int = 30): List<String> = versionDao.recentKeys(limit)
 
     suspend fun putVersion(forKey: String, server: String, item: BaseItemDto, sources: List<MediaSourceInfo>, reason: String, possible: Boolean) {
         versionDao.upsert(listOf(VersionSummary(

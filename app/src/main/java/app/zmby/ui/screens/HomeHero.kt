@@ -324,21 +324,18 @@ private fun HeroInfo(ref: ServerItem, full: BaseItemDto?, label: String?) {
     val library = app.library
     val item = ref.item
     val isEpisode = item.type == "Episode"
-    val pattern by app.settings.versionPattern.flow.collectAsState()
-    val quality by app.settings.quality.flow.collectAsState()
-    val nonDisc by app.settings.preferNonDisc.flow.collectAsState()
+    val rankPrefs = rememberVersionPrefs()
     val audioLanguage by app.settings.audioLanguage.flow.collectAsState()
     val resumeTick = rememberResumeTick()
     // Only this item's known sources; do not mix capabilities from different versions or servers.
     val badges by key(ref.key, full) {
-        produceState<List<String>>(emptyList(), pattern, quality, nonDisc, audioLanguage, resumeTick) {
+        produceState<List<String>>(emptyList(), rankPrefs, audioLanguage, resumeTick) {
             value = withContext(Dispatchers.Default) {
                 val manual = library.pickedVersion(Keys.work(ref.server, full ?: item) + episodeSuffix(full ?: item))
-                val source = VersionRanker.bestSource(ref.server, full?.mediaSources.orEmpty(), VersionPrefs(
-                    manual = manual, pattern = VersionPrefs.pattern(pattern), quality = quality, preferNonDisc = nonDisc,
-                ))
-                val audio = source?.let { TrackPreference.choose(it, TrackChoice(), audioLanguage, TrackPreference.SERVER).audio }
-                heroBadges(source, audio)
+                val sources = full?.mediaSources.orEmpty()
+                val source = VersionRanker.bestSource(ref.server, sources, rankPrefs.copy(manual = manual))
+                val audio = source?.let { TrackPreference.choose(it, TrackChoice(), audioLanguage, TrackPreference.SERVER, (full ?: item).originalLanguage).audio }
+                heroBadges(source, audio, imax = source != null && VersionRanker.imaxRule(sources)(source))
             }
         }
     }

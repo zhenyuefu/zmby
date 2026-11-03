@@ -8,6 +8,14 @@ import kotlinx.serialization.json.*
 data class CatalogId(val source: String, val kind: String, val id: String) {
     init { require(source in setOf("tmdb", "bangumi") && kind in setOf("movie", "tv") && id.toLongOrNull()?.let { it > 0 } == true) }
     val key: String get() = "$source:$kind:$id"
+
+    companion object {
+        fun fromItemId(itemId: String): CatalogId? {
+            if (!itemId.startsWith("catalog:")) return null
+            val parts = itemId.removePrefix("catalog:").split(':')
+            return if (parts.size == 3) runCatching { CatalogId(parts[0], parts[1], parts[2]) }.getOrNull() else null
+        }
+    }
 }
 @Serializable
 data class CatalogPerson(val source: String, val id: String, val name: String, val role: String = "", val image: String? = null) {
@@ -25,9 +33,10 @@ data class CatalogWork(
     val seasons: List<CatalogSeason> = emptyList(), val cast: List<CatalogPerson> = emptyList(),
     val ids: Map<String, String> = emptyMap(),
     val aliases: List<String> = emptyList(),
+    val originalLanguage: String? = null,
 ) {
     fun item() = BaseItemDto(id = "catalog:${ref.key}", name = title, originalTitle = originalTitle,
-        type = if (ref.kind == "movie") "Movie" else "Series", productionYear = year, providerIds = ids)
+        type = if (ref.kind == "movie") "Movie" else "Series", productionYear = year, providerIds = ids, originalLanguage = originalLanguage)
     fun item(ep: CatalogEpisode) = BaseItemDto(id = "catalog:${ref.key}:${ep.id}", type = "Episode", name = ep.title,
         seriesId = item().id, seriesName = title, parentIndexNumber = ep.season, indexNumber = ep.number,
         providerIds = if (ref.source == "tmdb") mapOf("Tmdb" to ep.id) else mapOf("Bangumi" to ep.id))

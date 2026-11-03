@@ -101,15 +101,13 @@ data class TrackChoice(val audio: Int? = null, val subtitle: Int? = null)
 
 /**
  * 弹幕 as the player's second subtitle for one playback (danmu design: 播放器字幕): the comments,
- * waited for at most [waitMs] before the player starts, and the danmu2ass settings to write them with.
+ * and the layout used to generate the file before launch. [waitMs] optionally bounds the wait.
  */
 class DanmuSubtitle(
     val comments: suspend () -> List<app.zmby.danmu.Danmaku>?,
     val config: app.zmby.danmu.DanmuAss.Config,
-    val waitMs: Long = DEFAULT_WAIT_MS,
-) {
-    companion object { const val DEFAULT_WAIT_MS = 8_000L }
-}
+    val waitMs: Long? = null,
+)
 
 class PlaybackPreparer(
     private val client: EmbyClient,
@@ -144,11 +142,11 @@ class PlaybackPreparer(
         val info = client.playbackInfo(session, item.id, startPositionMs, mediaSourceId)
         info.errorCode?.let { throw EmbyException("服务器拒绝播放（$it）") }
         val source = chooseSource(info.mediaSources, mediaSourceId ?: EpisodeContinuation.source(info.mediaSources, preferredVersion)?.id)
-        val tracks = TrackPreference.choose(source, picked, audioLanguage, subtitleLanguage)
         val runTimeTicks = source.runTimeTicks ?: item.runTimeTicks
         val images = try { artwork(session, item) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { ZLog.w(TAG, "cached playback artwork unavailable", e); PlaybackImages() }
+        val tracks = TrackPreference.choose(source, picked, audioLanguage, subtitleLanguage, item.originalLanguage ?: images.originalLanguage)
         val direct = StreamUrls.direct(session.baseUrl, source, session.accessToken)
         val directUrl = checkedUrl(session, direct ?: client.streamUrl(session, item.id, source, info.playSessionId))
         val transport = caps.get(session.capsKey).relay
@@ -205,14 +203,16 @@ class PlaybackPreparer(
                 val reporter = EmbyPlaybackReporter(client, session, item.id, source.id, info.playSessionId, runTimeTicks)
                 val languages = TrackPreference.carried(source, tracks, audioLanguage, subtitleLanguage)
                 return PreparedPlayback(
-                    launch, reporter, attemptStartMs, runTimeTicks?.let(::ticksToMs), local, languages,
+                    launch, reporter, attemptStartMs, runTimeTicks?.let(::ticksToMs), local, TrackLanguages(
+                        if (picked.audio == null && audioLanguage != TrackPreference.SERVER) audioLanguage else languages.audio,
+                        if (picked.subtitle == null && subtitleLanguage != TrackPreference.SERVER) subtitleLanguage else languages.subtitle),
                     retryWithRelay = if (!relayed && transport == Override.Auto && relay != null) ({ resumeMs ->
                         check(retryUsed.compareAndSet(false, true)) { "Relay retry already used" }
                         build(true, resumeMs)
                     }) else null,
                     statusPaths = setOfNotNull(url, local?.uri),
                     releaseRelay = { relayUrl?.let { relay?.unregister(it) } },
-                    selection = PlaybackSelection.capture(source, tracks),
+                    selection = PlaybackSelection.capture(source, picked),
                     version = source,
                 )
             } catch (e: Exception) {
@@ -258,7 +258,7 @@ class PlaybackPreparer(
         session: ServerSession, item: BaseItemDto, source: MediaSourceInfo, tracks: TrackChoice,
         url: String, danmu: DanmuSubtitle, localStrm: LocalStrmPreparer,
     ): LocalStrmSession? {
-        val comments = withTimeoutOrNull(danmu.waitMs) { danmu.comments() }
+        val comments = if (danmu.waitMs == null) danmu.comments() else withTimeoutOrNull(danmu.waitMs) { danmu.comments() }
         if (comments.isNullOrEmpty()) {
             ZLog.i(TAG, "弹幕 subtitle skipped: ${if (comments == null) "no comments within ${danmu.waitMs}ms" else "no comments"}")
             return null

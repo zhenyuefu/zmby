@@ -87,11 +87,12 @@ internal fun WatchlistGrid(nav: Nav, search: FocusRequester, entry: FocusRequest
         }
         itemsIndexed(shown, key = { _, e -> e.workKey }, contentType = { _, _ -> "poster" }) { i, e ->
             val ref = watchlistRef(e, servers)
+            val count = e.instances.count { !it.startsWith("catalog|") }
             PosterCard2x3(
                 imageUrl = ref?.let { app.library.primaryImage(it) },
                 title = visibleText(e.title) ?: UNTITLED,
                 onClick = { if (ref != null) nav.open(ref) },
-                topEnd = if (e.instances.size > 1) "${e.instances.size} 个版本" else null,
+                topEnd = if (count > 1) "$count 个版本" else null,
                 subtitle = listOfNotNull(if (e.type == "Series") "剧集" else "电影", e.year?.toString()).joinToString(" · "),
                 width = 240.dp,
                 focusKey = "watch:${e.workKey}",
@@ -106,7 +107,7 @@ internal fun WatchlistGrid(nav: Nav, search: FocusRequester, entry: FocusRequest
 internal fun watchlistRef(e: WatchlistRow, servers: List<ServerStatus>): ServerItem? {
     val pairs = e.instances.mapNotNull { p -> p.split('|', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }
     val (server, id) = pairs.sortedBy { (s, _) -> servers.firstOrNull { it.id == s }?.let { if (it.enabled && it.health != Health.Off) it.order else 1000 + it.order } ?: 9999 }
-        .firstOrNull { (s, _) -> servers.any { it.id == s } } ?: return null
+        .firstOrNull { (s, _) -> servers.any { it.id == s } } ?: pairs.firstOrNull { it.first == "catalog" } ?: return null
     // The poster tag belongs to the first instance; another server's poster comes without a tag.
     val tag = e.imageTag?.takeIf { pairs.firstOrNull() == (server to id) }
     return ServerItem(server, BaseItemDto(id = id, name = e.title, type = e.type, productionYear = e.year, imageTags = tag?.let { mapOf("Primary" to it) }.orEmpty()))

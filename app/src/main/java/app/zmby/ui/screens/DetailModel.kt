@@ -52,7 +52,15 @@ class DetailViewModel(private val app: ZmbyApp, val server: String, val itemId: 
     private val generation = java.util.concurrent.atomic.AtomicInteger()
     private var refreshing: Job? = null
 
+    private fun languageKey() = listOf(app.settings.metadataLanguage.value, app.settings.posterLanguage.value, app.settings.logoLanguage.value, app.settings.tmdbToken.value)
+
     init {
+        // Opened from a catalogue card (the TMDB hero, 为你推荐): the work it showed is in memory, so the
+        // page draws at once instead of flashing 「正在加载…」 until the cache read answers.
+        provider?.takeIf { !resourceOnly }?.let(app.catalog::recent)?.let { work ->
+            catalogLanguageKey = languageKey()
+            _catalog.value = work
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val key = detail.filterNotNull().map { it.workKey }.first()
             _cachedVersions.value = cachedVersions(app, key)
@@ -63,7 +71,7 @@ class DetailViewModel(private val app: ZmbyApp, val server: String, val itemId: 
     fun refresh(replace: Boolean = false) {
         if (refreshing?.isActive == true) { if (!replace) return else refreshing?.cancel() }
         val ticket = generation.incrementAndGet()
-        val languageKey = listOf(app.settings.metadataLanguage.value,app.settings.posterLanguage.value,app.settings.logoLanguage.value,app.settings.tmdbToken.value)
+        val languageKey = languageKey()
         if(catalogLanguageKey != languageKey) { _catalog.value = null; _fallbackReady.value = false }
         refreshing = viewModelScope.launch(Dispatchers.IO) {
             val loader = DetailMetadataLoader(

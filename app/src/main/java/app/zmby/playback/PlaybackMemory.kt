@@ -20,26 +20,24 @@ data class SavedTrack(val index: Int, val type: String?, val codec: String?, val
 }
 
 @Serializable
-data class PlaybackSelection(val sourceId: String, val audio: SavedTrack?, val subtitle: SavedTrack?) {
-    /** Null subtitle means an explicit off choice, including a server default with no subtitle. */
+data class PlaybackSelection(val sourceId: String, val audio: SavedTrack?, val subtitle: SavedTrack?,
+    val pickedAudio: Boolean = false, val pickedSubtitle: Boolean = false) {
+    /** Only explicit picks survive a restart. Old records have no provenance, so restore their version only. */
     fun restore(source: MediaSourceInfo): TrackChoice? {
         if (source.id != sourceId) return null
-        if (audio == null && source.audioStreams.isNotEmpty()) return null
-        if (audio != null && source.audioStreams.none { SavedTrack.of(it) == audio }) return null
-        if (subtitle != null && source.subtitleStreams.none { SavedTrack.of(it) == subtitle }) return null
-        return TrackChoice(audio?.index, subtitle?.index ?: ZidooTracks.SUBTITLE_OFF)
+        if (pickedAudio && audio != null && source.audioStreams.none { SavedTrack.of(it) == audio }) return null
+        if (pickedSubtitle && subtitle != null && source.subtitleStreams.none { SavedTrack.of(it) == subtitle }) return null
+        return TrackChoice(audio?.index.takeIf { pickedAudio }, (subtitle?.index ?: ZidooTracks.SUBTITLE_OFF).takeIf { pickedSubtitle })
     }
 
     companion object {
         fun capture(source: MediaSourceInfo, tracks: TrackChoice): PlaybackSelection? {
             if (source.id.isBlank()) return null
-            val audioIndex = tracks.audio ?: source.defaultAudioStreamIndex
-                ?: source.audioStreams.firstOrNull { it.isDefault }?.index ?: source.audioStreams.firstOrNull()?.index
-            val audio = audioIndex?.let { index -> source.audioStreams.firstOrNull { it.index == index } ?: return null }
-            val subtitleIndex = tracks.subtitle ?: source.defaultSubtitleStreamIndex ?: ZidooTracks.SUBTITLE_OFF
-            val subtitle = if (subtitleIndex == ZidooTracks.SUBTITLE_OFF) null
-                else source.subtitleStreams.firstOrNull { it.index == subtitleIndex } ?: return null
-            return PlaybackSelection(source.id, audio?.let(SavedTrack::of), subtitle?.let(SavedTrack::of))
+            val audio = tracks.audio?.let { index -> source.audioStreams.firstOrNull { it.index == index } ?: return null }
+            val subtitle = tracks.subtitle?.takeUnless { it == ZidooTracks.SUBTITLE_OFF }?.let { index ->
+                source.subtitleStreams.firstOrNull { it.index == index } ?: return null
+            }
+            return PlaybackSelection(source.id, audio?.let(SavedTrack::of), subtitle?.let(SavedTrack::of), tracks.audio != null, tracks.subtitle != null)
         }
     }
 }

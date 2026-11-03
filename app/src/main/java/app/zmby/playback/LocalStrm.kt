@@ -207,7 +207,7 @@ class LocalStrmPreparer(
     }
 
     /** The fixed-name 弹幕 session that is current; an older one's release must not delete its files. */
-    private val liveDanmu = java.util.concurrent.atomic.AtomicReference<LocalStrmSession?>(null)
+    private var liveDanmu: LocalStrmSession? = null
 
     /**
      * A 弹幕 playback (danmu design: 播放器字幕) under [LocalStrm.DANMU_BASE]: the chosen external
@@ -225,21 +225,24 @@ class LocalStrmPreparer(
             LocalStrm.problem(bytes, ZidooPlayer.externalFormat(stream.codec))?.let { throw SubtitlePrepareException(it) }
             stream to bytes
         }
+        return withContext(Dispatchers.IO) { publishDanmu(videoUrl, mainBytes, danmu) }
+    }
+
+    @Synchronized
+    private fun publishDanmu(videoUrl: String, mainBytes: Pair<MediaStream, ByteArray>?, danmu: ByteArray): LocalStrmSession {
         val base = LocalStrm.DANMU_BASE
-        return withContext(Dispatchers.IO) {
-            liveDanmu.set(null)
+        liveDanmu = null
+        val written = mutableListOf<File>()
+        try {
             store.deleteBase(base)
-            val written = mutableListOf<File>()
-            try {
-                val subtitle = mainBytes?.let { (stream, bytes) -> store.publish(LocalStrm.subtitleName(base, stream), bytes).also(written::add) }
-                val ass = store.publish(LocalStrm.danmuName(base), danmu).also(written::add)
-                val strm = store.publish(LocalStrm.strmName(base), LocalStrm.strmContent(videoUrl)).also(written::add)
-                if (written.any { it.parentFile?.path != strm.parentFile?.path }) throw java.io.IOException("files are not in one directory")
-                LocalStrmSession(base, strm, subtitle, mainBytes?.let { LocalStrm.subtitlePid(it.second) }, listOf(ass)).also { liveDanmu.set(it) }
-            } catch (e: Exception) {
-                written.forEach(store::delete)
-                throw DanmuWriteException("无法在 ${store.location} 写入弹幕字幕（${e.message}）", e)
-            }
+            val subtitle = mainBytes?.let { (stream, bytes) -> store.publish(LocalStrm.subtitleName(base, stream), bytes).also(written::add) }
+            val ass = store.publish(LocalStrm.danmuName(base), danmu).also(written::add)
+            val strm = store.publish(LocalStrm.strmName(base), LocalStrm.strmContent(videoUrl)).also(written::add)
+            if (written.any { it.parentFile?.path != strm.parentFile?.path }) throw java.io.IOException("files are not in one directory")
+            return LocalStrmSession(base, strm, subtitle, mainBytes?.let { LocalStrm.subtitlePid(it.second) }, listOf(ass)).also { liveDanmu = it }
+        } catch (e: Exception) {
+            written.forEach(store::delete)
+            throw DanmuWriteException("无法在 ${store.location} 写入弹幕字幕（${e.message}）", e)
         }
     }
 
@@ -267,8 +270,12 @@ class LocalStrmPreparer(
     }
 
     /** Deletes a finished session's files; a fixed-name 弹幕 session only while no newer one took its name. */
+    @Synchronized
     fun release(session: LocalStrmSession) {
-        if (session.baseName == LocalStrm.DANMU_BASE && !liveDanmu.compareAndSet(session, null)) return
+        if (session.baseName == LocalStrm.DANMU_BASE) {
+            if (liveDanmu !== session) return
+            liveDanmu = null
+        }
         session.subtitle?.let(store::delete)
         session.extras.forEach(store::delete)
         store.delete(session.strm)

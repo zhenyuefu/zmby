@@ -26,7 +26,7 @@ class DanmuTextTest {
 
     @Test fun `comments are read from a dandanplay answer, broken entries skipped`() {
         val body = """{"count":3,"comments":[{"cid":1,"p":"1.5,1,16777215,[qq]","m":"一"},{"cid":2,"p":"bad","m":"二"},{"cid":3,"p":"3,4,255","m":"三 ♡1"}]}"""
-        assertEquals(listOf(Danmaku(1_500, "一"), Danmaku(3_000, "三 ♡1", 255)), DanmuText.comments(body))
+        assertEquals(listOf(Danmaku(1_500, "一"), Danmaku(3_000, "三 ♡1", 255, DanmuPosition.Bottom)), DanmuText.comments(body))
         assertTrue(DanmuText.comments("not json").isEmpty())
     }
 

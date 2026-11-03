@@ -25,7 +25,7 @@ class DanmuRepository(
     private val choicesDir: File = File(dir, "choices"),
     private val aliasContext: () -> String = { "" },
 ) {
-    @Serializable private data class MatchCache(val selection: DanmuSelection?, val at: Long)
+    @Serializable private data class MatchCache(val selection: DanmuSelection?, val at: Long, val candidates: List<DanmuTarget> = emptyList())
     private val unsupportedUntil = ConcurrentHashMap<String, Long>()
     private val nameSearch = DanmuNameSearch()
     private val json get() = DanmuProtocol.json
@@ -46,16 +46,17 @@ class DanmuRepository(
         loads.get(hash(endpoint.cacheKey + "|" + fingerprint(key, query) + "|$rows")) { try {
             prune()
             val manual = manualChoice(endpoint, key, query)
-            val saved = manual ?: cached(endpoint, key, query)?.selection
+            val snapshot = if (manual == null) cached(endpoint, key, query) else null
+            val saved = manual ?: snapshot?.selection
             // A stable source URL plus work/episode identity owns the body, never a bare cache ID.
             saved?.let { selection -> cachedBody(endpoint, key, query, selection)?.let { return@get DanmuText.filter(it, rows) } }
-            if (manual == null && saved == null && cached(endpoint, key, query) != null) return@get null
+            if (saved == null && snapshot != null) return@get null
             // Without a valid body, refresh IDs before requesting comments. LogVar's IDs may have
             // been evicted or reused since the last playback, even within our metadata TTL.
             var selection = if (manual != null) refreshChoice(endpoint, key, query, manual)
                 else automatic(endpoint, key, query, aliases, freshIds = true)
             selection ?: return@get null
-            val comments = try { loadComments(endpoint, key, query, selection) }
+            var comments = try { loadComments(endpoint, key, query, selection) }
             catch (e: DanmuHttpException) {
                 if (e.code !in setOf(404, 410)) throw e
                 matchFile(endpoint, key, query).delete()
@@ -63,7 +64,30 @@ class DanmuRepository(
                 selection = if (manual != null) refreshChoice(endpoint, key, query, manual)
                     else automatic(endpoint, key, query, aliases, freshIds = true)
                 selection ?: return@get null
-                loadComments(endpoint, key, query, selection) // Exactly one recovery attempt.
+                try { loadComments(endpoint, key, query, selection) } catch (retry: DanmuHttpException) {
+                    if (manual != null || retry.code !in setOf(404, 410)) throw retry
+                    emptyList()
+                }
+            }
+            catch (e: IOException) {
+                if (manual != null) throw e
+                emptyList()
+            }
+            if (comments.isEmpty() && manual == null) {
+                val matched = selection
+                val options = search(endpoint, matched.searchTitle, refresh = true).map { it.target }
+                val alternative = options.firstOrNull { matched.target.url.isNotBlank() && it.url == matched.target.url }
+                    ?: options.singleOrNull { matched.target.animeId.isNotBlank() && matched.target.episodeTitle.isNotBlank() &&
+                        it.animeId == matched.target.animeId && it.episodeTitle == matched.target.episodeTitle }
+                    ?: DanmuMatch.chooseTarget(query.copy(names = query.names + matched.searchTitle), options)
+                if (alternative != null) {
+                    val recovered = DanmuSelection(alternative, matched.searchTitle)
+                    comments = loadComments(endpoint, key, query, recovered)
+                    if (comments.isNotEmpty()) {
+                        write(matchFile(endpoint, key, query), json.encodeToString(MatchCache(recovered, clock(), options)))
+                        matches.invalidate(matchKey(endpoint, key, query))
+                    }
+                }
             }
             currentCoroutineContext().ensureActive()
             DanmuText.filter(comments, rows).also { ZLog.i(TAG, "danmu for $key: ${comments.size} comments, ${it.size} prepared") }
@@ -78,6 +102,23 @@ class DanmuRepository(
         cached(endpoint, key, query)?.let { return@withContext it.selection }
         automatic(endpoint, key, query, aliases)
     }
+
+    suspend fun candidates(endpoint: DanmuEndpoint, key: String, query: DanmuQuery, selection: DanmuSelection): List<DanmuSelection> =
+        withContext(Dispatchers.IO) {
+            val snapshot = cached(endpoint, key, query)
+            val targets = snapshot?.takeIf { it.selection?.searchTitle == selection.searchTitle }?.candidates.orEmpty()
+            val options = targets.ifEmpty { search(endpoint, selection.searchTitle).map { it.target } }
+            (options + selection.target).distinctBy { it.sourceKey }.map { DanmuSelection(it, selection.searchTitle, manual = true) }
+        }
+
+    private fun titleFile(endpoint: DanmuEndpoint, key: String, query: DanmuQuery) =
+        File(choicesDir, "title-" + hash(endpoint.cacheKey + "|" + (query.workId ?: key)))
+
+    suspend fun preferredTitle(endpoint: DanmuEndpoint, key: String, query: DanmuQuery) =
+        withContext(Dispatchers.IO) { read(titleFile(endpoint, key, query)) }
+
+    suspend fun preferTitle(endpoint: DanmuEndpoint, key: String, query: DanmuQuery, title: String) =
+        withContext(Dispatchers.IO) { write(titleFile(endpoint, key, query), title.trim()) }
 
     /** Manual search lists all episodes so the user can choose a different numbering explicitly. */
     suspend fun search(endpoint: DanmuEndpoint, title: String, refresh: Boolean = false): List<DanmuSelection> = withContext(Dispatchers.IO) {
@@ -138,19 +179,21 @@ class DanmuRepository(
         val expanded = aliases(query)
         val names = (query.names + expanded.names).map { it.trim() }.filter { it.isNotBlank() }.distinct()
         val attempted = (names.take(1) + names.filter { name -> name.any { it.code in 0x3400..0x9fff } } + names).distinct()
-        suspend fun attempt(names: List<String>): DanmuSelection? {
+        suspend fun attempt(names: List<String>): MatchCache? {
             return nameSearch.first(names) { name ->
                 var supported = (unsupportedUntil[endpoint.cacheKey] ?: 0L) <= clock()
                 if (supported) {
                     try {
-                        fun accepted(body: String) = DanmuProtocol.matched(body, query.movie).firstOrNull {
-                            name == names.firstOrNull() || DanmuMatch.knownTitle(expanded, it)
+                        fun accepted(body: String): MatchCache? {
+                            val options = DanmuProtocol.matched(body, query.movie)
+                            val target = options.firstOrNull { name == names.firstOrNull() || DanmuMatch.knownTitle(expanded, it) }
+                            return target?.let { MatchCache(DanmuSelection(it, name), clock(), options) }
                         }
                         var target = accepted(api.match(endpoint, fileName(query, name)))
                         if (target == null && !query.movie && query.year != null && (query.season ?: 1) <= 1) {
                             target = accepted(api.match(endpoint, fileName(query.copy(year = null), name)))
                         }
-                        if (target != null) return@first DanmuSelection(target, name)
+                        if (target != null) return@first target
                     } catch (e: DanmuHttpException) {
                         if (e.code !in setOf(404, 405, 501)) throw e
                         unsupportedUntil[endpoint.cacheKey] = clock() + CAPABILITY_TTL_MS
@@ -161,7 +204,8 @@ class DanmuRepository(
                     if (freshIds) searches.invalidate(SearchKey(endpoint, name, query.episode, query.movie))
                     val body = searchBody(endpoint, name, query.episode, query.movie)
                     val id = DanmuMatch.choose(query.copy(names = names), DanmuText.searchResult(body))
-                    if (id != null) DanmuProtocol.searched(body).firstOrNull { it.episodeId == id }?.let { return@first DanmuSelection(it, name) }
+                    val options = DanmuProtocol.searched(body)
+                    if (id != null) options.firstOrNull { it.episodeId == id }?.let { return@first MatchCache(DanmuSelection(it, name), clock(), options) }
                 }
                 null
             }
@@ -171,12 +215,12 @@ class DanmuRepository(
         if (result == null && (unsupportedUntil[endpoint.cacheKey] ?: 0L) <= clock()) {
             result = nameSearch.first(attempted.toList()) { name ->
                 if (freshIds) searches.invalidate(SearchKey(endpoint, name, null, false))
-                val target = DanmuMatch.chooseTarget(expanded, DanmuProtocol.searched(searchBody(endpoint, name, null)))
-                target?.let { DanmuSelection(it, name) }
+                val options = DanmuProtocol.searched(searchBody(endpoint, name, null))
+                DanmuMatch.chooseTarget(expanded, options)?.let { MatchCache(DanmuSelection(it, name), clock(), options) }
             }
         }
-        write(matchFile(endpoint, key, query), json.encodeToString(MatchCache(result, clock())))
-        return result
+        write(matchFile(endpoint, key, query), json.encodeToString(result ?: MatchCache(null, clock())))
+        return result?.selection
     }
 
     private suspend fun refreshChoice(endpoint: DanmuEndpoint, key: String, query: DanmuQuery, saved: DanmuSelection): DanmuSelection {

@@ -90,6 +90,7 @@ data class BaseItemDto(
     @SerialName("People") val people: List<PersonDto> = emptyList(),
     /** A person's birthplace. */
     @SerialName("ProductionLocations") val productionLocations: List<String> = emptyList(),
+    @SerialName("OriginalLanguage") val originalLanguage: String? = null,
 ) {
     val isPlayable: Boolean get() = type in PLAYABLE_TYPES
 
@@ -181,6 +182,10 @@ data class MediaSourceInfo(
     @SerialName("DefaultSubtitleStreamIndex") val defaultSubtitleStreamIndex: Int? = null,
     /** What the server would hand a client to play the file as-is; often relative, see StreamUrls.direct. */
     @SerialName("DirectStreamUrl") val directStreamUrl: String? = null,
+    /** The item this version's file belongs to (Emby; the source ID is `mediasource_<id>` or a hash, never the item ID). */
+    @SerialName("ItemId") val itemId: String? = null,
+    /** This version's own chapters, markers included, when the server lists them per source. */
+    @SerialName("Chapters") val chapters: List<ChapterInfo> = emptyList(),
 ) {
     val videoStream: MediaStream? get() = mediaStreams.firstOrNull { it.type == "Video" }
     val audioStreams: List<MediaStream> get() = mediaStreams.filter { it.type == "Audio" }

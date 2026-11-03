@@ -10,6 +10,8 @@ import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.View
 import android.view.Choreographer
+import app.zmby.danmu.DanmuAss
+import app.zmby.danmu.DanmuPosition
 import app.zmby.danmu.DanmuClock
 import app.zmby.danmu.DanmuStage
 import app.zmby.danmu.nextDanmuFrameDelay
@@ -36,6 +38,7 @@ class DanmuLayer(
     private val rows: Int,
     /** 20–100. */
     private val opacity: Int,
+    private val layout: DanmuAss.Config,
 ) : MonitorOverlay {
     private val window = OverlayWindow(context, overlayParams(focusable = false))
     private var view: DanmuView? = null
@@ -48,7 +51,7 @@ class DanmuLayer(
         job = scope.launch {
             val list = try { comments.await() } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
             if (closed || list.isNullOrEmpty()) return@launch
-            val v = DanmuView(context, scope, list, rows, opacity / 100f)
+            val v = DanmuView(context, scope, list, rows, opacity / 100f, layout = layout)
             lastSample?.let { (pos, playing, at) -> v.sample(pos, playing, at) }
             if (window.show { v }) view = v
             else ZLog.w(TAG, "danmu window not shown")
@@ -88,6 +91,7 @@ class DanmuView(
     private val rows: Int,
     private val opacity: Float,
     workerDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val layout: DanmuAss.Config = DanmuAss.Config.of(rows, 100, 34, 4, 12),
 ) : View(context) {
     val clock = DanmuClock()
     private var scale = 1f
@@ -108,7 +112,7 @@ class DanmuView(
     private val stats = DanmuPerformance(scope)
     internal val hasPendingFrame: Boolean get() = framePending
     internal val nextWakeMs: Long get() = wakeAtMs
-    private val renderer = DanmuTextRenderer(scope, workerDispatcher) {
+    private val renderer = DanmuTextRenderer(scope, workerDispatcher, layout.fontSize) {
         stage?.refreshWidths()
         updateChipGeometry()
         requestFrame()
@@ -193,7 +197,7 @@ class DanmuView(
         if (w <= 0 || h <= 0 || released) return
         viewportWidth = w
         scale = w / 1920f
-        fill.textSize = 34 * scale
+        fill.textSize = layout.fontSize * scale
         fill.alpha = (opacity * 255).toInt()
         stroke.textSize = fill.textSize
         stroke.strokeWidth = 3 * scale
@@ -279,7 +283,10 @@ class DanmuView(
             while (i < current.active.size) {
                 val placed = current.active[i++]
                 val x = current.x(placed, renderTime)
-                val baseline = (ROW_TOP + placed.row * ROW_STEP) * scale + font.ascent
+                val inset = placed.row * layout.laneSize
+                val top = if (placed.danmaku.position == DanmuPosition.Bottom)
+                    height - (inset + layout.fontSize + 4) * scale else (layout.topMargin + inset) * scale
+                val baseline = top + font.ascent
                 val cached = renderer.texture(placed.textKey)
                 if (cached != null) {
                     canvas.drawBitmap(cached.bitmap, x - cached.insetX, baseline - cached.baseline, bitmapPaint)
@@ -309,8 +316,6 @@ class DanmuView(
     }
 
     private companion object {
-        const val ROW_TOP = 70f
-        const val ROW_STEP = 62f
         const val CHIP_MS = 4_000L
     }
 }

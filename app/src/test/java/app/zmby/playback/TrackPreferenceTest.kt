@@ -22,6 +22,15 @@ class TrackPreferenceTest {
         ),
     )
 
+    @Test fun `original language resolves ISO codes independently of defaults and explicit picks`() {
+        val korean = source.copy(mediaStreams = source.mediaStreams + listOf(
+            MediaStream(8, "Audio", language = "kor"), MediaStream(9, "Subtitle", language = "ko-KR")))
+        val original = TrackPreference.ORIGINAL
+        assertEquals(TrackChoice(8, 9), TrackPreference.choose(korean, TrackChoice(), original, original, "ko"))
+        assertEquals(TrackChoice(2, 9), TrackPreference.choose(korean, TrackChoice(audio = 2), original, original, "ko"))
+        assertEquals(TrackChoice(), TrackPreference.choose(korean, TrackChoice(), original, original))
+    }
+
     @Test fun `follow the server leaves both unset`() {
         assertEquals(TrackChoice(), TrackPreference.choose(source, TrackChoice(), TrackPreference.SERVER, TrackPreference.SERVER))
     }

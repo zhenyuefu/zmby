@@ -64,6 +64,13 @@ enum class Glyph(val path: String, val filled: Boolean = false) {
     Swap("M4 7h11l-3-3M20 17H9l3 3"),
     // 弹幕 (DanmuPanel.dc.html): a speech bubble with two lines.
     Danmu("M4 5h16v11H9l-5 4zM8 9h8M8 12.5h5"),
+    // 弹幕 · 已关闭 (DanmuPanel.dc.html): the bubble crossed out.
+    DanmuOff("M4 5h16v11H9l-5 4zM3 3l18 18"),
+    // 输入 · 手机输入 (Settings.dc.html, text rows).
+    Keyboard("M5 6h14a2.5 2.5 0 0 1 2.5 2.5v7a2.5 2.5 0 0 1-2.5 2.5H5a2.5 2.5 0 0 1-2.5-2.5v-7A2.5 2.5 0 0 1 5 6zM6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M8 14h8"),
+    Phone("M9.5 2.5h5A2.5 2.5 0 0 1 17 5v14a2.5 2.5 0 0 1-2.5 2.5h-5A2.5 2.5 0 0 1 7 19V5a2.5 2.5 0 0 1 2.5-2.5zM11 18.5h2"),
+    // A picked-up row in a ranked list (SettingsQuality.dc.html).
+    Reorder("M8 9l4-4 4 4M8 15l4 4 4-4"),
 }
 
 private val parsed = HashMap<Glyph, Path>()

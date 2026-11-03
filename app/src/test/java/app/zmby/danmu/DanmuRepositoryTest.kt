@@ -36,6 +36,37 @@ class DanmuRepositoryTest {
         server.dispatcher = object : Dispatcher() { override fun dispatch(request: RecordedRequest) = block(request) }
     }
 
+    @Test fun `the picker reopens the successful alias and all returned candidates without another request`() = runBlocking {
+        val first = matched(name = "兰香如故")
+        val second = matched(88, "兰香如故", "https://video.example/other").substringAfter("\"matches\":[").substringBeforeLast("]}")
+        dispatch { response(first.removeSuffix("]}") + "," + second + "]}") }
+        val q = query.copy(names = listOf("兰香如故"))
+        val repository = repo()
+        val selected = requireNotNull(repository.current(endpoint, "s:ep3", q))
+        val restarted = repo()
+        assertEquals(listOf(77L, 88L), restarted.candidates(endpoint, "s:ep3", q, selected).map { it.target.episodeId })
+        restarted.preferTitle(endpoint, "s:ep3", q, "另一个译名")
+        assertEquals("另一个译名", repo().preferredTitle(endpoint, "copy:ep4", q.copy(episode = 4)))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `empty filename match loads comments using the full search source identity`() = runBlocking {
+        dispatch { req -> when {
+            req.path!!.contains("/match") -> response(matched())
+            req.path!!.contains("comment/77") -> response("""{"comments":[]}""")
+            req.path!!.contains("search/episodes") -> response(searched(99))
+            req.path!!.contains("comment/99") -> response(comments("recovered"))
+            else -> MockResponse().setResponseCode(404)
+        } }
+        val repository = repo()
+        val key = "s:ep3"
+        assertEquals(77L, repository.current(endpoint, key, query)?.target?.episodeId)
+        assertEquals("recovered", repository.load(endpoint, key, episode, 3, query)?.single()?.text)
+        assertEquals(99L, repository.current(endpoint, key, query)?.target?.episodeId)
+        assertEquals("recovered", repository.load(endpoint, key, episode, 3, query)?.single()?.text)
+        assertEquals(4, server.requestCount)
+    }
+
     @Test fun `match is primary and aliases and cross-season results are trusted and cached`() = runBlocking {
         server.enqueue(response(matched()))
         server.enqueue(response(comments()))
@@ -130,18 +161,22 @@ class DanmuRepositoryTest {
     @Test fun `recovery never loops when all fresh IDs are already gone`() = runBlocking {
         dispatch { if (it.path!!.contains("/match")) response(matched()) else MockResponse().setResponseCode(404) }
         assertNull(repo().load(endpoint, "s:ep3", episode, 3, query))
-        assertEquals(4, server.requestCount)
+        assertEquals(5, server.requestCount) // one full-search recovery after both comment IDs disappeared
     }
 
     @Test fun `empty or invalid comments are not retained as a twelve hour body cache`() = runBlocking {
         for (body in listOf("""{"comments":[]}""", "{}", """{"success":false,"comments":[]}""")) {
-            dispatch { if (it.path!!.contains("/match")) response(matched()) else response(body) }
+            dispatch { when {
+                it.path!!.contains("/match") -> response(matched())
+                it.path!!.contains("search/episodes") -> response("""{"animes":[]}""")
+                else -> response(body)
+            } }
             val repo = repo()
             val before = server.requestCount
             repo.load(endpoint, "s:ep3", episode, 3, query)
             repo.load(endpoint, "s:ep3", episode, 3, query)
             // A just-completed match is reused briefly; the empty/invalid body is fetched again.
-            assertEquals(before + 3, server.requestCount)
+            assertEquals(before + 5, server.requestCount)
             assertTrue(tmp.root.resolve("cache").listFiles().orEmpty().none { it.name.startsWith("c3-") })
         }
     }

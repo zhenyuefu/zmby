@@ -82,11 +82,19 @@ internal fun ZmbyApp.inputTarget(field: InputField, server: String? = null): Pai
         { v -> if (v.length < 8 || v.length > 512) "密钥长度不对，请检查是否复制完整" else null },
         { v -> ZLog.secret(v); settings.publicMetaDbKey.set(v) },
     )
+    InputField.VersionPattern -> Pair(
+        { v -> versionPatternError(v) },
+        { v -> settings.versionPattern.set(v) },
+    )
     InputField.UserAgent -> Pair(
         { v -> InputSession.checkUserAgent(v) },
         { v -> server?.let { library.setUa(it, UaMode.Custom, v) } },
     )
 }
+
+/** Why a typed 版本偏好正则 cannot be used; blank (off) is fine. */
+internal fun versionPatternError(raw: String): String? =
+    if (raw.isNotBlank() && app.zmby.aggregate.VersionPrefs.pattern(raw) == null) "这个正则无效，请检查括号与转义" else null
 
 /**
  * 用手机输入 on the TV (TokenTV.dc.html): a 1200 × 700 panel over the page darkened to 70 %: the QR code,

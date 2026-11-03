@@ -173,12 +173,18 @@ fun defaultAudio(source: MediaSourceInfo): MediaStream? {
 }
 
 
-/** Badges next to the title on the hero (4K / DOLBY VISION / ATMOS). */
-fun heroBadges(source: MediaSourceInfo?, audioIndex: Int? = null): List<String> {
+private val IMAX_NAME = Regex("(?i)(?<![a-z0-9])imax(?![a-z0-9])")
+
+/** `IMAX` (and `IMAX Enhanced`) as a word in the version name, file name or path (ui-spec §2.22). */
+fun isImaxName(source: MediaSourceInfo): Boolean = listOfNotNull(source.name, source.fileName, source.path).any { IMAX_NAME.containsMatchIn(it) }
+
+/** Badges next to the title on the hero (4K / DOLBY VISION / IMAX / ATMOS). [imax] also covers the aspect rule. */
+fun heroBadges(source: MediaSourceInfo?, audioIndex: Int? = null, imax: Boolean = source?.let(::isImaxName) == true): List<String> {
     if (source == null) return emptyList()
     val out = mutableListOf<String>()
     if (qualityTier(source) == QualityTier.UHD) out += "4K"
     hdrBadge(source.videoStream)?.let { out += if (it.startsWith("DV")) "DOLBY VISION" else it }
+    if (imax) out += "IMAX"
     val audio = (source.audioStreams.firstOrNull { it.index == audioIndex } ?: defaultAudio(source))?.let(::audioFormat).orEmpty()
     if (audio.contains("Atmos")) out += "ATMOS" else if (audio.startsWith("DTS:X")) out += "DTS:X"
     return out

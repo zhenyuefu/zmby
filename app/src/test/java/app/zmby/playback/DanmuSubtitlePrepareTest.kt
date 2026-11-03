@@ -76,6 +76,19 @@ class DanmuSubtitlePrepareTest {
     private suspend fun prepare(subtitle: Int?, d: DanmuSubtitle?, delivery: ZidooPlayer.SubtitleDelivery = ZidooPlayer.SubtitleDelivery.LocalStrm) =
         preparer.prepare(session, item, 0, "src", picked = TrackChoice(audio = 1, subtitle = subtitle), subtitles = delivery, danmu = d)
 
+    @Test fun `subtitle mode waits for a slow successful comment load and publishes both files before launch`() = runTest {
+        val fixed = listOf(Danmaku(1000, "固定", position = app.zmby.danmu.DanmuPosition.Bottom))
+        val d = DanmuSubtitle({ kotlinx.coroutines.delay(9000); fixed }, DanmuAss.Config.of(3, 100, 34, 4, 12))
+        val playback = prepare(null, d)
+        val local = requireNotNull(playback.local)
+        try {
+            assertEquals(local.uri, playback.launch.uri)
+            assertTrue(local.strm.isFile)
+            assertEquals("zmby_danmu.danmu.ass", local.extras.single().name)
+            assertTrue(local.extras.single().readText().contains(",Bottom,,"))
+        } finally { files.release(local) }
+    }
+
     @Test fun `an embedded subtitle keeps its index and the 弹幕 file lies beside it under the fixed name`() = runTest {
         for (index in listOf(2, 3)) { // text and picture alike: nothing is merged
             val p = prepare(index, danmu())

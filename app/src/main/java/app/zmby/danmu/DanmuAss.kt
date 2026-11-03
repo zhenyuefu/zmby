@@ -34,6 +34,7 @@ object DanmuAss {
         val bold: Boolean = false,
         val timeOffset: Double = 0.0,
         val title: String = "zmby",
+        val topMargin: Int = 0,
     ) {
         /** ASS alpha byte, as the CLI computes it: `((1.0 - alpha) * 255.0) as u8`. */
         val opacity: Int get() = ((1.0 - alpha) * 255.0).toInt().coerceIn(0, 255)
@@ -43,8 +44,8 @@ object DanmuAss {
 
         companion object {
             /** The user's 行数 and 不透明度 as danmu2ass settings: exactly [rows] lanes. */
-            fun of(rows: Int, opacityPercent: Int): Config {
-                val base = Config()
+            fun of(rows: Int, opacityPercent: Int, fontSize: Int = 42, lineGap: Int = 16, topMargin: Int = 0): Config {
+                val base = Config(fontSize = fontSize, laneSize = fontSize + lineGap, topMargin = topMargin)
                 return base.copy(
                     floatPercentage = (rows.coerceIn(1, 10) + 0.5) * base.laneSize / base.height,
                     alpha = opacityPercent.coerceIn(0, 100) / 100.0,
@@ -54,7 +55,7 @@ object DanmuAss {
     }
 
     /** One comment as danmu2ass sees it: time in seconds, text, colour 0xRRGGBB. */
-    data class Item(val timeline: Double, val content: String, val rgb: Int)
+    data class Item(val timeline: Double, val content: String, val rgb: Int, val position: DanmuPosition = DanmuPosition.Scroll)
 
     /** A comment placed by the canvas: its (possibly delayed) start, and the move. */
     data class Drawn(val item: Item, val x0: Int, val y: Int, val x1: Int)
@@ -106,18 +107,32 @@ object DanmuAss {
 
     /**
      * `convert` + `Canvas::draw`: comments in time order (stable), each into the first free lane, or
-     * delayed by less than a second into the lane that frees first, else dropped. Every type scrolls.
+     * delayed by less than a second into the lane that frees first, else dropped. Fixed comments reserve a centered lane for their display duration.
      */
     fun layout(items: List<Item>, config: Config): List<Drawn> {
         val lanes = arrayOfNulls<Lane>(config.lanes)
+        val fixedUntil = DoubleArray(config.lanes)
+        val bottomUntil = DoubleArray(config.lanes)
         val out = ArrayList<Drawn>(items.size)
         for (raw in items.sortedBy { it.timeline }) {
             var item = raw.copy(timeline = raw.timeline + config.timeOffset)
             if (item.timeline < 0.0) continue
+            if (item.position != DanmuPosition.Scroll) {
+                val bottom = item.position == DanmuPosition.Bottom
+                val until = if (bottom) bottomUntil else fixedUntil
+                val row = until.indices.firstOrNull { idx ->
+                    until[idx] <= item.timeline && (bottom || lanes[idx]?.let { it.lastShootTime + config.duration <= item.timeline } != false)
+                } ?: continue
+                until[row] = item.timeline + DanmuStage.FIXED_MS / 1000.0
+                val inset = config.topMargin + row * config.laneSize
+                out += Drawn(item, config.width / 2, if (bottom) config.height - inset else inset, config.width / 2)
+                continue
+            }
             val len = length(item.content, config)
             var chosen = -1
             val collisions = ArrayList<Pair<Double, Int>>()
             for (idx in lanes.indices) {
+                if (fixedUntil[idx] > item.timeline) continue
                 val lane = lanes[idx]
                 if (lane == null) { chosen = idx; break }
                 when (val c = availableFor(lane, item.timeline, len, config)) {
@@ -134,7 +149,7 @@ object DanmuAss {
             }
             if (chosen < 0) continue
             lanes[chosen] = Lane(item.timeline, len)
-            out += Drawn(item, config.width, chosen * config.laneSize, -(len.toInt()))
+            out += Drawn(item, config.width, config.topMargin + chosen * config.laneSize, -(len.toInt()))
         }
         return out
     }
@@ -169,8 +184,12 @@ object DanmuAss {
         sb.append("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
         for (d in layout(items, config)) {
             val c = d.item.rgb
-            sb.append("Dialogue: 2,").append(time(d.item.timeline)).append(',').append(time(d.item.timeline + config.duration))
-            sb.append(",Float,,0,0,0,,{\\move(${d.x0}, ${d.y}, ${d.x1}, ${d.y})")
+            sb.append("Dialogue: 2,").append(time(d.item.timeline)).append(',').append(time(d.item.timeline + if (d.item.position == DanmuPosition.Scroll) config.duration else DanmuStage.FIXED_MS / 1000.0))
+            when (d.item.position) {
+                DanmuPosition.Top -> sb.append(",Top,,0,0,0,,{\\an8\\pos(${d.x0}, ${d.y})")
+                DanmuPosition.Bottom -> sb.append(",Bottom,,0,0,0,,{\\an2\\pos(${d.x0}, ${d.y})")
+                DanmuPosition.Scroll -> sb.append(",Float,,0,0,0,,{\\move(${d.x0}, ${d.y}, ${d.x1}, ${d.y})")
+            }
             sb.append("\\c&H%02x%02x%02x&}".format(c and 0xFF, c shr 8 and 0xFF, c shr 16 and 0xFF))
             sb.append(renderText(d.item.content)).append('\n')
         }
@@ -179,7 +198,7 @@ object DanmuAss {
 
     /** Our comments for [build]: seconds from milliseconds, text made safe for ASS. */
     fun items(comments: List<Danmaku>): List<Item> =
-        comments.map { Item(it.timeMs / 1000.0, safeText(it.text), it.color and 0xFFFFFF) }
+        comments.map { Item(it.timeMs / 1000.0, safeText(it.text), it.color and 0xFFFFFF, it.position) }
 
     /** The file as the player gets it: UTF-8 without a BOM, as danmu2ass writes it (what was tried on the box). */
     fun bytes(ass: String): ByteArray = ass.toByteArray(Charsets.UTF_8)

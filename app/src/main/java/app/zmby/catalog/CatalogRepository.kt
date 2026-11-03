@@ -13,8 +13,19 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
     suspend fun verifyToken(token: String): String? = api.verifyToken(token)
     private fun viewKey(ref: CatalogId) = "view:${ref.key}:${textLanguage()}:${posterLanguage()}:${logoLanguage()}"
     suspend fun cached(ref: CatalogId): CatalogWork? = withContext(Dispatchers.IO) {
-        cache.get(viewKey(ref))?.let { runCatching { api.json.decodeFromString(CatalogWork.serializer(), it.json) }.getOrNull() }
+        val key = viewKey(ref)
+        cache.get(key)?.let { runCatching { api.json.decodeFromString(CatalogWork.serializer(), it.json) }.getOrNull() }
+            ?.also { remember(key, it) }
     }
+
+    /** Works read or fetched in this run, by view key (most recent last): a page opened from a card shows at once. */
+    private val recent = object : LinkedHashMap<String, CatalogWork>(RECENT_WORKS, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CatalogWork>?) = size > RECENT_WORKS
+    }
+    private fun remember(key: String, work: CatalogWork) = synchronized(recent) { recent[key] = work }
+
+    /** The work as last read or fetched in this run for the current languages, without I/O (safe on the main thread). */
+    fun recent(ref: CatalogId): CatalogWork? = synchronized(recent) { recent[viewKey(ref)] }
 
     /** Identity-scoped alternate names for danmu matching; never a fuzzy catalogue lookup. */
     suspend fun danmuAliases(ref: CatalogId): List<String> = withContext(Dispatchers.IO) {
@@ -40,7 +51,9 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
     }
     suspend fun work(ref: CatalogId): CatalogWork = withContext(Dispatchers.IO) {
         val result = if (ref.source == "tmdb") tmdb(ref) else bangumi(ref)
-        cache.put(CatalogCache(viewKey(ref), api.json.encodeToString(CatalogWork.serializer(), result), System.currentTimeMillis()))
+        val key = viewKey(ref)
+        cache.put(CatalogCache(key, api.json.encodeToString(CatalogWork.serializer(), result), System.currentTimeMillis()))
+        remember(key, result)
         result
     }
     /** No title guesses: use the server's explicit external ID, or Bangumi-data's unique alias. */
@@ -115,7 +128,7 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
         return CatalogWork(CatalogId("tmdb", kind, id), row.str("title") ?: row.str("name").orEmpty(),
             row.str("original_title") ?: row.str("original_name").orEmpty(), row.str("overview").orEmpty(),
             (row.str("release_date") ?: row.str("first_air_date"))?.take(4)?.toIntOrNull(), row.dec("vote_average"),
-            backdrop = art(row.str("backdrop_path")), ids = mapOf("Tmdb" to id))
+            backdrop = art(row.str("backdrop_path")), ids = mapOf("Tmdb" to id), originalLanguage = row.str("original_language"))
     }
     private suspend fun tmdb(ref: CatalogId): CatalogWork = coroutineScope {
         val lang = textLanguage()
@@ -148,7 +161,7 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
             art(ArtworkLanguage.choose(images.rows("logos"), logoLanguage(), original), "w500"),
             body.rows("seasons").mapNotNull { s -> s.num("season_number")?.let { CatalogSeason(it, s.str("name") ?: "第 $it 季", s.num("episode_count") ?: 0, s.str("air_date")) } },
             cast.groupBy { it.key }.values.map { people -> people.first().copy(role = people.map { it.role }.filter { it.isNotBlank() }.distinct().joinToString(" · ")) }, ids,
-            aliases = names(body, titleField))
+            aliases = names(body, titleField), originalLanguage = body.str("original_language"))
     }
     suspend fun episodes(work: CatalogWork, season: Int): List<CatalogEpisode> = withContext(Dispatchers.IO) {
         if (work.ref.source == "tmdb") {
@@ -225,4 +238,6 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
         cache.put(CatalogCache(personKey(source, id), api.json.encodeToString(CatalogBiography.serializer(), result), System.currentTimeMillis()))
         result
     }
+
+    private companion object { const val RECENT_WORKS = 64 }
 }

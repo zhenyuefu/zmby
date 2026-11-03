@@ -7,7 +7,7 @@
 <p align="center"><strong>聚合 Emby 片库，用芝杜系统播放器播放。</strong></p>
 
 <p align="center">Android TV · 多服务器聚合 · Zidoo 原生播放</p>
-<p align="center"><a href="https://github.com/zhenyuefu/zmby/releases/tag/v0.5.1">下载 0.5.1</a> · <a href="#快速开始">快速开始</a> · <a href="docs/USAGE.md">使用指南</a> · <a href="docs/DEVELOPMENT.md">开发指南</a></p>
+<p align="center"><a href="https://github.com/zhenyuefu/zmby/releases/tag/v0.5.2">下载 0.5.2</a> · <a href="#快速开始">快速开始</a> · <a href="docs/USAGE.md">使用指南</a> · <a href="docs/DEVELOPMENT.md">开发指南</a></p>
 
 ![zmby 首页：真实媒体库与 TMDB 影视资料](docs/images/home.jpg)
 

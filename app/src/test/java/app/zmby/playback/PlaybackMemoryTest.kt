@@ -42,13 +42,13 @@ class PlaybackMemoryTest {
         assertNull(restored.latest(listOf(ref.copy(item = ref.item.copy(id = "episode-8")))))
     }
 
-    @Test fun defaultsAreResolvedAndSubtitleOffSurvivesChangedDefaults() {
+    @Test fun automaticTracksAreReevaluatedAndExplicitOffSurvivesChangedDefaults() {
         val defaults = PlaybackSelection.capture(source, TrackChoice())!!
-        assertEquals(TrackChoice(1, 3), defaults.restore(source))
+        assertEquals(TrackChoice(), defaults.restore(source))
         val off = saved().selection
         assertEquals(TrackChoice(2, -1), off.restore(source.copy(defaultSubtitleStreamIndex = 3)))
         val silent = MediaSourceInfo("silent")
-        assertEquals(TrackChoice(null, -1), PlaybackSelection.capture(silent, TrackChoice())!!.restore(silent))
+        assertEquals(TrackChoice(), PlaybackSelection.capture(silent, TrackChoice())!!.restore(silent))
     }
 
     @Test fun changedOrMissingVersionOrTrackRequiresDetails() {

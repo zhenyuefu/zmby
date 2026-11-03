@@ -54,6 +54,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -367,48 +369,91 @@ class ZmbyApp : Application(), ImageLoaderFactory {
      * episode's series supplies the external IDs; Emby markers need the full item (chapters), from
      * the store or, failing that, one request.
      */
-    suspend fun segmentPlan(server: String, item: app.zmby.emby.BaseItemDto, durationMs: Long?): app.zmby.segments.SegmentPlan =
-        segmentLookup(server, item, durationMs).plan
+    suspend fun segmentPlan(server: String, item: app.zmby.emby.BaseItemDto, version: app.zmby.emby.MediaSourceInfo? = null): app.zmby.segments.SegmentPlan =
+        segmentLookup(server, item, version).plan
 
     private val segmentLookups = app.zmby.segments.SegmentLookupCache()
 
-    suspend fun segmentLookup(server: String, item: app.zmby.emby.BaseItemDto, durationMs: Long?): app.zmby.segments.SegmentLookup = withContext(Dispatchers.IO) {
+    /**
+     * Segment markers for [item] played in [version] (one of its sources; null = the item's default):
+     * provider times are checked against that version's runtime, and Emby markers come from an item
+     * timed on that version.
+     */
+    suspend fun segmentLookup(server: String, item: app.zmby.emby.BaseItemDto, version: app.zmby.emby.MediaSourceInfo? = null): app.zmby.segments.SegmentLookup = withContext(Dispatchers.IO) {
         val providers = sources.providers()
         if (providers.none { it.enabled }) return@withContext app.zmby.segments.SegmentLookup()
+        val durationMs = version?.runTimeTicks?.let { app.zmby.emby.ticksToMs(it) } ?: item.runtimeMs
         val request = app.zmby.segments.SegmentLookupCache.Key(server, item.id, durationMs, providers,
-            segments.changes.value, registry.session(server), settings.publicMetaDbKey.value)
+            segments.changes.value, registry.session(server), settings.publicMetaDbKey.value, version?.id)
         segmentLookups.get(request, isCurrent = {
             request.providers == sources.providers() && request.revision == segments.changes.value &&
                 request.connection == registry.session(server) && request.providerKey == settings.publicMetaDbKey.value
-        }) { fetchSegments(server, item, durationMs) }
+        }) { fetchSegments(server, item, version, durationMs) }
     }
 
-    private suspend fun fetchSegments(server: String, item: app.zmby.emby.BaseItemDto, durationMs: Long?): app.zmby.segments.SegmentLookup {
+    private suspend fun fetchSegments(server: String, item: app.zmby.emby.BaseItemDto, version: app.zmby.emby.MediaSourceInfo?, durationMs: Long?): app.zmby.segments.SegmentLookup {
         var embyUnavailable = false
         suspend fun fullItem(): app.zmby.emby.BaseItemDto = try { library.item(server, item.id) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { embyUnavailable = true; item }
         val seriesId = item.seriesId?.takeIf { item.type == "Episode" }
         val series = seriesId?.let { id -> store.detail(server, id)?.item ?: runCatching { library.providerIdsOf(server, id) }.getOrNull() }
-        val full = if (item.chapters.isNotEmpty()) item else store.detail(server, item.id)?.item?.takeIf { it.chapters.isNotEmpty() }
-            ?: if (sources.providers().any { it.enabled && it.provider == SegmentProvider.Emby }) fullItem() else item
+        val loaded = if (item.chapters.isNotEmpty() || version?.chapters?.isNotEmpty() == true) item
+            else store.detail(server, item.id)?.item?.takeIf { it.chapters.isNotEmpty() }
+                ?: if (sources.providers().any { it.enabled && it.provider == SegmentProvider.Emby }) fullItem() else item
+        // Emby lists each version's chapters on its media source: those are timed on the version played.
+        val full = app.zmby.segments.SegmentRules.asPlayed(loaded,
+            version?.let { v -> v.takeIf { it.chapters.isNotEmpty() } ?: loaded.mediaSources.firstOrNull { it.id == v.id } })
         val key = workKeyOf(server, item)
         val result = segments.lookup(full, series, key, durationMs) {
+            // Another cut grouped under this item keeps its chapters on its own item (Emby's ItemId).
+            val own = (version?.itemId ?: version?.id)?.takeIf { it != item.id && !app.zmby.segments.SegmentRules.sameCut(full, durationMs) }?.let { id ->
+                try { library.item(server, id).takeIf { it.id != item.id } }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { null }
+            }
             val order = registry.all.associate { it.id to it.order }
-            store.copiesOfWork(key, server).sortedBy { order[it.server] ?: Int.MAX_VALUE }.map { it.item }
+            listOfNotNull(own) + store.copiesOfWork(key, server).sortedBy { order[it.server] ?: Int.MAX_VALUE }.map { it.item }
         }
         return result.copy(unavailable = result.unavailable + if (embyUnavailable) setOf(SegmentProvider.Emby) else emptySet())
     }
 
-    /** An explicit user action updates only this server's item, then the local progress views. */
-    suspend fun setWatched(ref: ServerItem, played: Boolean) = withContext(Dispatchers.IO) {
-        val data = library.setPlayed(ref.server, ref.item.id, played).copy(
-            played = played, playbackPositionTicks = 0, lastPlayedDate = java.time.Instant.now().toString(),
-        )
-        _recentProgress.update { (it - ref.key + (ref.key to data)).entries.toList().takeLast(128).associate { row -> row.toPair() } }
-        store.recordProgress(ref.server, ref.item.id, data.playbackPositionTicks, data.played)
-        if (played) watchlist.removeStarted(listOf(ref.copy(item = ref.item.copy(userData = data))))
-    }
+    private val watchedWrites = kotlinx.coroutines.sync.Mutex()
+
+    /** Persist a manual mark before syncing confirmed copies. An episode keeps its own identity. */
+    suspend fun setWatched(ref: ServerItem, played: Boolean, instances: List<ServerItem>): Int =
+        appScope.async(Dispatchers.IO) {
+            watchedWrites.withLock {
+                val data = (ref.item.userData ?: app.zmby.emby.UserItemData()).copy(
+                    played = played, playbackPositionTicks = 0, lastPlayedDate = java.time.Instant.now().toString())
+                suspend fun record(target: ServerItem) {
+                    if (target.server == "catalog") store.putItems(target.server, listOf(target.item.copy(userData = data)))
+                    else store.recordProgress(target.server, target.item.id, 0, played)
+                    _recentProgress.update { (it - target.key + (target.key to data)).entries.toList().takeLast(128).associate { row -> row.toPair() } }
+                }
+                record(ref)
+                if (played) watchlist.removeStarted(listOf(ref.copy(item = ref.item.copy(userData = data))))
+                val known = (instances + ref).filter { it.server != "catalog" && it.item.type == ref.item.type }.groupBy { it.server }
+                val ids = ref.item.providerIds.map { (key, id) -> "${key.lowercase()}.$id" }
+                val servers = registry.enabled.map { it.id }.filter { it in known || ids.isNotEmpty() }
+                val results = fanOut.all(servers, FanOut.SEARCH_TIMEOUT_MS) { server ->
+                    val knownCopies = known[server].orEmpty()
+                    for (target in knownCopies.distinctBy { it.key }) {
+                        library.setPlayed(server, target.item.id, played)
+                        record(target)
+                    }
+                    if (ids.isNotEmpty()) {
+                        val extra = library.byProviderIds(server, requireNotNull(ref.item.type), ids)
+                            .filter { app.zmby.catalog.ResourceMapping.same(ref.item, it) && knownCopies.none { copy -> copy.item.id == it.id } }
+                        for (item in extra.distinctBy { it.id }) {
+                            library.setPlayed(server, item.id, played)
+                            record(ServerItem(server, item))
+                        }
+                    }
+                }
+                results.count { it !is app.zmby.aggregate.Outcome.Ok }
+            }
+        }.await()
 
     /** After a playback ended with [outcome] (the stop report is on its way to the server). */
     suspend fun onPlayed(ref: ServerItem, outcome: PlaybackOutcome) {

@@ -59,15 +59,29 @@ class SegmentRepositoryTest {
 
     @Test fun `local marks for the season apply, the episode's own win, and come first`() = runBlocking {
         repo.saveManual(key, ManualMarks(introEndMs = 80_000, season = true))
-        assertEquals(ManualMarks(introEndMs = 80_000, season = true), repo.manual(key))
-        assertEquals(ManualMarks(introEndMs = 80_000, season = true), repo.manual("series:tmdb:1:s01:e03"))
+        assertEquals(SavedMarks(ManualMarks(), ManualMarks(introEndMs = 80_000, season = true)), repo.manual(key))
+        assertEquals(ManualMarks(introEndMs = 80_000, season = true), repo.manual("series:tmdb:1:s01:e03").season)
         var plan = repo.plan(ep, series, key, 2_700_000) { emptyList() }
         assertEquals(SegmentProvider.Local to Segment(SegmentKind.Intro, 0, 80_000), plan[SegmentKind.Intro])
         assertEquals(SegmentProvider.TheIntroDB, plan[SegmentKind.Credits]?.first)
         repo.saveManual(key, ManualMarks(introEndMs = 70_000, creditsStartMs = 2_400_000))
-        assertEquals(ManualMarks(70_000, 2_400_000, season = false), repo.manual(key))
+        assertEquals(ManualMarks(70_000, 2_400_000, season = false), repo.manual(key).episode)
         plan = repo.plan(ep, series, key, 2_700_000) { emptyList() }
+        assertEquals(Segment(SegmentKind.Intro, 0, 70_000), plan[SegmentKind.Intro]?.second)
         assertEquals(Segment(SegmentKind.Credits, 2_400_000, null), plan[SegmentKind.Credits]?.second)
+    }
+
+    @Test fun `a kind the episode has no mark of falls back to the season's`() = runBlocking {
+        repo.saveManual(key, ManualMarks(introEndMs = 70_000))
+        repo.saveManual("series:tmdb:1:s01:e03", ManualMarks(creditsStartMs = 2_400_000, season = true))
+        assertEquals(SavedMarks(ManualMarks(introEndMs = 70_000), ManualMarks(creditsStartMs = 2_400_000, season = true)), repo.manual(key))
+        val plan = repo.plan(ep, series, key, 2_700_000) { emptyList() }
+        assertEquals(SegmentProvider.Local to Segment(SegmentKind.Intro, 0, 70_000), plan[SegmentKind.Intro])
+        assertEquals(SegmentProvider.Local to Segment(SegmentKind.Credits, 2_400_000, null), plan[SegmentKind.Credits])
+        // Saving the season from this episode clears its own marks: the season's apply to both kinds.
+        repo.saveManual(key, ManualMarks(introEndMs = 85_000, creditsStartMs = 2_400_000, season = true))
+        assertEquals(ManualMarks(), repo.manual(key).episode)
+        assertEquals(Segment(SegmentKind.Intro, 0, 85_000), repo.plan(ep, series, key, 2_700_000) { emptyList() }[SegmentKind.Intro]?.second)
     }
 
     @Test fun `Emby markers, borrowed within tolerance, and unkeyed items never go out`() = runBlocking {
@@ -78,6 +92,17 @@ class SegmentRepositoryTest {
         val unkeyed = repo.plan(ep, null, "item:a:e", 2_700_000) { emptyList() }
         assertTrue(unkeyed.isEmpty())
         assertEquals(1, tidb.calls)
+    }
+
+    @Test fun `Emby markers follow the version played, not the item's default cut`() = runBlocking {
+        order = listOf(SegmentProvider.Emby, SegmentProvider.TheIntroDB)
+        // The item's chapters are the 45-minute cut's; an extended 55-minute cut is played.
+        val item = ep.copy(runTimeTicks = msToTicks(2_700_000), chapters = listOf(ChapterInfo(null, msToTicks(95_000), "IntroEnd")))
+        val extended = BaseItemDto(id = "e2", runTimeTicks = msToTicks(3_300_000), chapters = listOf(ChapterInfo(null, msToTicks(120_000), "IntroEnd")))
+        assertEquals(SegmentProvider.Emby to Segment(SegmentKind.Intro, 0, 95_000), repo.plan(item, series, key, 2_700_000) { listOf(extended) }[SegmentKind.Intro])
+        assertEquals(SegmentProvider.Emby to Segment(SegmentKind.Intro, 0, 120_000), repo.plan(item, series, key, 3_300_000) { listOf(extended) }[SegmentKind.Intro])
+        // Nothing timed on that cut: the next provider gives the intro.
+        assertEquals(SegmentProvider.TheIntroDB, repo.plan(item, series, key, 3_300_000) { emptyList() }[SegmentKind.Intro]?.first)
     }
 
     @Test fun `a failing provider is paused and its old answer still used`() = runBlocking {

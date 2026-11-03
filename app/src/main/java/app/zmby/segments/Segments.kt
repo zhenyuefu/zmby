@@ -2,6 +2,7 @@ package app.zmby.segments
 
 import app.zmby.data.SegmentProvider
 import app.zmby.emby.BaseItemDto
+import app.zmby.emby.MediaSourceInfo
 import app.zmby.emby.ticksToMs
 import app.zmby.store.SegmentMarker
 import kotlin.math.abs
@@ -144,20 +145,48 @@ object SegmentRules {
     }
 
     /**
-     * Borrowing Emby markers (local-data spec): this server has none, another server's copy of the
-     * same work has them, and the two runtimes are within [BORROW_TOLERANCE_MS]. Candidates in
-     * server priority order; the first that qualifies is used.
+     * [item] as played in [version]: Emby lists chapters per media source, and a version's own
+     * chapters (with its runtime) are the ones timed on it; without them the item stays as it is.
+     */
+    fun asPlayed(item: BaseItemDto, version: MediaSourceInfo?): BaseItemDto {
+        val chapters = version?.chapters?.takeIf { it.isNotEmpty() } ?: return item
+        return item.copy(chapters = chapters, runTimeTicks = version.runTimeTicks ?: item.runTimeTicks)
+    }
+
+    /**
+     * Whether [item]'s own chapters were timed on the version being played ([durationMs]): Emby keeps
+     * one set of chapters per item, for the file its runtime describes, so another cut grouped under
+     * the same item (a longer edition) does not match. Unknown runtimes are taken as matching.
+     */
+    fun sameCut(item: BaseItemDto, durationMs: Long?): Boolean {
+        val runtime = item.runtimeMs ?: return true
+        return durationMs == null || durationMs <= 0 || abs(runtime - durationMs) <= BORROW_TOLERANCE_MS
+    }
+
+    /**
+     * Borrowing Emby markers (local-data spec): the played item has none for this version, another
+     * item of the same work has them (the played version's own item, then other servers' copies in
+     * priority order), and its runtime is within [BORROW_TOLERANCE_MS]; the first that qualifies is used.
      */
     fun borrow(durationMs: Long?, others: List<BaseItemDto>): List<Segment> {
         if (durationMs == null || durationMs <= 0) return emptyList()
         for (o in others) {
-            val runtime = o.mediaSources.firstNotNullOfOrNull { it.runTimeTicks }?.let(::ticksToMs) ?: o.runtimeMs ?: continue
+            // The chapters belong to the item's own file, which its runtime describes.
+            val runtime = o.runtimeMs ?: o.mediaSources.firstNotNullOfOrNull { it.runTimeTicks }?.let(::ticksToMs) ?: continue
             if (abs(runtime - durationMs) > BORROW_TOLERANCE_MS) continue
             val segs = fromChapters(o)
             if (segs.isNotEmpty()) return segs
         }
         return emptyList()
     }
+
+    /**
+     * 本地手动标记 (local-data spec): for each kind the episode's own mark ([workKey]), else its
+     * season's, so a season's credits still apply to an episode that only has its own intro.
+     */
+    fun localMarks(rows: List<SegmentMarker>, workKey: String): List<SegmentMarker> =
+        rows.filter { SegmentKind.of(it.kind) != null }.groupBy { it.kind }.values
+            .map { same -> same.firstOrNull { it.workKey == workKey } ?: same.first() }
 
     // ---- segment_marker rows: one per (work, provider, kind); "none" says the provider had nothing.
 
@@ -305,6 +334,21 @@ object SegmentMarks {
     const val INTRO_DEFAULT_MS = 90_000L
     /** Where an unset credits start begins, before the end of the video. */
     const val CREDITS_DEFAULT_BEFORE_END_MS = 180_000L
+
+    /**
+     * What the editor opens with: the season's marks under 本季全部 when the episode has none of its
+     * own, else the episode's (the season's then show as inherited).
+     */
+    fun opening(saved: SavedMarks): ManualMarks =
+        if (saved.episode.isEmpty && !saved.season.isEmpty) saved.season else saved.episode
+
+    /**
+     * Switching 本集 | 本季全部 keeps what was typed: into the season an unset kind takes the season's
+     * mark (saving does not erase it); back to the episode a kind equal to the season's inherits it again.
+     */
+    fun rescope(draft: ManualMarks, toSeason: Boolean, season: ManualMarks): ManualMarks =
+        if (toSeason) ManualMarks(draft.introEndMs ?: season.introEndMs, draft.creditsStartMs ?: season.creditsStartMs, season = true)
+        else ManualMarks(draft.introEndMs.takeIf { it != season.introEndMs }, draft.creditsStartMs.takeIf { it != season.creditsStartMs }, season = false)
 
     /** The first press on an unset time shows [default]; later presses move it by [deltaMs] within the video. */
     fun adjust(value: Long?, default: Long, deltaMs: Long, runtimeMs: Long?): Long {

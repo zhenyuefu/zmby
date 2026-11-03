@@ -22,6 +22,10 @@ interface WorkDao {
     @Query("SELECT * FROM work_instance WHERE server_id = :server AND item_id = :item")
     fun instanceFlow(server: String, item: String): Flow<WorkInstance?>
 
+    /** Every server's rows for these item ids; callers keep the `server + item` pairs they asked for. */
+    @Query("SELECT * FROM work_instance WHERE item_id IN (:items)")
+    fun instancesFlow(items: List<String>): Flow<List<WorkInstance>>
+
     @Query("SELECT * FROM work_instance WHERE work_key = :key")
     suspend fun instancesOfWork(key: String): List<WorkInstance>
 
@@ -175,6 +179,8 @@ data class CastEntry(
 interface VersionDao {
     @Upsert suspend fun upsert(rows: List<VersionSummary>)
     @Query("SELECT * FROM version_summary WHERE for_key = :key") suspend fun versions(key: String): List<VersionSummary>
+    /** Works whose version cards were stored most recently (画质偏好 preview). */
+    @Query("SELECT for_key FROM version_summary GROUP BY for_key ORDER BY MAX(fetched_at) DESC LIMIT :limit") suspend fun recentKeys(limit: Int): List<String>
     @Query("DELETE FROM version_summary WHERE for_key = :key AND server_id = :server") suspend fun delete(key: String, server: String)
     @Query("DELETE FROM version_summary WHERE server_id = :server") suspend fun deleteServer(server: String)
 }

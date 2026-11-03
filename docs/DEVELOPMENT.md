@@ -63,6 +63,10 @@ adb -s emulator-5580 reverse tcp:9529 tcp:9529
 
 mock 加 `--many-tracks` 可让「沙丘：第二部」的 REMUX 版本提供 25 条音轨与 60 条字幕，用于验证卡内滚动。
 
+mock 加 `--segments` 给「漫长的季节」各集加片头片尾标记，并让「奥本海默」有三个时长不同的版本（院线 180 分、加长 200 分、IMAX 190 分），各带自己的标记：前两个把章节列在版本上，IMAX 只在以 `ItemId` 取到的自身条目上，用于验证按播放版本取 Emby 标记。
+
+宿主机代理或 VPN 拦截模拟器访问 `10.0.2.2` 时，可改走 adb 反向端口：`adb reverse tcp:8096 tcp:8096`，在服务器管理里给 mock 服务器添加线路 `127.0.0.1:8096`，并用 `adb shell setprop debug.zmby.fake_zidoo_base http://127.0.0.1:8096` 让假播放器回报状态。
+
 mock 还支持 `--pinyin`、`--redirect`、`--sign-ttl`、`--require-ua`、`--video` 和 `--suggestions`（主推区建议接口的有无），并提供相似作品、建议、电影推荐与一个只接受假令牌的最小 TMDB（调试构建用 `adb shell setprop debug.zmby.tmdb_base http://10.0.2.2:8096/_mock/tmdb/3/` 指向它）；用 `python3 -I tools/mock_emby.py --help` 查看参数。真实播放测试请使用你有权分发的测试视频，仓库不附带影片。
 
 ## 代码结构

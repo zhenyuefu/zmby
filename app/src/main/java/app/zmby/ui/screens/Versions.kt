@@ -118,6 +118,9 @@ import app.zmby.aggregate.FailureTracker
 import app.zmby.aggregate.VersionFacts
 import app.zmby.aggregate.VersionPrefs
 import app.zmby.aggregate.VersionRanker
+import app.zmby.aggregate.VersionMarks
+import app.zmby.aggregate.versionPrefs
+import app.zmby.aggregate.versionPrefsFlow
 import app.zmby.data.ServerItem
 import app.zmby.ui.components.Health
 
@@ -137,6 +140,21 @@ internal fun sourceNumberNote(v: Version): String? {
 }
 
 internal fun uniqueVersions(versions: List<Version>): List<Version> = versions.distinctBy { it.key }
+
+internal fun versionFacts(v: Version) = VersionFacts(v.server.id, v.server.order, v.server.health != Health.Off, v.server.latencyMs, v.source)
+
+internal fun versionMarks(versions: List<Version>, prefs: VersionPrefs): Map<String, VersionMarks> {
+    val byFacts = VersionRanker.marks(versions.map(::versionFacts), prefs)
+    return versions.associate { v -> v.key to (byFacts[v.server.id to v.source.id] ?: VersionMarks()) }
+}
+
+/** The ranking settings as they are now; recomposes when any of them changes. */
+@Composable
+internal fun rememberVersionPrefs(): VersionPrefs {
+    val settings = LocalContext.current.zmby.settings
+    val flow = remember(settings) { settings.versionPrefsFlow() }
+    return flow.collectAsState(remember(settings) { settings.versionPrefs() }).value
+}
 
 /** One server's card in 版本: only servers that have a playable version get one. */
 data class VersionGroup(
@@ -160,6 +178,8 @@ class VersionsState(
     /** Every version in default-version order (VersionRanker): what 播放失败自动换源 tries in turn. */
     val ordered: List<Version> = emptyList(),
     val refresh: () -> Unit = {},
+    /** IMAX, 超过码率上限 and below the wanted resolution, by [Version.key] (ui-spec §2.22). */
+    val marks: Map<String, VersionMarks> = emptyMap(),
 ) {
     val all: List<Version> get() = groups.flatMap { it.versions }
 
@@ -228,24 +248,16 @@ internal fun rememberVersions(
             if (forKey != null) DetailViewModel.rememberVersions(app, forKey, r)
         }
     }
-    val settings = app.settings
-    val pattern by settings.versionPattern.flow.collectAsState()
-    val quality by settings.quality.flow.collectAsState()
-    val nonDisc by settings.preferNonDisc.flow.collectAsState()
-    return remember(servers, found, cached, item, pattern, quality, nonDisc, lookUp, onRefresh) {
+    val rankPrefs = rememberVersionPrefs()
+    return remember(servers, found, cached, item, rankPrefs, lookUp, onRefresh) {
         val (groups, unresponsive) = versionCards(self, item, servers.filter { it.id in others }, found, cached)
-        val prefs = VersionPrefs(
+        val prefs = rankPrefs.copy(
             manual = app.library.pickedVersion(Keys.work(server, if (item.type == "Episode" && series != null) series else item) + episodeSuffix(item)),
-            pattern = VersionPrefs.pattern(pattern),
-            quality = quality,
-            preferNonDisc = nonDisc,
         )
         val all = groups.flatMap { it.versions }
-        val facts = all.map { it to VersionFacts(it.server.id, it.server.order, it.server.health != Health.Off, it.server.latencyMs, it.source) }
-        val comparator = VersionRanker.comparator(prefs)
-        val ordered = facts.sortedWith { a, b -> comparator.compare(a.second, b.second) }.map { it.first }
+        val ordered = VersionRanker.rank(all, prefs, ::versionFacts)
         val default = ordered.firstOrNull()
-        VersionsState(groups, if (lookUp) others.count { it !in found } else 0, default, unresponsive, ordered = ordered, retry = {
+        VersionsState(groups, if (lookUp) others.count { it !in found } else 0, default, unresponsive, ordered = ordered, marks = versionMarks(all, prefs), retry = {
             // 「n 台未响应」 pressed: lift their cool-downs and ask those servers again.
             unresponsive.forEach { app.registry.retry(it) }
             found = found.filterKeys { it !in unresponsive }
@@ -436,6 +448,7 @@ internal fun VersionSection(
                     group,
                     entry = entry?.takeIf { entryVersion != null && entryVersion in group.versions }?.let { r -> { v: Version -> if (v == entryVersion) r else null } },
                     isDefault = { it.key == state.default?.key },
+                    marks = { state.marks[it.key] ?: VersionMarks() },
                     isSelected = { it.key == selected?.key },
                     onFocusVersion = { v -> onPreview(v) },
                     onClick = { v -> if (v.key == selected?.key) onPlay(v) else onSelect(v) },
@@ -456,6 +469,7 @@ private fun ServerVersionCard(
     group: VersionGroup,
     entry: ((Version) -> FocusRequester?)?,
     isDefault: (Version) -> Boolean,
+    marks: (Version) -> VersionMarks,
     isSelected: (Version) -> Boolean,
     onFocusVersion: (Version) -> Unit,
     onClick: (Version) -> Unit,
@@ -498,10 +512,13 @@ private fun ServerVersionCard(
                     .focusProperties { onExit = { if (requestedFocusDirection == FocusDirection.Down) cancelFocusChange() } }
                     .focusGroup(), contentPadding = PaddingValues(4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(group.versions, key = { it.key }, contentType = { "version" }) { v ->
+                        val mark = marks(v)
                         SelectableRow(
                             onClick = { onClick(v) },
                             modifier = entry?.invoke(v)?.let { Modifier.focusRequester(it) } ?: Modifier,
                             tile = true,
+                            // Below the wanted resolution with 「没有时接受更低分辨率」 off: dimmed, still playable.
+                            dimmed = mark.belowResolution,
                             selected = isSelected(v),
                             // 已选 is a 2 px white inner ring, focus the white fill (SeriesVersions.dc.html).
                             showCheck = false,
@@ -518,6 +535,7 @@ private fun ServerVersionCard(
                                         Text(versionTitle(v.source), fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                         if (isDefault(v)) Badge("默认", fill = true)
                                         discBadge(v.source)?.let { Badge(it, fill = true) }
+                                        if (mark.imax) Badge("IMAX", fill = true)
                                     }
                                     formatSize(v.source.size)?.let { Text(it, fontSize = 17.sp, color = secondaryText()) }
                                 }
@@ -527,6 +545,7 @@ private fun ServerVersionCard(
                                         badges.forEach { Badge(it) }
                                     }
                                 }
+                                if (mark.overCap) Text("超过码率上限", fontSize = 15.sp, color = secondaryText(), maxLines = 1)
                                 sourceNumberNote(v)?.let { Text(it, fontSize = 15.sp, color = secondaryText(), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                             }
                         }
@@ -572,8 +591,8 @@ internal fun rememberEffectiveTracks(v: Version, choice: TrackChoice): Effective
     val audioLanguage by settings.audioLanguage.flow.collectAsState()
     val subtitleLanguage by settings.subtitleLanguage.flow.collectAsState()
     val audio = remember(v.source) { audioRows(v.source) }
-    val effective = remember(v.source, choice, audioLanguage, subtitleLanguage) {
-        TrackPreference.choose(v.source, choice, audioLanguage, subtitleLanguage)
+    val effective = remember(v.source, choice, audioLanguage, subtitleLanguage, v.item.originalLanguage) {
+        TrackPreference.choose(v.source, choice, audioLanguage, subtitleLanguage, v.item.originalLanguage)
     }
     val audioOn = effective.audio ?: v.source.defaultAudioStreamIndex ?: audio.firstOrNull { it.tag == "默认" }?.embyIndex ?: audio.firstOrNull()?.embyIndex
     val subOn = (effective.subtitle ?: v.source.defaultSubtitleStreamIndex?.takeIf { it >= 0 } ?: ZidooTracks.SUBTITLE_OFF)

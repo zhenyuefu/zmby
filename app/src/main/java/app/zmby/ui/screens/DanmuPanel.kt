@@ -14,6 +14,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
+import app.zmby.ui.components.GlassToggle
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Text
+import app.zmby.danmu.DanmuMatch
 import app.zmby.danmu.DanmuQuery
 import app.zmby.danmu.DanmuSelection
 import app.zmby.data.ServerItem
@@ -63,13 +70,17 @@ import app.zmby.ui.theme.Z
 import app.zmby.ui.userMessage
 import app.zmby.zmby
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** What the 弹幕 button shows for the version that plays (ui-spec §2.19). */
-internal enum class DanmuStatus { Auto, Manual, Unmatched, Matching }
+internal enum class DanmuStatus { Auto, Manual, Unmatched, Matching, Off }
 
-internal fun danmuStatus(selection: DanmuSelection?, matching: Boolean): DanmuStatus = when {
+/** 已关闭 > 匹配中 > 未匹配 > 已手动选择 > 自动匹配 (ui-spec §2.19 修订). */
+internal fun danmuStatus(selection: DanmuSelection?, matching: Boolean, enabled: Boolean = true): DanmuStatus = when {
+    !enabled -> DanmuStatus.Off
     matching -> DanmuStatus.Matching
     selection == null -> DanmuStatus.Unmatched
     selection.manual -> DanmuStatus.Manual
@@ -82,6 +93,7 @@ internal fun danmuTip(status: DanmuStatus): String = when (status) {
     DanmuStatus.Manual -> "弹幕 · 已手动选择"
     DanmuStatus.Unmatched -> "弹幕 · 未匹配"
     DanmuStatus.Matching -> "弹幕 · 正在匹配…"
+    DanmuStatus.Off -> "弹幕 · 已关闭"
 }
 
 /** 「第 1 季第 7 集」 beside the panel title; films have none. */
@@ -98,6 +110,7 @@ internal fun danmuStatusSource(status: DanmuStatus, selection: DanmuSelection?):
         else "搜索「${selection?.searchTitle.orEmpty()}」后选择 · 下次播放生效"
     DanmuStatus.Unmatched -> "可搜索其他译名后手动选择"
     DanmuStatus.Matching -> "正在向弹幕服务器查询"
+    DanmuStatus.Off -> "弹幕已关闭"
 }
 
 /** One anime of the search results with its episodes, in the server's order. */
@@ -113,6 +126,7 @@ internal fun danmuRowLabel(selection: DanmuSelection): String =
 /** The 弹幕 button and its side panel on one detail page: which version is open, and focus back. */
 @Stable
 internal class DanmuPanelState {
+    var matchPending by mutableStateOf(false)
     var open by mutableStateOf<ServerItem?>(null)
     /** Bumped when the panel closes, so the button reads the (possibly changed) choice again. */
     var version by mutableIntStateOf(0)
@@ -123,19 +137,29 @@ internal class DanmuPanelState {
 internal fun rememberDanmuPanel(): DanmuPanelState = remember { DanmuPanelState() }
 
 /**
- * The round 弹幕 button at the end of the header actions (ui-spec §2.19): shown only with 弹幕 on,
- * an address set and a version to play. Automatic match is the resting look, a manual choice has
- * the white ring, no match has the amber dot, matching spins.
+ * The round 弹幕 button at the end of the header actions (ui-spec §2.19 修订): shown with an address
+ * set and a version to play, also while 弹幕 is off so it can be switched back on here. Automatic
+ * match is the resting look, a manual choice has the white ring, no match has the amber dot,
+ * matching spins; off is the crossed-out bubble at 55 % white.
  */
 @Composable
 internal fun DanmuAction(ref: ServerItem?, panel: DanmuPanelState) {
     val app = LocalContext.current.zmby
     val enabled by app.settings.danmu.flow.collectAsState()
     val address by app.settings.danmuApiBase.flow.collectAsState()
-    if (!enabled || address.isBlank() || ref == null) return
+    if (address.isBlank()) return
+    // No version yet (resources still being looked up): the button holds its place, dimmed, so the
+    // header does not shift when one arrives (ui-spec §2.15).
+    if (ref == null) {
+        ActionIconButton(if (enabled) Glyph.Danmu else Glyph.DanmuOff, "弹幕 · 找到资源后可用", {}, enabled = false,
+            solidWhenOn = false, focusKey = "action:danmu")
+        return
+    }
     var selection by remember(ref.key) { mutableStateOf<DanmuSelection?>(null) }
     var matching by remember(ref.key) { mutableStateOf(true) }
-    LaunchedEffect(ref.key, panel.version, address) {
+    LaunchedEffect(ref.key, panel.version, address, enabled) {
+        // Off needs no match; the panel matches once 弹幕 is switched on there.
+        if (!enabled) return@LaunchedEffect
         matching = true
         selection = try {
             app.danmuQueries.query(ref.server, ref.item)?.let { q -> app.danmu.current(app.danmuEndpoint(), ref.key, q, app.danmuQueries::enrich) }
@@ -150,19 +174,21 @@ internal fun DanmuAction(ref: ServerItem?, panel: DanmuPanelState) {
         // The panel just closed: focus comes back to this button.
         if (panel.version > 0) runCatching { panel.button.requestFocus() }
     }
-    val status = danmuStatus(selection, matching)
+    val status = danmuStatus(selection, matching, enabled)
     ActionIconButton(
-        Glyph.Danmu, danmuTip(status), onClick = { panel.open = ref }, Modifier.focusRequester(panel.button),
+        if (status == DanmuStatus.Off) Glyph.DanmuOff else Glyph.Danmu, danmuTip(status),
+        onClick = { panel.matchPending = enabled && matching; panel.open = ref }, Modifier.focusRequester(panel.button),
         on = status == DanmuStatus.Manual, busy = status == DanmuStatus.Matching, solidWhenOn = false,
         focusKey = "action:danmu", dot = status == DanmuStatus.Unmatched,
         allowWhileBusy = true,
+        restingGlyphAlpha = if (status == DanmuStatus.Off) 0.55f else 1f,
     )
 }
 
 /** Shows the side panel while [DanmuPanelState.open] is set. */
 @Composable
 internal fun DanmuPanelHost(panel: DanmuPanelState) {
-    panel.open?.let { ref -> DanmuPanel(ref, onDismiss = { panel.open = null; panel.version++ }) }
+    panel.open?.let { ref -> DanmuPanel(ref, panel.matchPending, onDismiss = { panel.open = null; panel.version++ }) }
 }
 
 private const val SEARCH_FAILED = "搜索失败"
@@ -174,7 +200,7 @@ private const val SEARCH_FAILED = "搜索失败"
  * 完成. Back closes it anywhere; focus returns to the button.
  */
 @Composable
-private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
+private fun DanmuPanel(ref: ServerItem, matchPending: Boolean, onDismiss: () -> Unit) {
     val app = LocalContext.current.zmby
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -184,6 +210,11 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
     val chosenRow = remember { FocusRequester() }
     val firstRow = remember { FocusRequester() }
     val footer = remember { FocusRequester() }
+    val toggle = remember { FocusRequester() }
+    // 显示弹幕 in the panel is the same global setting as 设置 › 播放 › 弹幕 (ui-spec §2.19 修订).
+    val enabled by app.settings.danmu.flow.collectAsState()
+    // Switched on here: the content comes back and searches, but focus stays on the switch.
+    var keepFocus by remember { mutableStateOf(false) }
     val list = rememberLazyListState()
     var query by remember(ref.key) { mutableStateOf<DanmuQuery?>(null) }
     val resolvedQuery = remember(ref.key) { kotlinx.coroutines.CompletableDeferred<DanmuQuery?>() }
@@ -198,13 +229,19 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
     var focusTick by remember { mutableIntStateOf(0) }
     var selectionRevision by remember(ref.key) { mutableIntStateOf(0) }
 
-    suspend fun runSearch(refresh: Boolean = false) {
+    var aliases by remember(ref.key) { mutableStateOf(emptyList<String>()) }
+    var edited by remember(ref.key) { mutableStateOf(false) }
+    var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    suspend fun runSearch(refresh: Boolean = false, initiatedByUser: Boolean = false) {
         val term = keyword.trim()
         if (term.isEmpty()) return
         searching = true
         note = null
         try {
-            results = app.danmu.search(endpoint, term, refresh)
+            val found = app.danmu.search(endpoint, term, refresh)
+            if (keyword.trim() != term || !initiatedByUser && edited) return
+            results = found
             searched = true
         } catch (e: CancellationException) {
             throw e
@@ -216,23 +253,50 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
             searching = false
         }
     }
-    fun search() {
-        if (!searching) scope.launch { runSearch(refresh = true); focusTick++ }
+    fun submit(alias: String? = null) {
+        edited = true
+        if (alias != null) keyword = alias
+        searchJob?.cancel()
+        searchJob = scope.launch {
+            if (alias != null) query?.let { app.danmu.preferTitle(endpoint, ref.key, it, alias) }
+            runSearch(refresh = alias == null, initiatedByUser = true)
+            focusTick++
+        }
     }
 
-    // The explicit picker is a search surface: never wait for the automatic matcher or aliases.
+    fun search() = submit()
+
     LaunchedEffect(ref.key, endpoint) {
-        runSearch()
-        focusTick++
+        if (matchPending && enabled) searchJob = scope.launch { runSearch(); focusTick++ }
     }
-    LaunchedEffect(ref.key, endpoint) {
+    LaunchedEffect(query) {
+        query?.let { q ->
+            aliases = q.names
+            aliases = app.danmuQueries.enrich(q).names
+        }
+    }
+    LaunchedEffect(ref.key, endpoint, enabled) {
+        if (!enabled) return@LaunchedEffect
         val revision = selectionRevision
         try {
             val q = app.danmuQueries.query(ref.server, ref.item)
             query = q
             resolvedQuery.complete(q)
+            val preferred = q?.let { app.danmu.preferredTitle(endpoint, ref.key, it) }
             val matched = q?.let { app.danmu.current(endpoint, ref.key, it, app.danmuQueries::enrich) }
             if (revision == selectionRevision) current = matched
+            if (!edited && revision == selectionRevision) {
+                if (preferred != null || matched != null) searchJob?.cancel()
+                if (preferred != null && preferred != matched?.searchTitle) {
+                    keyword = preferred
+                    runSearch()
+                } else if (matched != null) {
+                    keyword = matched.searchTitle
+                    val found = if (matched.manual) app.danmu.search(endpoint, matched.searchTitle)
+                        else app.danmu.candidates(endpoint, ref.key, q, matched)
+                    if (!edited) { results = found; searched = true }
+                } else if (!matchPending) runSearch()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -244,19 +308,28 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
         }
         focusTick++
     }
+    val groups by produceState(emptyList<DanmuGroup>(), results) {
+        value = withContext(Dispatchers.Default) { danmuGroups(results) }
+    }
+    val names = remember(aliases, current?.searchTitle, groups) {
+        (aliases + listOfNotNull(current?.searchTitle) + groups.mapNotNull { group ->
+            group.episodes.firstOrNull()?.target?.animeTitle?.let(DanmuMatch::searchTitle)?.takeIf { it.isNotBlank() }
+        }).distinct()
+    }
     // Initial focus: the chosen episode when it is listed, else the search field.
-    LaunchedEffect(focusTick) {
+    LaunchedEffect(focusTick, groups) {
         if (focusTick == 0) {
-            runCatching { field.requestFocus() }
+            delay(16)
+            runCatching { if (enabled) field.requestFocus() else toggle.requestFocus() }
             return@LaunchedEffect
         }
         delay(16)
         val chosen = current?.target?.sourceKey
-        val index = rowIndex(danmuGroups(results), chosen)
+        val index = withContext(Dispatchers.Default) { rowIndex(groups, chosen) }
         if (index != null) {
             list.scrollToItem((index - 1).coerceAtLeast(0))
             delay(16)
-            runCatching { chosenRow.requestFocus() }
+            if (!keepFocus) runCatching { chosenRow.requestFocus() }
         }
     }
 
@@ -290,6 +363,12 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
                 val q = query ?: resolvedQuery.await() ?: error("暂时无法确定影片，请关闭后重试")
                 app.danmu.reset(endpoint, ref.key, q)
                 current = app.danmu.current(endpoint, ref.key, q, app.danmuQueries::enrich)
+                current?.let { matched ->
+                    keyword = matched.searchTitle
+                    results = app.danmu.candidates(endpoint, ref.key, q, matched)
+                    searched = true
+                    focusTick++
+                }
                 note = null
             } catch (e: CancellationException) {
                 throw e
@@ -325,31 +404,55 @@ private fun DanmuPanel(ref: ServerItem, onDismiss: () -> Unit) {
                         Text("弹幕", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold)
                         danmuEpisodeLabel(ref.item)?.let { Text(it, fontSize = 20.sp, color = Z.textSecondary) }
                     }
+                    SelectableRow(
+                        onClick = { keepFocus = !enabled; app.settings.danmu.set(!enabled) },
+                        modifier = Modifier.focusRequester(toggle).height(76.dp),
+                        tile = true,
+                        showCheck = false,
+                        radius = 22.dp,
+                        padding = PaddingValues(start = 22.dp, end = 16.dp),
+                        label = "显示弹幕 ${if (enabled) "开" else "关"}",
+                        focusKey = "danmu:toggle",
+                    ) {
+                        Text("显示弹幕", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        GlassToggle(enabled)
+                    }
+                    // Off (DanmuPanelOff.dc.html): only the title, the switch and 完成.
+                    if (!enabled) Spacer(Modifier.weight(1f))
+                    if (enabled) {
                     val status = danmuStatus(current, matching)
                     StatusCard(status, current, note?.takeUnless { it == SEARCH_FAILED })
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f).focusProperties { down = searchButton; right = searchButton }) {
-                            Field("剧名或其他译名", keyword, { keyword = it }, KeyboardType.Text, last = true, onSubmit = ::search,
+                            Field("剧名或其他译名", keyword, { edited = true; keyword = it }, KeyboardType.Text, last = true, onSubmit = ::search,
                                 initialFocus = field, showLabel = false, height = 64.dp, fontSize = 22, leading = Glyph.Search)
                         }
                         GlassButton(if (searching) "搜索中…" else "搜索分集", ::search,
                             Modifier.focusRequester(searchButton).focusProperties {
                                 up = field
                                 left = field
-                                if (results.isNotEmpty()) down = firstRow
+                                if (results.isNotEmpty() && names.size <= 1) down = firstRow
                             },
                             height = 60.dp, horizontalPadding = 28.dp, fontSize = 21)
+                    }
+                    if (names.size > 1) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(names, key = { it }) { alias ->
+                                GlassButton("译名 · $alias", { submit(alias) }, height = 48.dp, horizontalPadding = 16.dp, fontSize = 18)
+                            }
+                        }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         when {
                             note == SEARCH_FAILED -> GlassButton("搜索失败 · 重试", ::search, height = 60.dp, horizontalPadding = 28.dp, fontSize = 21)
                             searched && results.isEmpty() && !searching -> Text("没有找到分集", fontSize = 21.sp, color = Z.textSecondary, modifier = Modifier.padding(start = 18.dp, top = 14.dp))
-                            else -> Results(danmuGroups(results), current?.target?.sourceKey, list, chosenRow, firstRow, footer, ::choose)
+                            else -> Results(groups, current?.target?.sourceKey, list, chosenRow, firstRow, footer, ::choose)
                         }
+                    }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         // Down from the last result lands here, not on 完成, so a stray press does not close the panel.
-                        GlassButton(if (current?.season == true) "本季恢复自动匹配" else "恢复自动匹配",
+                        if (enabled) GlassButton(if (current?.season == true) "本季恢复自动匹配" else "恢复自动匹配",
                             ::resetToAuto, Modifier.focusRequester(footer), height = 60.dp, horizontalPadding = 28.dp, fontSize = 21)
                         GlassButton("完成", onDismiss, height = 60.dp, horizontalPadding = 28.dp, fontSize = 21)
                         Spacer(Modifier.weight(1f))
@@ -382,6 +485,7 @@ private fun StatusCard(status: DanmuStatus, selection: DanmuSelection?, note: St
         DanmuStatus.Manual -> "已手动选择" to Color.White
         DanmuStatus.Unmatched -> "未匹配" to Z.warn
         DanmuStatus.Matching -> "正在匹配…" to Z.textSecondary
+        DanmuStatus.Off -> "已关闭" to Z.textSecondary
     }
     Row(
         Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.07f), RoundedCornerShape(22.dp)).padding(horizontal = 22.dp, vertical = 18.dp),
@@ -437,7 +541,7 @@ private fun Results(
 }
 
 @Composable
-private fun KeyHint(key: String, what: String) {
+internal fun KeyHint(key: String, what: String) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(key, fontSize = 15.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.background(Color.White.copy(alpha = 0.16f), RoundedCornerShape(8.dp)).padding(horizontal = 7.dp, vertical = 3.dp))

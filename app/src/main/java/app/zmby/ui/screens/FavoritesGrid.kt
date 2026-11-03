@@ -63,12 +63,14 @@ internal fun FavoritesGrid(nav: Nav, search: FocusRequester, entry: FocusRequest
             // Shown from the first instance on a server that is on and reachable; offline instances stay listed.
             val usable = f.instances.sortedBy { i -> servers.firstOrNull { it.id == i.server }?.let { if (it.enabled && it.health != Health.Off) it.order else 1000 + it.order } ?: 9999 }
                 .firstOrNull { i -> servers.any { it.id == i.server } }
-            val ref = usable?.let { ServerItem(it.server, favoriteItem(f, it.itemId)) }
+            val catalog = f.instances.firstOrNull { it.server == "catalog" }
+            val count = f.instances.count { it.server != "catalog" }
+            val ref = (usable ?: catalog)?.let { ServerItem(it.server, favoriteItem(f, it.itemId)) }
             PosterCard2x3(
-                imageUrl = ref?.let { app.library.primaryImage(it) },
+                imageUrl = if (catalog != null && f.imageTag?.startsWith("https://") == true) f.imageTag else ref?.let { app.library.primaryImage(it) },
                 title = visibleText(f.title) ?: UNTITLED,
                 onClick = { if (ref != null) nav.open(ref) },
-                topEnd = if (f.instances.size > 1) "${f.instances.size} 个版本" else null,
+                topEnd = if (count > 1) "$count 个版本" else null,
                 subtitle = listOfNotNull(if (f.type == "Series") "剧集" else "电影", f.year?.toString()).joinToString(" · "),
                 width = 240.dp,
                 focusKey = "fav:${f.workKey}",

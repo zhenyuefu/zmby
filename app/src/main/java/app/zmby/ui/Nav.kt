@@ -66,8 +66,7 @@ interface Nav {
 fun Nav.open(ref: ServerItem) {
     val item = ref.item
     if (ref.server == "catalog") {
-        val parts = item.id.removePrefix("catalog:").split(':')
-        if (parts.size == 3) go(Route.Catalog(app.zmby.catalog.CatalogId(parts[0], parts[1], parts[2])))
+        app.zmby.catalog.CatalogId.fromItemId(item.id)?.let { go(Route.Catalog(it)) }
         return
     }
     when (item.type) {

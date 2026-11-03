@@ -54,6 +54,9 @@ object DanmuMatch {
     private val SEASON = Regex("(?:第\\s*([0-9一二三四五六七八九十]+)\\s*[季部])|(?:\\bSeason\\s*(\\d+))|(?:\\bS(\\d{1,2})\\b)", RegexOption.IGNORE_CASE)
     private val EPISODE_SUFFIX = Regex("\\s+第\\s*\\d+\\s*[话話集].*$")
 
+    /** Keep the spelling, but leave LogVar's source, media type and year out of a new title query. */
+    fun searchTitle(title: String): String = title.trim().replace(TAIL_SOURCE, "").replace(TAIL_TYPE, "").replace(TAIL_YEAR, "").trim()
+
     fun parse(title: String): Parsed {
         var t = title.trim().replace(TAIL_SOURCE, "")
         t = t.replace(TAIL_TYPE, "")

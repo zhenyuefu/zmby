@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -55,17 +56,33 @@ fun SettingsGroup(title: String, modifier: Modifier = Modifier, content: @Compos
 
 private val SetPadding = PaddingValues(start = 24.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)
 
+/**
+ * A row's name with an optional second line. [warn] (ui-spec §2.20) makes it the amber 「what is
+ * missing」 line, darker amber inside a focused white row; settings show no other explanations.
+ */
 @Composable
-private fun SettingLabel(title: String, sub: String?, mono: Boolean, modifier: Modifier) {
+private fun SettingLabel(title: String, sub: String?, mono: Boolean, modifier: Modifier, warn: Boolean = false) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (sub != null) Text(sub, fontSize = 18.sp, color = secondaryText(), fontFamily = if (mono) FontFamily.Monospace else null, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (sub != null) Text(
+            sub,
+            fontSize = if (warn) 17.sp else 18.sp,
+            fontWeight = if (warn) FontWeight.SemiBold else null,
+            color = if (warn) warnText() else secondaryText(),
+            fontFamily = if (mono) FontFamily.Monospace else null,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
+/** `.warn`: amber, `#a16207` on a focused white row. */
+@Composable
+fun warnText(): androidx.compose.ui.graphics.Color = if (LocalInverted.current) androidx.compose.ui.graphics.Color(0xFFA16207) else Z.warn
+
 /** A row that toggles on OK; the whole row takes focus. */
 @Composable
-fun ToggleSetting(title: String, checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, sub: String? = null, mono: Boolean = false, dimmed: Boolean = false) {
+fun ToggleSetting(title: String, checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, sub: String? = null, mono: Boolean = false, dimmed: Boolean = false, warn: Boolean = false) {
     SelectableRow(
         onToggle,
         modifier.defaultMinSize(minHeight = 70.dp),
@@ -76,19 +93,19 @@ fun ToggleSetting(title: String, checked: Boolean, onToggle: () -> Unit, modifie
         label = "$title ${if (checked) "开" else "关"}",
         focusKey = title,
     ) {
-        SettingLabel(title, sub, mono, Modifier.weight(1f))
+        SettingLabel(title, sub, mono, Modifier.weight(1f), warn)
         GlassToggle(checked)
     }
 }
 
 /** A row with a segmented choice; the segments take focus (left/right), confirmed with OK. */
 @Composable
-fun ChoiceSetting(title: String, options: List<String>, selected: Int, onSelect: (Int) -> Unit, sub: String? = null, dim: Set<Int> = emptySet()) {
+fun ChoiceSetting(title: String, options: List<String>, selected: Int, onSelect: (Int) -> Unit, sub: String? = null, dim: Set<Int> = emptySet(), warn: Boolean = false) {
     // Long language, capacity and chart lists open a focused picker instead of squeezing a TV row.
     if (options.size > 4) {
         var choosing by remember { mutableStateOf(false) }
         val design = LocalDensity.current
-        ValueSetting(title, options.getOrNull(selected), onClick = { choosing = true }, sub = sub)
+        ValueSetting(title, options.getOrNull(selected), onClick = { choosing = true }, sub = sub, warn = warn)
         if (choosing) Dialog(onDismissRequest = { choosing = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
           CompositionLocalProvider(LocalDensity provides design, LocalBackdrop provides null) {
             Column(Modifier.width(640.dp).panelSurface(RoundedCornerShape(32.dp)).padding(28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -134,7 +151,7 @@ fun ChoiceSetting(title: String, options: List<String>, selected: Int, onSelect:
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        SettingLabel(title, sub, false, Modifier.weight(1f))
+        SettingLabel(title, sub, false, Modifier.weight(1f), warn)
         SegmentedWell(
             entry = entry,
             items = options.mapIndexed { i, o -> Segment(o, dim = i in dim) },
@@ -152,11 +169,11 @@ fun ChoiceSetting(title: String, options: List<String>, selected: Int, onSelect:
 
 /** A row showing a value; with [onClick] it opens something (›). [glyph] is the row's single-colour icon. */
 @Composable
-fun ValueSetting(title: String, value: String?, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, sub: String? = null, mono: Boolean = false, glyph: Glyph? = null) {
+fun ValueSetting(title: String, value: String?, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, sub: String? = null, mono: Boolean = false, glyph: Glyph? = null, warn: Boolean = false, focusRequester: FocusRequester? = null) {
     val body: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
         if (glyph != null) Icon(glyph, size = 26.dp, strokeWidth = 2.2f)
-        SettingLabel(title, sub, mono, Modifier.weight(1f))
-        if (value != null) Text(value, fontSize = 20.sp, color = secondaryText(), maxLines = 1, fontFamily = if (mono && sub == null) FontFamily.Monospace else null)
+        SettingLabel(title, sub, mono, Modifier.weight(1f), warn)
+        if (value != null) Text(value, fontSize = 20.sp, color = secondaryText(), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 560.dp), fontFamily = if (mono && sub == null) FontFamily.Monospace else null)
         if (onClick != null) Icon(Glyph.Chevron, size = 20.dp, strokeWidth = 2.4f)
     }
     if (onClick == null) {
@@ -169,7 +186,7 @@ fun ValueSetting(title: String, value: String?, modifier: Modifier = Modifier, o
     } else {
         SelectableRow(
             onClick,
-            modifier.defaultMinSize(minHeight = 70.dp),
+            modifier.then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).defaultMinSize(minHeight = 70.dp),
             showCheck = false,
             radius = 20.dp,
             padding = PaddingValues(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 8.dp),

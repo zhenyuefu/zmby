@@ -184,7 +184,9 @@ class CatalogRepositoryTest {
             val request = server.takeRequest(); assertEquals("Bearer test-read-token", request.getHeader("Authorization")); assertEquals("zh-CN", request.requestUrl!!.queryParameter("language"))
             val imageRequest = server.takeRequest(); assertEquals("zh-CN,ja,null", imageRequest.requestUrl!!.queryParameter("include_image_language"))
             assertFalse(dao.rows.keys.any { "test-read-token" in it }); assertFalse(dao.rows.values.any { "test-read-token" in it.json })
-            language = "zh-TW"; assertNull(repo.cached(ref))
+            // The page opened from a card reads the same work from memory, for these languages only.
+            assertEquals(work, repo.recent(ref))
+            language = "zh-TW"; assertNull(repo.cached(ref)); assertNull(repo.recent(ref))
         }
     }
     @Test fun `failed refresh preserves cached responses and cancellation is not swallowed`() = runBlocking {

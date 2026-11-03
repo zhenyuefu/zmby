@@ -87,6 +87,12 @@ private enum class Category(val label: String, val glyph: Glyph, val value: Stri
 @Composable
 fun SettingsScreen(nav: Nav) {
     var category by rememberSaveable { mutableStateOf(Category.Playback) }
+    // 画质偏好 (ui-spec §2.22) opens inside 播放: the left column keeps 播放 selected.
+    var qualityOpen by rememberSaveable { mutableStateOf(false) }
+    val qualityRow = remember { FocusRequester() }
+    var qualityClosed by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(qualityClosed) { if (qualityClosed > 0) { awaitFrame(); runCatching { qualityRow.requestFocus() } } }
+    if (qualityOpen) androidx.activity.compose.BackHandler { qualityOpen = false; qualityClosed++ }
     val requesters = remember { Category.entries.associateWith { FocusRequester() } }
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
@@ -115,7 +121,7 @@ fun SettingsScreen(nav: Nav) {
                         selected = c == category,
                         showCheck = false,
                         radius = 20.dp,
-                        onFocus = { category = c },
+                        onFocus = { if (c != category) qualityOpen = false; category = c },
                         label = "设置 ${c.label}",
                     ) {
                         Icon(c.glyph, size = 26.dp)
@@ -129,7 +135,9 @@ fun SettingsScreen(nav: Nav) {
                 Text("zmby ${appVersion()}", fontSize = 18.sp, color = Z.textTertiary)
             }
         }
-        key(category) {
+        if (category == Category.Playback && qualityOpen) {
+            QualitySettings(Modifier.weight(1f).fillMaxHeight())
+        } else key(category) {
           Column(
             Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 56.dp, end = 72.dp, top = 56.dp, bottom = 56.dp),
             verticalArrangement = Arrangement.spacedBy(26.dp),
@@ -141,7 +149,7 @@ fun SettingsScreen(nav: Nav) {
             when (category) {
                 Category.Metadata -> MetadataSettings()
                 Category.Cache -> CacheSettings()
-                Category.Playback -> { Playback(nav); Tracks(); General(nav) }
+                Category.Playback -> { Playback(nav, qualityRow, onQuality = { qualityOpen = true }); Tracks(); General(nav) }
                 Category.Home -> { HomeRows(nav); Appearance() }
                 Category.Servers -> { ServersSummary(nav); Sources(nav) }
                 Category.About -> About()
@@ -169,7 +177,7 @@ private fun General(nav: Nav) {
 }
 
 @Composable
-private fun Playback(nav: Nav) {
+private fun Playback(nav: Nav, qualityRow: FocusRequester, onQuality: () -> Unit) {
     val app = LocalContext.current.zmby
     val settings = app.settings
     val offerNext by settings.offerNextEpisode.flow.collectAsState()
@@ -182,38 +190,35 @@ private fun Playback(nav: Nav) {
     }
     val overlay = overlaySetting()
     Danmu(overlay)
+    DanmuServer()
     val skipIntro by settings.skipIntro.flow.collectAsState()
     val skipRecap by settings.skipRecap.flow.collectAsState()
     val skipCredits by settings.skipCredits.flow.collectAsState()
     val creditsMode by settings.skipCreditsMode.flow.collectAsState()
     val rows by app.sources.rows.collectAsState()
     // 显示按钮 needs the overlay; without it the skip happens by itself (ui-spec §2.16).
-    val buttonNote = if (overlay) null else "需要打开播放浮层，否则按自动跳过处理"
+    val buttonNote = if (overlay) null else "需要打开播放浮层"
     val modes = SkipMode.entries.map { it.label }
     SettingsGroup("片头片尾") {
-        ChoiceSetting("跳过片头", modes, skipIntro.ordinal, { settings.skipIntro.set(SkipMode.entries[it]) }, sub = buttonNote.takeIf { skipIntro == SkipMode.Button })
-        ChoiceSetting("跳过回顾", modes, skipRecap.ordinal, { settings.skipRecap.set(SkipMode.entries[it]) }, sub = buttonNote.takeIf { skipRecap == SkipMode.Button })
+        ChoiceSetting("跳过片头", modes, skipIntro.ordinal, { settings.skipIntro.set(SkipMode.entries[it]) }, sub = buttonNote.takeIf { skipIntro == SkipMode.Button }, warn = true)
+        ChoiceSetting("跳过回顾", modes, skipRecap.ordinal, { settings.skipRecap.set(SkipMode.entries[it]) }, sub = buttonNote.takeIf { skipRecap == SkipMode.Button }, warn = true)
         ChoiceSetting("跳过片尾", CreditsSkip.entries.map { it.label }, skipCredits.ordinal, { settings.skipCredits.set(CreditsSkip.entries[it]) })
         if (skipCredits != CreditsSkip.Off) {
             val creditModes = listOf(SkipMode.Auto, SkipMode.Button)
             ChoiceSetting("片尾跳过方式", creditModes.map { it.label }, creditModes.indexOf(creditsMode).coerceAtLeast(0), { settings.skipCreditsMode.set(creditModes[it]) },
-                sub = buttonNote.takeIf { creditsMode == SkipMode.Button })
+                sub = buttonNote.takeIf { creditsMode == SkipMode.Button }, warn = true)
         }
         rows.size
         ValueSetting(SourceFeature.Segments.label, app.sources.label(SourceFeature.Segments), onClick = { nav.go(Route.DataSource(SourceFeature.Segments)) })
     }
-    val quality by settings.quality.flow.collectAsState()
-    val nonDisc by settings.preferNonDisc.flow.collectAsState()
+    val prefs = rememberVersionPrefs()
     val pattern by settings.versionPattern.flow.collectAsState()
     SettingsGroup("版本选择") {
-        ChoiceSetting("画质偏好", QualityPreference.entries.map { it.label }, quality.ordinal, { settings.quality.set(QualityPreference.entries[it]) })
-        ToggleSetting("优先非原盘", nonDisc, { settings.preferNonDisc.set(!nonDisc) })
-        // 版本偏好正则: marks the preferred version (e.g. 2160p.*REMUX); never hides others.
-        Column(Modifier.padding(horizontal = 24.dp, vertical = 10.dp)) {
-            var draft by remember(pattern) { mutableStateOf(pattern) }
-            Field("版本偏好正则", draft, { draft = it }, KeyboardType.Ascii, placeholder = "2160p.*REMUX", last = true, onSubmit = { settings.versionPattern.set(draft.trim()) })
-            if (draft.isNotBlank() && VersionPrefs.pattern(draft) == null) Text("这个正则无效，不会生效", fontSize = 18.sp, color = Z.warn, modifier = Modifier.padding(top = 8.dp))
-        }
+        ValueSetting("画质偏好", qualitySummary(prefs), onClick = onQuality, focusRequester = qualityRow)
+        // 版本偏好: marks the preferred version (e.g. 2160p.*REMUX); never hides others.
+        TextSetting("版本偏好", pattern, InputField.VersionPattern, save = { v ->
+            versionPatternError(v) ?: run { settings.versionPattern.set(v); null }
+        }, mono = true, placeholder = "2160p.*REMUX")
     }
 }
 
@@ -240,17 +245,15 @@ private fun overlaySetting(): Boolean {
         ToggleSetting("播放浮层", on, {
             settings.playbackOverlay.set(!on)
             if (!on && !OverlayPermission.granted(context)) openSystem()
-        }, sub = "播放时在系统播放器上方显示跳过按钮与下一集卡")
-        if (on && !granted) {
-            ValueSetting("需要授权", "去设置", onClick = ::openSystem, sub = "在「允许显示在其他应用的上层」列表里找到 zmby 并允许")
-        }
+        }, sub = "未获得显示在其他应用上层的权限".takeIf { on && !granted }, warn = true)
+        if (on && !granted) ValueSetting("授权", "去设置", onClick = ::openSystem)
     }
     return on && granted
 }
 
 /**
- * 弹幕 (danmu design): drawn on the playback overlay from a dandanplay-compatible server the user
- * types; nothing is built in. AppId and AppSecret only for the official, signed API.
+ * 弹幕 (ui-spec §2.20): the live preview, then 显示弹幕 and, while it is on, how they are drawn.
+ * The server is its own group ([DanmuServer]) so it can be typed before 弹幕 is switched on.
  */
 @Composable
 private fun Danmu(overlay: Boolean) {
@@ -260,37 +263,65 @@ private fun Danmu(overlay: Boolean) {
     val mode by settings.danmuMode.flow.collectAsState()
     val rows by settings.danmuRows.flow.collectAsState()
     val opacity by settings.danmuOpacity.flow.collectAsState()
+    val fontSize by settings.danmuFontSize.flow.collectAsState()
+    val lineGap by settings.danmuLineGap.flow.collectAsState()
+    val topMargin by settings.danmuTopMargin.flow.collectAsState()
     val base by settings.danmuApiBase.flow.collectAsState()
-    val appId by settings.danmuAppId.flow.collectAsState()
-    val secret by settings.danmuAppSecret.flow.collectAsState()
     val zidoo = remember { app.zmby.zidoo.ZidooIntents.installedPlayer(context)?.subtitles == app.zmby.zidoo.ZidooPlayer.SubtitleDelivery.LocalStrm }
     val note = danmuNote(mode, overlay, base.isNotBlank(), zidoo)
     SettingsGroup("弹幕") {
-        ToggleSetting("显示弹幕", on, { settings.danmu.set(!on) }, sub = note ?: "按片名与季集号从弹幕服务器匹配")
+        DanmuPreview(DanmuLook(rows, fontSize, lineGap, topMargin, opacity), dimmed = !on)
+        // The missing address belongs to 显示弹幕, the missing overlay or player to 显示方式.
+        val addressNote = note.takeIf { base.isBlank() }
+        ToggleSetting("显示弹幕", on, { settings.danmu.set(!on) }, sub = addressNote.takeIf { on }, warn = true)
         if (on) {
             val modes = app.zmby.data.DanmuMode.entries
-            ChoiceSetting("显示方式", modes.map { it.label }, mode.ordinal, { settings.danmuMode.set(modes[it]) }, sub = danmuModeSub(mode))
+            ChoiceSetting("显示方式", modes.map { it.label }, mode.ordinal, { settings.danmuMode.set(modes[it]) }, sub = note.takeIf { base.isNotBlank() }, warn = true)
             val rowChoices = (1..5).toList()
             ChoiceSetting("行数", rowChoices.map { "$it 行" }, rowChoices.indexOf(rows).coerceAtLeast(0), { settings.danmuRows.set(rowChoices[it]) })
+            DanmuPixels("字号", settings.danmuFontSize, listOf(20, 26, 30, 34, 38, 42, 48, 54, 60))
+            DanmuPixels("行间距", settings.danmuLineGap, listOf(0, 2, 4, 8, 12, 16, 24))
+            DanmuPixels("上边距", settings.danmuTopMargin, listOf(0, 4, 8, 12, 20, 32, 48, 64, 80))
             val opacityChoices = listOf(100, 75, 50)
             ChoiceSetting("不透明度", opacityChoices.map { "$it%" }, opacityChoices.indexOf(opacity).coerceAtLeast(0), { settings.danmuOpacity.set(opacityChoices[it]) })
-            var phone by remember { mutableStateOf<InputField?>(null) }
-            var remote by remember { mutableStateOf<InputField?>(null) }
-            PhoneInputRow("弹幕服务器（弹弹play 兼容）", if (base.isBlank()) "未设置" else "已设置") { phone = InputField.DanmuApiBase }
-            PhoneInputRow("AppId（官方接口才需要）", if (appId.isBlank()) "未设置" else "已设置") { phone = InputField.DanmuAppId }
-            PhoneInputRow("AppSecret（官方接口才需要）", if (secret.isBlank()) "未设置" else "已设置") { phone = InputField.DanmuAppSecret }
-            phone?.let { field -> PhoneInputDialog(field, onDismiss = { phone = null }, onRemote = { phone = null; remote = field }) }
-            remote?.let { field -> Column(Modifier.padding(horizontal = 24.dp, vertical = 10.dp)) {
-                when (field) {
-                    InputField.DanmuApiBase -> Field("弹幕服务器（弹弹play 兼容）", base, { settings.danmuApiBase.set(it.trim()) }, KeyboardType.Uri, placeholder = "https://example.com", last = true)
-                    InputField.DanmuAppId -> Field("AppId（官方接口才需要）", appId, { settings.danmuAppId.set(it.trim()) }, KeyboardType.Ascii, last = true)
-                    InputField.DanmuAppSecret -> Field("AppSecret（官方接口才需要）", secret, { v -> ZLog.secret(v.trim()); settings.danmuAppSecret.set(v.trim()) }, KeyboardType.Password, secret = true, last = true)
-                    else -> Unit
-                }
-            }
-            }
         }
     }
+}
+
+/** 弹幕服务器 (ui-spec §2.20): always shown; AppId and AppSecret only for the official, signed API. */
+@Composable
+private fun DanmuServer() {
+    val settings = LocalContext.current.zmby.settings
+    val base by settings.danmuApiBase.flow.collectAsState()
+    val appId by settings.danmuAppId.flow.collectAsState()
+    val secret by settings.danmuAppSecret.flow.collectAsState()
+    SettingsGroup("弹幕服务器") {
+        TextSetting("服务器地址", base, InputField.DanmuApiBase, save = { v ->
+            if (v.isEmpty()) { settings.danmuApiBase.set(""); null }
+            else app.zmby.danmu.DanmuEndpoint.checkBase(v) ?: run { settings.danmuApiBase.set(v); null }
+        }, type = KeyboardType.Uri, mono = true, placeholder = "https://example.com")
+        SettingsSubtitle("官方接口")
+        TextSetting("AppId", appId, InputField.DanmuAppId, save = { v ->
+            app.zmby.danmu.DanmuEndpoint.checkCredential(v) ?: run { settings.danmuAppId.set(v); null }
+        })
+        TextSetting("AppSecret", secret, InputField.DanmuAppSecret, save = { v ->
+            app.zmby.danmu.DanmuEndpoint.checkCredential(v) ?: run { ZLog.secret(v); settings.danmuAppSecret.set(v); null }
+        }, type = KeyboardType.Password, secret = true)
+    }
+}
+
+/** `.st`: a small heading inside a group card. */
+@Composable
+private fun SettingsSubtitle(text: String) {
+    Text(text, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Z.textDisabled, letterSpacing = 1.sp,
+        modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 4.dp))
+}
+
+@Composable
+private fun DanmuPixels(label: String, pref: app.zmby.data.Pref<Int>, choices: List<Int>) {
+    val current by pref.flow.collectAsState()
+    val options = (choices + current).distinct().sorted()
+    ChoiceSetting(label, options.map { "$it px" }, options.indexOf(current), { pref.set(options[it]) })
 }
 
 /** Why 弹幕 will not show as set, or null when nothing is missing. */
@@ -301,21 +332,16 @@ internal fun danmuNote(mode: app.zmby.data.DanmuMode, overlay: Boolean, address:
     else -> null
 }
 
-/** What each 显示方式 means for the user. */
-internal fun danmuModeSub(mode: app.zmby.data.DanmuMode): String = when (mode) {
-    app.zmby.data.DanmuMode.Overlay -> "zmby 画在播放器上方，需要播放浮层"
-    app.zmby.data.DanmuMode.Subtitle -> "作为第二路字幕交给播放器；第一次需在播放器菜单里打开双字幕模式，并在字幕2里选 danmu"
-}
-
 @Composable
 private fun Tracks() {
     val settings = LocalContext.current.zmby.settings
     val audio by settings.audioLanguage.flow.collectAsState()
     val subtitle by settings.subtitleLanguage.flow.collectAsState()
-    val audioCodes = listOf(TrackPreference.SERVER) + TrackPreference.LANGUAGES.map { it.first }
-    val subtitleCodes = listOf(TrackPreference.SERVER) + TrackPreference.LANGUAGES.take(2).map { it.first } + TrackPreference.OFF
+    val audioCodes = listOf(TrackPreference.SERVER, TrackPreference.ORIGINAL) + TrackPreference.LANGUAGES.map { it.first }
+    val subtitleCodes = listOf(TrackPreference.SERVER, TrackPreference.ORIGINAL) + TrackPreference.LANGUAGES.map { it.first } + TrackPreference.OFF
     fun label(code: String) = when (code) {
         TrackPreference.SERVER -> "跟随服务器"
+        TrackPreference.ORIGINAL -> "源语言"
         TrackPreference.OFF -> "关闭"
         else -> TrackPreference.LANGUAGES.first { it.first == code }.second
     }
@@ -448,37 +474,17 @@ private fun MetadataSettings() {
     val anime by settings.animeAliases.flow.collectAsState()
     val languages = listOf("zh-CN" to "简体中文", "zh-TW" to "繁體中文（台灣）", "zh-HK" to "繁體中文（香港）", "en-US" to "English", "ja-JP" to "日本語", "ko-KR" to "한국어")
     SettingsGroup("TMDB 连接") {
-        var addressPhone by remember { mutableStateOf(false) }
-        var addressTyping by rememberSaveable { mutableStateOf(false) }
-        PhoneInputRow("TMDB API 地址", apiBase) { addressPhone = true }
-        if (addressPhone) PhoneInputDialog(InputField.TmdbApiBase, onDismiss = { addressPhone = false },
-            onRemote = { addressPhone = false; addressTyping = true })
-        if (addressTyping) Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            var draft by remember(apiBase) { mutableStateOf(apiBase) }
-            var error by remember { mutableStateOf<String?>(null) }
-            fun saveAddress() {
-                error = TmdbEndpoint.check(draft)
-                if (error == null) { settings.tmdbApiBase.set(draft); addressTyping = false }
-            }
-            Field("TMDB API 地址", draft, { draft = it; error = null }, KeyboardType.Uri, last = true, onSubmit = { saveAddress() })
-            error?.let { Text(it, color = Z.warn, fontSize = 18.sp) }
-            GlassButton("保存地址", { saveAddress() })
-        }
-        if (apiBase != TmdbEndpoint.DEFAULT) ValueSetting("恢复默认 API 地址", "api.tmdb.org",
-            onClick = { settings.tmdbApiBase.set(""); addressTyping = false })
-        // 用手机输入 (ui-spec §2.13): two hundred characters are not typed with a remote; the remote
-        // field stays behind 「用遥控器输入」.
-        var phone by remember { mutableStateOf(false) }
-        var typing by rememberSaveable { mutableStateOf(false) }
-        PhoneInputRow("TMDB 令牌", if (token.isBlank()) "未设置" else "已设置") { phone = true }
-        if (typing) Column(Modifier.padding(24.dp)) {
-            var draft by remember(token) { mutableStateOf(token) }
-            Field("TMDB API Read Access Token", draft, { draft = it }, KeyboardType.Ascii, secret = true, last = true, onSubmit = {
-                ZLog.secret(draft.trim())
-                settings.tmdbToken.set(draft.trim())
-            })
-        }
-        if (phone) PhoneInputDialog(InputField.TmdbToken, onDismiss = { phone = false }, onRemote = { phone = false; typing = true })
+        TextSetting("API 地址", apiBase, InputField.TmdbApiBase, save = { v ->
+            if (v.isEmpty()) { settings.tmdbApiBase.set(""); null }
+            else TmdbEndpoint.check(v) ?: run { settings.tmdbApiBase.set(v); null }
+        }, type = KeyboardType.Uri, mono = true, display = { it.substringAfter("://") })
+        if (apiBase != TmdbEndpoint.DEFAULT) ValueSetting("恢复默认地址", "api.tmdb.org", onClick = { settings.tmdbApiBase.set("") })
+        // 手机输入 (ui-spec §2.13) suits a two-hundred-character token; 输入 types it with the remote.
+        TextSetting("令牌", token, InputField.TmdbToken, save = { v ->
+            ZLog.secret(v)
+            settings.tmdbToken.set(v)
+            null
+        }, secret = true)
     }
     SettingsGroup("显示语言") {
         ChoiceSetting("影视资料语言", languages.map { it.second }, languages.indexOfFirst { it.first == text }.coerceAtLeast(0), { settings.metadataLanguage.set(languages[it].first) })

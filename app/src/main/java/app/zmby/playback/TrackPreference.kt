@@ -16,18 +16,22 @@ object TrackPreference {
     /** Follow the server's default. */
     const val SERVER = ""
     /** Subtitles off. */
+    const val ORIGINAL = "original"
     const val OFF = "off"
 
     /** Offered languages: stored code to label. */
     val LANGUAGES = listOf("chi" to "中文", "eng" to "英语", "jpn" to "日语")
 
-    fun choose(source: MediaSourceInfo, picked: TrackChoice, audioLanguage: String, subtitleLanguage: String): TrackChoice {
-        val audio = picked.audio ?: audioLanguage.takeIf { it != SERVER }?.let { pick(source.audioStreams, it) }?.index
-        val subtitle = picked.subtitle ?: when (subtitleLanguage) {
+    fun choose(source: MediaSourceInfo, picked: TrackChoice, audioLanguage: String, subtitleLanguage: String, originalLanguage: String? = null): TrackChoice {
+        val origin = originalLanguage?.takeIf { it.isNotBlank() && it != "und" }
+            ?: source.videoStream?.language?.takeUnless { it == "und" }
+        fun resolve(pref: String) = if (pref == ORIGINAL) origin.orEmpty() else pref
+        val audio = picked.audio ?: resolve(audioLanguage).takeIf { it != SERVER }?.let { pick(source.audioStreams.filterNot { track -> track.isExternal }, it) }?.index
+        val subtitle = picked.subtitle ?: when (val language = resolve(subtitleLanguage)) {
             SERVER -> null
             OFF -> ZidooTracks.SUBTITLE_OFF
             // Forced tracks are for foreign dialogue only; external ones only if the player can load them.
-            else -> pick(source.subtitleStreams.filter { !it.isForced && (!it.isExternal || LocalStrm.supports(it)) }, subtitleLanguage)?.index
+            else -> pick(source.subtitleStreams.filter { !it.isForced && (!it.isExternal || LocalStrm.supports(it)) }, language)?.index
         }
         return TrackChoice(audio, subtitle)
     }
@@ -58,15 +62,32 @@ object TrackPreference {
         return matching.firstOrNull { it.isDefault } ?: matching.firstOrNull()
     }
 
+    private fun normalized(language: String): String {
+        val code = language.trim().lowercase().replace('_', '-').substringBefore('-')
+        return when (code) {
+            "zh", "zho", "chs", "cht", "cmn", "yue" -> "chi"
+            "jp" -> "jpn"
+            "fre" -> "fra"
+            "ger" -> "deu"
+            "dut" -> "nld"
+            else -> if (code.length == 2) when (val iso = runCatching { java.util.Locale.forLanguageTag(code).isO3Language }.getOrNull()) {
+                "zho" -> "chi"
+                null, "" -> code
+                else -> iso
+            } else code
+        }
+    }
+
     fun matches(stream: MediaStream, language: String): Boolean {
-        val code = stream.language?.lowercase()?.trim().orEmpty()
-        val title = listOfNotNull(stream.title, stream.displayTitle).joinToString(" ")
-        return when (language) {
-            "chi" -> code in setOf("chi", "zho", "chs", "cht", "zh", "zh-cn", "zh-tw", "cmn", "yue") ||
-                listOf("中文", "国语", "國語", "简体", "繁體", "粤语", "Chinese").any { title.contains(it, ignoreCase = true) }
-            "eng" -> code in setOf("eng", "en", "en-us", "en-gb") || title.contains("English", ignoreCase = true)
-            "jpn" -> code in setOf("jpn", "ja", "jp") || title.contains("日本語") || title.contains("Japanese", ignoreCase = true)
-            else -> code == language
+        val code = normalized(stream.language.orEmpty())
+        val title = listOfNotNull(stream.title, stream.displayTitle, stream.displayLanguage).joinToString(" ")
+        val wanted = normalized(language)
+        if (code.isNotBlank() && code != "und") return code == wanted
+        return when (wanted) {
+            "chi" -> listOf("中文", "国语", "國語", "简体", "繁體", "粤语", "Chinese").any { title.contains(it, ignoreCase = true) }
+            "eng" -> title.contains("English", ignoreCase = true)
+            "jpn" -> title.contains("日本語") || title.contains("Japanese", ignoreCase = true)
+            else -> false
         }
     }
 }

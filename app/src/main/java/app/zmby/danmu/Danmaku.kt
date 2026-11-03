@@ -8,8 +8,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+enum class DanmuPosition { Scroll, Top, Bottom }
+
 /** One comment: when it appears in the video, its text and its colour (0xRRGGBB). */
-data class Danmaku(val timeMs: Long, val text: String, val color: Int = WHITE) {
+data class Danmaku(val timeMs: Long, val text: String, val color: Int = WHITE, val position: DanmuPosition = DanmuPosition.Scroll) {
     companion object { const val WHITE = 0xFFFFFF }
 }
 
@@ -42,7 +44,11 @@ object DanmuText {
         val seconds = parts.getOrNull(0)?.trim()?.toDoubleOrNull()?.takeIf { it >= 0 } ?: return null
         val text = clean(m) ?: return null
         val color = parts.getOrNull(2)?.trim()?.toLongOrNull()?.toInt()?.and(0xFFFFFF) ?: Danmaku.WHITE
-        return Danmaku((seconds * 1000).toLong(), text, color)
+        return Danmaku((seconds * 1000).toLong(), text, color, when (parts.getOrNull(1)?.trim()) {
+            "4" -> DanmuPosition.Bottom
+            "5" -> DanmuPosition.Top
+            else -> DanmuPosition.Scroll
+        })
     }
 
     /** The comments of a dandanplay `/api/v2/comment` answer. */

@@ -20,6 +20,9 @@ data class ManualMarks(val introEndMs: Long? = null, val creditsStartMs: Long? =
     val isEmpty: Boolean get() = introEndMs == null && creditsStartMs == null
 }
 
+/** The saved 本地手动标记 around one episode: its own and its season's (empty for a film). */
+data class SavedMarks(val episode: ManualMarks = ManualMarks(), val season: ManualMarks = ManualMarks(season = true))
+
 /** What a playback is given: the merged segments with the provider of each. */
 typealias SegmentPlan = Map<SegmentKind, Pair<SegmentProvider, Segment>>
 
@@ -53,8 +56,8 @@ class SegmentRepository(
 
     /**
      * The plan for [item] (an episode with its [series], or a film) keyed [workKey] in the store,
-     * played in a version of [durationMs]. [borrowable] are the same work's copies on other servers
-     * (for Emby markers this server lacks).
+     * played in a version of [durationMs]. [borrowable] are other items of the same work for Emby
+     * markers when [item]'s own do not fit that version: the version's own item, other servers' copies.
      */
     suspend fun plan(item: BaseItemDto, series: BaseItemDto?, workKey: String, durationMs: Long?, borrowable: suspend () -> List<BaseItemDto>): SegmentPlan =
         lookup(item, series, workKey, durationMs, borrowable).plan
@@ -82,16 +85,17 @@ class SegmentRepository(
 
     private suspend fun segmentsFrom(p: SegmentProvider, item: BaseItemDto, workKey: String, query: SegmentQuery, durationMs: Long?, borrowable: suspend () -> List<BaseItemDto>, onUnavailable: (SegmentProvider) -> Unit): List<Segment> = when (p) {
         SegmentProvider.Local -> SegmentRules.valid(SegmentRules.fromRows(localRows(workKey)).segments, durationMs)
-        SegmentProvider.Emby -> SegmentRules.valid(SegmentRules.fromChapters(item).ifEmpty { SegmentRules.borrow(durationMs, borrowable()) }, durationMs)
+        SegmentProvider.Emby -> SegmentRules.valid(
+            SegmentRules.fromChapters(item).takeIf { SegmentRules.sameCut(item, durationMs) }.orEmpty()
+                .ifEmpty { SegmentRules.borrow(durationMs, borrowable()) },
+            durationMs,
+        )
         else -> external(p, workKey, query, durationMs, onUnavailable)
     }
 
-    /** The episode's own marks, else its season's. */
-    private suspend fun localRows(workKey: String): List<SegmentMarker> {
-        val keys = listOfNotNull(workKey, seasonKey(workKey))
-        val rows = markers.markers(keys, SOURCE_LOCAL).filter { SegmentKind.of(it.kind) != null }
-        return rows.filter { it.workKey == workKey }.ifEmpty { rows }
-    }
+    /** For each kind, the episode's own mark, else its season's. */
+    private suspend fun localRows(workKey: String): List<SegmentMarker> =
+        SegmentRules.localMarks(markers.markers(listOfNotNull(workKey, seasonKey(workKey)), SOURCE_LOCAL), workKey)
 
     private suspend fun external(p: SegmentProvider, workKey: String, query: SegmentQuery, durationMs: Long?, onUnavailable: (SegmentProvider) -> Unit): List<Segment> {
         // Only works keyed by external IDs are shared knowledge; a server's own item ID is never sent.
@@ -126,22 +130,25 @@ class SegmentRepository(
 
     // ---- 本地手动标记 (detail page)
 
-    /** The marks shown when editing [workKey]: the episode's own, else its season's. */
-    suspend fun manual(workKey: String): ManualMarks {
+    /** The marks saved for [workKey] itself and for its season, for the editor. */
+    suspend fun manual(workKey: String): SavedMarks {
         val season = seasonKey(workKey)
         val rows = markers.markers(listOfNotNull(workKey, season), SOURCE_LOCAL)
-        val own = rows.filter { it.workKey == workKey }
-        val used = own.ifEmpty { rows.filter { it.workKey == season } }
-        return ManualMarks(
-            introEndMs = used.firstOrNull { it.kind == SegmentKind.Intro.key }?.endMs,
-            creditsStartMs = used.firstOrNull { it.kind == SegmentKind.Credits.key }?.startMs,
-            season = own.isEmpty() && used.isNotEmpty(),
-        )
+        fun of(key: String?, isSeason: Boolean): ManualMarks {
+            val own = rows.filter { it.workKey == key }
+            return ManualMarks(
+                introEndMs = own.firstOrNull { it.kind == SegmentKind.Intro.key }?.endMs,
+                creditsStartMs = own.firstOrNull { it.kind == SegmentKind.Credits.key }?.startMs,
+                season = isSeason,
+            )
+        }
+        return SavedMarks(of(workKey, false), if (season != null) of(season, true) else ManualMarks(season = true))
     }
 
     /**
-     * Saves marks for the episode or film [workKey], or for its whole season ([marks].season); the
-     * other scope's own marks of this episode are cleared so the choice is what applies.
+     * Saves marks for the episode or film [workKey], or for its whole season ([marks].season). Saving
+     * the season clears this episode's own marks so what was saved is what applies; an episode's own
+     * marks leave the season's alone, and a kind it has none of falls back to the season's.
      */
     suspend fun saveManual(workKey: String, marks: ManualMarks) {
         val target = if (marks.season) seasonKey(workKey) ?: workKey else workKey

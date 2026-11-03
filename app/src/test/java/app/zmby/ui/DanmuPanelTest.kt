@@ -29,6 +29,12 @@ class DanmuPanelTest {
         assertEquals("弹幕 · 未匹配", danmuTip(DanmuStatus.Unmatched))
     }
 
+    @Test fun `off outranks every other state`() {
+        assertEquals(DanmuStatus.Off, danmuStatus(sel("a", 1, "x", manual = true), matching = true, enabled = false))
+        assertEquals(DanmuStatus.Off, danmuStatus(null, matching = false, enabled = false))
+        assertEquals("弹幕 · 已关闭", danmuTip(DanmuStatus.Off))
+    }
+
     @Test fun `panel title and status card wording`() {
         assertEquals("第 1 季第 7 集", danmuEpisodeLabel(BaseItemDto(id = "e", type = "Episode", parentIndexNumber = 1, indexNumber = 7)))
         assertEquals("第 7 集", danmuEpisodeLabel(BaseItemDto(id = "e", type = "Episode", indexNumber = 7)))

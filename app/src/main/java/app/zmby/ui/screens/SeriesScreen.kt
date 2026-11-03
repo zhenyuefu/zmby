@@ -204,8 +204,8 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         if (work != null && catalogEpisodes != null) catalogEpisodes.map { ep ->
             val key = episodeSlot(ep.season, ep.number, ep.id)
             val resources = mapped.matched[ep.id].orEmpty()
-            val progress = resources.firstOrNull()?.item?.userData
-            EpisodeRow(key, work.item(ep).copy(id = key, overview = ep.overview, userData = progress), ep.image, ep, resources)
+            val item = work.item(ep).copy(overview = ep.overview, userData = resources.firstOrNull()?.item?.userData)
+            EpisodeRow(key, ServerItem("catalog", item).withPlaybackProgress(progress).item.copy(id = key), ep.image, ep, resources)
         } else serverEpisodes.filter { it.parentIndexNumber == seasonNumber }.map { original ->
             val ep = ServerItem(server, original).withPlaybackProgress(progress).item
             val unique = counts[ep.parentIndexNumber to ep.indexNumber] == 1
@@ -243,11 +243,9 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         else -> VersionsState(emptyList(), 0, null)
     }
     var picked by remember(shown?.key) { mutableStateOf<Version?>(null) }
-    val lastPlayed = remember(versions.all, tick) { app.playbackMemory.latest(versions.all.map { it.ref }) }
-    val chosen = picked?.let { p -> versions.all.firstOrNull { it.key == p.key } }
-        ?: versions.all.firstOrNull { v -> v.ref.server == lastPlayed?.server && v.item.id == lastPlayed.itemId && lastPlayed.selection.restore(v.source) != null }
-        ?: versions.default
-    val selected = chosen?.let { it.copy(item = it.ref.withPlaybackProgress(progress).item) }
+    // Until a pick: the copy holding the merged 在看 resume point, the last successful start, then the ranked first.
+    val merged = rememberVersionProgress(versions, tick)
+    val selected = picked?.let { p -> merged.ordered.firstOrNull { it.key == p.key } } ?: merged.default
     var preview by remember(shown?.key) { mutableStateOf<Version?>(null) }
     var picks by rememberRetained("picks", seriesId) { mutableStateOf<Map<String, TrackChoice>>(emptyMap()) }
     fun trackKey(v: Version) = v.key
@@ -270,7 +268,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     if (s == null || canonical == null && !fallbackReady) {
         LoadState(error, onRetry = { vm.refresh(replace = true); resourceRetry++ }, onServers = { nav.go(Route.Servers) }); return
     }
-    val ref = fallback ?: ServerItem("catalog", s)
+    val ref = fallback ?: canonical?.cardRef() ?: ServerItem("catalog", s)
     val display = canonical?.display() ?: app.display(ref)
     val availability = when {
         pending > 0 || versions.searching > 0 -> "正在查找资源…"
@@ -347,7 +345,9 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
           @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
           androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides defaultScrollSpec) {
             Column(Modifier.fillMaxWidth()) {
-                SeriesHeader(ref, display, heading, shown?.item, selected,
+                SeriesHeader(ref, display, heading, shown?.item, selected, recCopies,
+                    watchedRef = shown?.canonical?.let { ep -> canonical?.let { ServerItem("catalog", it.item(ep).copy(userData = shown.item.userData)) } } ?: selected?.ref,
+                    episodeCopies = versions.instances + shown?.resources.orEmpty(),
                     onPlay = { _, v, start -> v?.let { play(context, it.ref, start, it.source.id, tracks(it), versions.alternatesTo(it)) } },
                     playButton = playButton,
                     initialFocusKey = seriesId, onFocusChanged = { headerFocused = it; if (it) accordion.showHeader() },
@@ -428,7 +428,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                             ?: SummaryText(if (versions.searching > 0) "正在查找资源…" else "这一集暂无可播放的版本")
                     }) {
                         Box(Modifier.padding(vertical = 20.dp)) {
-                            VersionSection(versions, selected, { picked = it }, { preview = it }, { play(context, it.ref, it.item.resumeMs, it.source.id, tracks(it), versions.alternatesTo(it)) }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
+                            VersionSection(versions, selected, { picked = it }, { preview = it }, { card -> val v = merged.of(card); play(context, v.ref, v.item.resumeMs, v.source.id, tracks(v), versions.alternatesTo(v)) }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
                         }
                     }
                 }
@@ -579,6 +579,9 @@ private fun SeriesHeader(
     current: BaseItemDto?,
     /** Its selected version; null until the version list knows it (then the server's own copy plays). */
     selected: Version?,
+    seriesCopies: List<ServerItem>,
+    watchedRef: ServerItem?,
+    episodeCopies: List<ServerItem>,
     onPlay: (episode: BaseItemDto, version: Version?, startMs: Long) -> Unit,
     playButton: FocusRequester,
     initialFocusKey: String?,
@@ -613,9 +616,9 @@ private fun SeriesHeader(
             // Then the icon buttons in their fixed order (ui-spec §2.15); unavailable ones stay in place, dimmed.
             ActionDivider()
             QuickPickAction(onQuickSelect)
-            WatchedAction(selected?.ref)
-            FavoriteAction(ref, listOf(ref))
-            WatchlistAction(ref, emptyList())
+            WatchedAction(watchedRef, episodeCopies)
+            FavoriteAction(ref, (listOf(ref) + seriesCopies).distinctBy { it.key })
+            WatchlistAction(ref, seriesCopies)
             // 本地手动标记 of the episode the main button plays (or its whole season).
             MarksAction(ref = selected?.ref) { current?.let(onMarks) }
             // 弹幕 (ui-spec §2.19): last, after 片头片尾; for the episode the main button plays.

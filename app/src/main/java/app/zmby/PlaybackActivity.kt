@@ -70,7 +70,9 @@ import app.zmby.zidoo.ZidooTracks
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import app.zmby.emby.MediaSourceInfo
 import app.zmby.emby.msToTicks
+import app.zmby.emby.ticksToMs
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
@@ -275,6 +277,8 @@ class PlaybackActivity : ComponentActivity() {
         val playServer = server
         val danmuEndpoint = app.danmuEndpoint()
         val danmuRows = app.settings.danmuRows.value
+        val danmuLayout = DanmuAss.Config.of(danmuRows, app.settings.danmuOpacity.value,
+            app.settings.danmuFontSize.value, app.settings.danmuLineGap.value, app.settings.danmuTopMargin.value)
         val versionHint = item.mediaSources.firstOrNull { it.id == sourceId }
             ?: carriedVersion ?: item.mediaSources.firstOrNull { it.supportsDirectPlay || it.supportsDirectStream }
         // Start the next episode's lookup and both downloads beside this episode's preparation.
@@ -282,10 +286,17 @@ class PlaybackActivity : ComponentActivity() {
         nextPrefetch = earlyNext
         // 播放浮层 (ui-spec §2.16): only when switched on and allowed; otherwise skips stay automatic.
         val overlayOn = app.settings.playbackOverlay.value && OverlayPermission.granted(this)
-        // 片头片尾: looked up beside the preparation and never waited for (local-data spec).
+        // 片头片尾: looked up beside the preparation and never waited for (local-data spec), first for
+        // the version asked for (or the item's default), again once PlaybackInfo settles on another cut.
+        val askedVersion = item.mediaSources.firstOrNull { it.id == sourceId }
+        val playedVersion = kotlinx.coroutines.CompletableDeferred<MediaSourceInfo?>()
         val plan = app.appScope.async(Dispatchers.IO) {
-            runCatching { app.segmentPlan(playServer, item, item.runtimeMs) }
-                .onFailure { ZLog.w(TAG, "segments for ${item.id} unavailable", it) }
+            runCatching {
+                val early = app.segmentPlan(playServer, item, askedVersion)
+                val played = withTimeoutOrNull(VERSION_WAIT_MS) { playedVersion.await() }
+                if (played == null || sameCut(played, askedVersion, item)) early else app.segmentPlan(playServer, item, played)
+            }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; ZLog.w(TAG, "segments for ${item.id} unavailable", it) }
                 .getOrNull()
         }
         val skipper = app.appScope.async {
@@ -308,6 +319,7 @@ class PlaybackActivity : ComponentActivity() {
         if (danmuWanted && app.settings.danmuMode.value == DanmuMode.Subtitle && !danmuAsSubtitle) {
             ZLog.i(TAG, "弹幕 as subtitle needs com.zidoo.player; ${if (overlayOn) "using the overlay" else "no 弹幕 this time"}")
         }
+        if (danmuAsSubtitle) message.value = "正在准备播放和 ASS 弹幕字幕…"
         val danmuOnOverlay = danmuWanted && !danmuAsSubtitle && overlayOn
         val prefetched = warmed?.comments?.takeIf {
             previousPrefetch?.endpoint == danmuEndpoint && previousPrefetch.rows == danmuRows && !it.isCancelled
@@ -329,19 +341,21 @@ class PlaybackActivity : ComponentActivity() {
                     subtitleLanguage = languages?.subtitle ?: app.settings.subtitleLanguage.value,
                     danmu = if (danmuAsSubtitle && danmu != null) DanmuSubtitle(
                         comments = { danmu.await() },
-                        config = DanmuAss.Config.of(danmuRows, app.settings.danmuOpacity.value),
+                        config = danmuLayout,
                     ) else null,
                     preferredVersion = if (item.type == "Episode") carriedVersion else null,
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 earlyNext?.cancel()
                 skipper.cancel()
+                plan.cancel()
                 danmu?.cancel()
                 throw e
             } catch (e: SubtitlePrepareException) {
                 earlyNext?.cancel()
                 ZLog.w(TAG, "subtitle prepare failed for ${item.id}", e)
                 skipper.cancel()
+                plan.cancel()
                 danmu?.cancel()
                 if (retry == null) {
                     playWithoutSubtitle.value = { start(item, startMs, sourceId, tracks.copy(subtitle = ZidooTracks.SUBTITLE_OFF), languages) }
@@ -351,12 +365,14 @@ class PlaybackActivity : ComponentActivity() {
                 earlyNext?.cancel()
                 ZLog.w(TAG, "prepare failed for ${item.id}", e)
                 skipper.cancel()
+                plan.cancel()
                 danmu?.cancel()
                 if (switchToNext(item, "无法获取播放地址")) return@launch
                 return@launch fail("无法获取播放地址：${e.userMessage()}")
             }
             carried = prepared.languages
             carriedVersion = prepared.version
+            playedVersion.complete(prepared.version)
             // Correct a speculative release as soon as PlaybackInfo resolves, including while
             // the user is reading the first-use subtitle guide.
             val actual = prepared.version
@@ -376,6 +392,7 @@ class PlaybackActivity : ComponentActivity() {
                     app.releaseLocal(prepared.local)
                     prepared.releaseRelay()
                     skipper.cancel()
+                    plan.cancel()
                     throw e
                 } finally {
                     dualGuide.value = null
@@ -384,13 +401,13 @@ class PlaybackActivity : ComponentActivity() {
             }
             val nextCard = upNextCard(nextTask, playServer, prepared.languages)
             nextCardJob = nextCard
-            val subtitleLate = danmuAsSubtitle && prepared.local?.baseName != LocalStrm.DANMU_BASE
-            if (subtitleLate && overlayOn) ZLog.i(TAG, "弹幕字幕尚未就绪，本次在下载完成后用浮层显示")
+            val subtitleUnavailable = danmuAsSubtitle && prepared.local?.baseName != LocalStrm.DANMU_BASE
+            if (subtitleUnavailable && overlayOn) ZLog.i(TAG, "弹幕字幕未生成，有可用评论时使用浮层")
             val overlay = if (overlayOn) PlaybackOverlay(
                 applicationContext, app.appScope, skipper,
                 upNext = nextCard,
                 countdown = app.settings.upNextCountdown.value,
-                danmu = danmu?.takeIf { danmuOnOverlay || subtitleLate }?.let { DanmuLayer(applicationContext, app.appScope, it, danmuRows, app.settings.danmuOpacity.value) },
+                danmu = danmu?.takeIf { danmuOnOverlay || subtitleUnavailable }?.let { DanmuLayer(applicationContext, app.appScope, it, danmuRows, app.settings.danmuOpacity.value, danmuLayout) },
             ) else null
             val zidoo = ZidooIntents.installedPlayer(this@PlaybackActivity)
             val useZidoo = zidoo != null
@@ -580,7 +597,7 @@ class PlaybackActivity : ComponentActivity() {
                 val query = app.danmuQueries.query(playServer, ep)
                 app.danmu.load(endpoint, "$playServer:${ep.id}", ep, rows, query, app.danmuQueries::enrich)
             }) else null,
-            segments = { ep -> app.segmentLookup(playServer, ep, ep.runtimeMs) },
+            segments = { ep -> app.segmentLookup(playServer, ep) },
         )
     }
 
@@ -625,6 +642,15 @@ class PlaybackActivity : ComponentActivity() {
         private const val EXTRA_SERVER = "server"
         private const val EXTRA_START_MS = "start_ms"
         private const val EXTRA_SOURCE_ID = "media_source_id"
+        /** How long the segment lookup waits for PlaybackInfo to name the version played. */
+        private const val VERSION_WAIT_MS = 60_000L
+
+        /** Whether [played] runs as long as the version looked up first ([asked], else [item]'s default). */
+        internal fun sameCut(played: MediaSourceInfo, asked: MediaSourceInfo?, item: BaseItemDto): Boolean {
+            val first = asked?.runTimeTicks?.let(::ticksToMs) ?: item.runtimeMs
+            val now = played.runTimeTicks?.let(::ticksToMs) ?: return true
+            return first != null && kotlin.math.abs(first - now) <= app.zmby.segments.SegmentRules.BORROW_TOLERANCE_MS
+        }
         private const val EXTRA_AUDIO = "audio_index"
         private const val EXTRA_SUBTITLE = "subtitle_index"
         private const val NO_TRACK = Int.MIN_VALUE

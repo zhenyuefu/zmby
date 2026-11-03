@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -89,26 +90,35 @@ internal fun runAction(
 
 /** 观看标记 on the version that plays ([ref]); null when there is no server entry to mark. */
 @Composable
-internal fun WatchedAction(ref: ServerItem?) {
+internal fun WatchedAction(ref: ServerItem?, instances: List<ServerItem> = emptyList()) {
     val app = LocalContext.current.zmby
     val scope = rememberCoroutineScope()
     val feedback = LocalActionFeedback.current
     val progress by app.recentProgress.collectAsState()
-    val played = ref?.withPlaybackProgress(progress)?.item?.userData?.played == true
+    val persisted by produceState<app.zmby.emby.UserItemData?>(null, ref?.key) {
+        value = if (ref?.server == "catalog") kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            app.store.detail(ref.server, ref.item.id)?.item?.userData
+        } else null
+    }
+    val local = persisted?.let { if (ref != null && ref.key !in progress) progress + (ref.key to it) else progress } ?: progress
+    val played = ref?.withPlaybackProgress(local)?.item?.userData?.played == true
     var busy by remember { mutableStateOf(false) }
     val enabled = ref != null
     ActionIconButton(Glyph.Check, actionTip(HeaderAction.Watched, played, busy, enabled), onClick = {
         val target = ref ?: return@ActionIconButton
         val mark = !played
         val server = app.registry.get(target.server)?.name
+        var unsynced = 0
         val episode = target.item.indexNumber.takeIf { target.item.type == "Episode" }
         runAction(scope, feedback, { busy = it },
             failure = { e -> failureNotice(if (mark) "标记为已观看" else "标记为未观看", server, e.userMessage()) },
-            success = { watchedNotice(episode, mark, server) }) { app.setWatched(target, mark) }
+            success = { watchedNotice(episode, mark, server) + if (unsynced > 0) " · 已存本地，$unsynced 台尚未同步" else "" }) {
+            unsynced = app.setWatched(target, mark, instances)
+        }
     }, on = played, busy = busy, enabled = enabled, solidWhenOn = false, focusKey = "action:watched")
 }
 
-/** 收藏 for [ref]'s work with its copies on other servers; unavailable without a server entry. */
+/** 收藏 is local first, including a catalogue work without a playable copy. */
 @Composable
 internal fun FavoriteAction(ref: ServerItem, instances: List<ServerItem>) {
     val app = LocalContext.current.zmby
@@ -117,16 +127,15 @@ internal fun FavoriteAction(ref: ServerItem, instances: List<ServerItem>) {
     val favorites by app.favorites.items.collectAsState()
     val favorite = remember(favorites, ref.key) { app.favorites.isFavorite(ref) }
     var busy by remember { mutableStateOf(false) }
-    val enabled = ref.server != "catalog"
-    ActionIconButton(Glyph.Heart, actionTip(HeaderAction.Favorite, favorite, busy, enabled), onClick = {
+    ActionIconButton(Glyph.Heart, actionTip(HeaderAction.Favorite, favorite, busy), onClick = {
         val add = !favorite
         runAction(scope, feedback, { busy = it },
             failure = { e -> failureNotice(if (add) "加入收藏" else "取消收藏", null, e.userMessage()) },
             success = { favoriteNotice(app.favorites.isFavorite(ref)) }) { app.favorites.toggle(ref, instances) }
-    }, on = favorite, busy = busy, enabled = enabled, focusKey = "action:favorite")
+    }, on = favorite, busy = busy, focusKey = "action:favorite")
 }
 
-/** 待看 (local only) for [ref]'s work; unavailable without a server entry. */
+/** 待看 is stored locally for the work. */
 @Composable
 internal fun WatchlistAction(ref: ServerItem, instances: List<ServerItem>) {
     val app = LocalContext.current.zmby
@@ -135,13 +144,12 @@ internal fun WatchlistAction(ref: ServerItem, instances: List<ServerItem>) {
     val entries by app.watchlist.entries.collectAsState()
     val listed = remember(entries, ref.key) { app.watchlist.contains(ref) }
     var busy by remember { mutableStateOf(false) }
-    val enabled = ref.server != "catalog"
-    ActionIconButton(Glyph.Bookmark, actionTip(HeaderAction.Watchlist, listed, busy, enabled), onClick = {
+    ActionIconButton(Glyph.Bookmark, actionTip(HeaderAction.Watchlist, listed, busy), onClick = {
         val add = !listed
         runAction(scope, feedback, { busy = it },
             failure = { e -> failureNotice(if (add) "加入待看" else "移出待看", null, e.userMessage()) },
-            success = { watchlistNotice(app.watchlist.contains(ref)) }) { app.watchlist.toggle(ref, instances) }
-    }, on = listed, busy = busy, enabled = enabled, focusKey = "action:watchlist")
+            success = { watchlistNotice(add) }) { app.watchlist.toggle(ref, instances) }
+    }, on = listed, busy = busy, focusKey = "action:watchlist")
 }
 
 /** 片头片尾 (本地手动标记) of the version that plays; unavailable until there is one. */

@@ -107,6 +107,7 @@ import app.zmby.zmby
 import kotlinx.coroutines.launch
 import app.zmby.aggregate.Keys
 import app.zmby.aggregate.tmdb
+import app.zmby.catalog.cardRef
 import app.zmby.catalog.CatalogId
 import app.zmby.data.ServerItem
 import app.zmby.data.withPlaybackProgress
@@ -149,18 +150,14 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
         LoadState(error, onRetry = { if(server != "catalog") app.registry.retry(server); vm.refresh() }, onServers = { nav.go(Route.Servers) })
         return
     }
-    val ref = cached?.ref ?: ServerItem("catalog",it)
+    val ref = cached?.ref ?: canonical?.cardRef() ?: ServerItem("catalog", it)
     val display = canonical?.display() ?: app.display(ref)
     // OK on a version selects it (the header's play button and the cards below use it); until then
-    // the last successfully played version, then VersionRanker's default, is selected. While focus is on the version cards, the
-    // focused one previews its tracks.
+    // the copy holding the merged 在看 resume point, the last successfully played version, then
+    // VersionRanker's default, is selected. While focus is on the version cards, the focused one previews its tracks.
     var picked by remember(it.id) { mutableStateOf<Version?>(null) }
-    val progress by app.recentProgress.collectAsState()
-    val lastPlayed = remember(versions.all, tick) { app.playbackMemory.latest(versions.all.map { it.ref }) }
-    val chosen = picked?.let { p -> versions.all.firstOrNull { v -> v.key == p.key } }
-        ?: versions.all.firstOrNull { v -> v.ref.server == lastPlayed?.server && v.item.id == lastPlayed.itemId && lastPlayed.selection.restore(v.source) != null }
-        ?: versions.default
-    val selected = chosen?.let { it.copy(item = it.ref.withPlaybackProgress(progress).item) }
+    val merged = rememberVersionProgress(versions, tick)
+    val selected = picked?.let { p -> merged.ordered.firstOrNull { v -> v.key == p.key } } ?: merged.default
     var preview by remember(it.id) { mutableStateOf<Version?>(null) }
     val shown = preview ?: selected
     // Track picks per version (Emby stream indexes); a version without a pick uses the preferences or the server's defaults.
@@ -211,7 +208,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                     display,
                     heading = heading,
                     playItem = playRef?.item,
-                    watchedRef = playRef ?: ref.takeUnless { it.server == "catalog" },
+                    watchedRef = if (ref.server == "catalog") ref.copy(item = ref.item.copy(userData = playRef?.item?.userData)) else playRef ?: ref,
                     instances = versions.instances,
                     onPlay = { startMs -> playRef?.let { play(context, it, startMs, selected?.source?.id, tracksFor(selected), versions.alternatesTo(selected)) } },
                     // Back on the header: scroll all the way up so the title shows again, not just the buttons.
@@ -233,7 +230,8 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                             VersionSection(versions, selected, onSelect = { v ->
                                 picked = v
                                 library.rememberVersion(Keys.work(server, it), v.server.id, v.source.id)
-                            }, onPreview = { v -> preview = v }, onPlay = { v ->
+                            }, onPreview = { v -> preview = v }, onPlay = { card ->
+                                val v = merged.of(card)
                                 play(context, v.ref, v.item.resumeMs, v.source.id, tracksFor(v), versions.alternatesTo(v))
                             }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
                         }
@@ -333,7 +331,7 @@ private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: Detai
             if (resume > 0) GlassButton("从头播放", { onPlay(0) })
             // Then the icon buttons in their fixed order (ui-spec §2.15); unavailable ones stay in place, dimmed.
             ActionDivider()
-            WatchedAction(watchedRef)
+            WatchedAction(watchedRef, instances)
             val copies = (listOf(ref) + instances).distinctBy { it.key }
             FavoriteAction(ref, copies)
             WatchlistAction(ref, copies)

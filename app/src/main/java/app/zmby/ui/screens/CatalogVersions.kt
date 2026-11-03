@@ -42,13 +42,17 @@ internal fun rememberCatalogVersions(
         listOf(resources.filter { it.server == server }.map { it.key }.sorted(),
             initial?.takeIf { it.server == server }?.let { listOf(it.key, it.item.providerIds) })
     } }
-    // The resource scope is part of state identity: late directory answers must not show stale mappings.
     val cached = remember(lookupKey, targets, contexts) {
         app.fanOut.cached<List<Version>>(targets, FanOut.SEARCH_TIMEOUT_MS, lookupKey, FanOut.RESOURCE_CACHE_MS) { contexts[it] }
     }
-    var results by remember(lookupKey, targets, contexts) { mutableStateOf<Map<String, Outcome<List<Version>>>>(cached) }
+    // For episodes the resource scope is part of state identity: late directory answers must not show
+    // stale mappings. A film keeps its answers while the lookup reruns with fuller IDs (the TMDB entry
+    // knows only the TMDB id until the catalogue answers); each server's answer replaces its own as it
+    // comes, so the play button does not fall back to 「正在查找资源…」 and back.
+    val stateKey: Any = if (work.ref.kind == "movie") listOf(work.ref, targets) else listOf(lookupKey, targets, contexts)
+    var results by remember(stateKey) { mutableStateOf<Map<String, Outcome<List<Version>>>>(cached) }
     var attempt by remember(lookupKey) { mutableIntStateOf(0) }
-    var pending by remember(lookupKey, targets, contexts) { mutableStateOf(targets.filter { it !in cached }) }
+    var pending by remember(stateKey) { mutableStateOf(targets.filter { it !in cached }) }
     LaunchedEffect(work, results) {
         withContext(Dispatchers.Default) {
             results.values.filterIsInstance<Outcome.Ok<List<Version>>>().forEach { result -> result.value.forEach { v ->
@@ -91,18 +95,20 @@ internal fun rememberCatalogVersions(
         delay((next - now).coerceAtLeast(0) + 50)
         attempt++
     }
-    val pattern by app.settings.versionPattern.flow.collectAsState()
-    val quality by app.settings.quality.flow.collectAsState()
-    val nonDisc by app.settings.preferNonDisc.flow.collectAsState()
-    return remember(servers, results, targets, pending, pattern, quality, nonDisc, manual, onRefresh, lookupKey, progress, episode, directoryPending) {
+    val rankPrefs = rememberVersionPrefs()
+    return remember(servers, results, targets, pending, rankPrefs, manual, onRefresh, lookupKey, progress, episode, directoryPending, work.originalLanguage) {
         val groups = results.values.filterIsInstance<Outcome.Ok<List<Version>>>().mapNotNull { o ->
             val status = servers.firstOrNull { it.id == o.server } ?: return@mapNotNull null
-            if (o.value.isEmpty()) null else VersionGroup(status, o.value.map { Version(status, it.ref.withPlaybackProgress(progress).item, it.source, episode) }, "")
+            if (o.value.isEmpty()) null else VersionGroup(status, o.value.map { v ->
+                val item = v.ref.withPlaybackProgress(progress).item
+                Version(status, item.copy(originalLanguage = item.originalLanguage ?: work.originalLanguage), v.source, episode)
+            }, "")
         }.sortedBy { it.server.order }
-        val prefs = VersionPrefs(manual = manual, pattern = VersionPrefs.pattern(pattern), quality = quality, preferNonDisc = nonDisc)
-        val ordered = rankCatalogVersions(groups.flatMap { it.versions }, prefs)
+        val prefs = rankPrefs.copy(manual = manual)
+        val all = groups.flatMap { it.versions }
+        val ordered = rankCatalogVersions(all, prefs)
         val failed = results.values.filter { it !is Outcome.Ok }.map { it.server }
-        VersionsState(groups, pending.size.coerceAtLeast(if (directoryPending) 1 else 0), ordered.firstOrNull(), failed, ordered = ordered, retry = {
+        VersionsState(groups, pending.size.coerceAtLeast(if (directoryPending) 1 else 0), ordered.firstOrNull(), failed, ordered = ordered, marks = versionMarks(all, prefs), retry = {
             failed.forEach { app.registry.retry(it) }; attempt++
         }, refresh = {
             targets.forEach(app.registry::retry)
@@ -114,8 +120,5 @@ internal fun rememberCatalogVersions(
 }
 
 /** Catalog lookups ranked like [rememberVersions] ranks its own: the hand pick first, then [VersionRanker]. */
-internal fun rankCatalogVersions(versions: List<Version>, prefs: VersionPrefs): List<Version> {
-    val comparator = VersionRanker.comparator(prefs)
-    fun facts(v: Version) = VersionFacts(v.server.id, v.server.order, v.server.health != Health.Off, v.server.latencyMs, v.source)
-    return versions.sortedWith { a, b -> comparator.compare(facts(a), facts(b)) }
-}
+internal fun rankCatalogVersions(versions: List<Version>, prefs: VersionPrefs): List<Version> =
+    VersionRanker.rank(versions, prefs, ::versionFacts)

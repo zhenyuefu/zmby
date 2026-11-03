@@ -20,10 +20,11 @@ enum class InputField(val source: String, val title: String, val label: String, 
     DanmuAppSecret("弹幕", "AppSecret", "AppSecret"),
     PublicMetaDbKey("PublicMetaDB", "API 密钥", "密钥"),
     UserAgent("客户端身份", "自定义 User-Agent", "User-Agent", singleLine = true),
+    VersionPattern("版本选择", "版本偏好正则", "正则", singleLine = true),
     ;
 
     /** The TV panel's heading: 「TMDB API 读取访问令牌」. */
-    val heading: String get() = if (this == UserAgent) title else "$source $title"
+    val heading: String get() = if (this == UserAgent || this == VersionPattern) title else "$source $title"
 }
 
 /** What the TV panel shows (2.13 状态胶囊). */
@@ -173,7 +174,8 @@ class InputSession(
 
         /** Trims the value; one-line fields keep only their first line, and tokens lose inner whitespace. */
         fun clean(raw: String, field: InputField): String = when (field) {
-            InputField.UserAgent -> raw.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
+            // A pattern may contain spaces (「Dolby Vision」): only its first line, trimmed.
+            InputField.UserAgent, InputField.VersionPattern -> raw.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
             InputField.TmdbApiBase, InputField.DanmuApiBase -> raw.trim()
             else -> raw.filterNot { it.isWhitespace() }
         }

@@ -88,6 +88,16 @@ class LocalStoreTest {
         assertNotNull(item.userData!!.lastPlayedDate)
     }
 
+    @Test fun `progress of the copies on screen follows the 在看 lists, keyed by server and item`() = runBlocking {
+        store.putDetail("a", movie("1", "A").copy(userData = UserItemData(playbackPositionTicks = 10, lastPlayedDate = "2026-11-01T08:00:00Z")))
+        store.putItems("b", listOf(movie("1", "A")))
+        val refs = listOf(app.zmby.data.ServerItem("a", movie("1", "A")), app.zmby.data.ServerItem("c", movie("1", "A")))
+        assertEquals(setOf("a:1"), store.progressFlow(refs).first().keys)
+        store.putList("resume:a", "a", listOf(movie("1", "A").copy(userData = UserItemData(playbackPositionTicks = 99, lastPlayedDate = "2026-11-02T08:00:00Z"))))
+        assertEquals(99L, store.progressFlow(refs).first()["a:1"]!!.playbackPositionTicks)
+        assertEquals(emptyMap<String, UserItemData>(), store.progressFlow(emptyList()).first())
+    }
+
     @Test fun `LRU drops the oldest rows but keeps favourites, watchlist and resume`() = runBlocking {
         for (i in 1..6) { now = i.toLong(); store.putItems("a", listOf(movie("$i", "M$i", tmdb = "$i"))) }
         store.putList("resume:a", "a", listOf(movie("1", "M1", tmdb = "1"))).also { db.works().touchInstance("a", "1", 0) }
