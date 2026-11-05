@@ -9,11 +9,11 @@ class DanmuAssTest {
     @Test fun `fixed comments stay centered on separate lanes and expire on both renderers`() {
         val list = listOf(requireNotNull(DanmuText.parse("0,5,255", "顶")), requireNotNull(DanmuText.parse("0,4,255", "底")),
             Danmaku(0, "滚动"))
-        val stage = DanmuStage(list, { 100f }, 1920f, 2, 20f)
-        stage.update(0)
+        val stage = DanmuStage(list, { _, _ -> 100 }, { it }, 2).apply { layout(1920, 20, 0) }
+        stage.update(0, 0)
         assertEquals(listOf(0, 0, 1), stage.active.map { it.row })
-        assertEquals(910f, stage.x(stage.active.first(), 2000), 0f)
-        stage.update(DanmuStage.FIXED_MS)
+        assertEquals(910, stage.x(stage.active.first(), 120))
+        stage.update(DanmuStage.FIXED_MS, stage.ticksFor(DanmuStage.FIXED_MS))
         assertEquals(listOf("滚动"), stage.active.map { it.danmaku.text })
 
         val config = DanmuAss.Config.of(2, 100, fontSize = 30, lineGap = 4, topMargin = 12)

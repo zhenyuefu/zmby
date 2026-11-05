@@ -7,7 +7,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-/** Debug aggregates only: CPU draw time and moving-frame gaps, not GPU/presentation deadlines. */
+/**
+ * Debug aggregates only: CPU draw time, moving-frame gaps and refreshes the ticker had to skip; not
+ * GPU or presentation deadlines. The refresh rate is passed in: reading it from Display costs a binder
+ * call on API 28, which must not happen every frame.
+ */
 internal class DanmuPerformance(private val scope: CoroutineScope) {
     private val draws = LongArray(if (BuildConfig.DEBUG) 600 else 0)
     private val gaps = LongArray(draws.size)
@@ -18,6 +22,7 @@ internal class DanmuPerformance(private val scope: CoroutineScope) {
     private var lastSampleMs = 0L
     private var sampleGapMs = 0L
     private var correctionMs = 0L
+    private var skippedAtLog = 0L
 
     fun idle() { previousFrameNs = 0L }
 
@@ -28,7 +33,7 @@ internal class DanmuPerformance(private val scope: CoroutineScope) {
         correctionMs = maxOf(correctionMs, abs(correction))
     }
 
-    fun frame(startNs: Long, endNs: Long, moving: Boolean, hz: Float, bytes: Long, accelerated: Boolean) {
+    fun frame(startNs: Long, endNs: Long, moving: Boolean, hz: Float, bytes: Long, accelerated: Boolean, skippedVsyncs: Long) {
         if (!BuildConfig.DEBUG) return
         draws[index] = endNs - startNs
         gaps[index] = if (moving && previousFrameNs > 0) startNs - previousFrameNs else 0L
@@ -41,6 +46,8 @@ internal class DanmuPerformance(private val scope: CoroutineScope) {
         val gapBatch = gaps.copyOf(count)
         val sampleGap = sampleGapMs
         val correction = correctionMs
+        val skipped = skippedVsyncs - skippedAtLog
+        skippedAtLog = skippedVsyncs
         lastLogNs = endNs
         sampleGapMs = 0
         correctionMs = 0
@@ -49,7 +56,7 @@ internal class DanmuPerformance(private val scope: CoroutineScope) {
             gapBatch.sort()
             fun percentile(values: LongArray, p: Double): Double = values[((values.size - 1) * p).toInt()] / 1_000_000.0
             ZLog.d("DanmuPerf", "drawMs p95=${percentile(drawBatch, .95)} p99=${percentile(drawBatch, .99)} " +
-                "movingGapMs p99=${percentile(gapBatch, .99)} hz=$hz sampleGapMaxMs=$sampleGap " +
+                "movingGapMs p99=${percentile(gapBatch, .99)} skippedVsyncs=$skipped hz=$hz sampleGapMaxMs=$sampleGap " +
                 "correctionMaxMs=$correction bitmapBytes=$bytes accelerated=$accelerated")
         }
     }

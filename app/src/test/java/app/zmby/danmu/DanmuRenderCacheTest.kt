@@ -6,8 +6,8 @@ import org.junit.Test
 class DanmuRenderCacheTest {
     @Test fun `texture reuse ignores timestamp while a byte budget evicts the least recently drawn text`() {
         val cache = DanmuRenderCache<DanmuTextKey, String>(8, 128)
-        val first = Placed(Danmaku(0, "same"), 0, 0, 100f).textKey
-        val repeat = Placed(Danmaku(60_000, "same"), 0, 60_000, 100f).textKey
+        val first = Danmaku(0, "same").let { DanmuTextKey(it.text, it.color) }
+        val repeat = Danmaku(60_000, "same").let { DanmuTextKey(it.text, it.color) }
         val other = DanmuTextKey("other", Danmaku.WHITE)
         cache.put(first, "texture", 4)
         cache.put(other, "other", 4)
@@ -35,12 +35,14 @@ class DanmuRenderCacheTest {
     }
 
     @Test fun `blank and paused video sleeps while moving text follows vsync`() {
-        assertEquals(0L, nextDanmuFrameDelay(true, true, 5_000, 30_000, 0))
-        assertEquals(25_000L, nextDanmuFrameDelay(true, false, 5_000, 30_000, 0))
-        assertNull(nextDanmuFrameDelay(true, false, 5_000, null, 0))
-        assertNull(nextDanmuFrameDelay(false, true, 5_000, 30_000, 0))
-        assertEquals(4_000L, nextDanmuFrameDelay(false, false, 5_000, 30_000, 4_000))
-        assertEquals(500L, nextDanmuFrameDelay(true, false, 5_000, 5_500, 4_000))
-        assertNull(nextDanmuFrameDelay(true, false, 5_000, 5_000, 0, waitingForMeasurement = true))
+        assertEquals(0L, nextDanmuFrameDelay(true, true, false, 5_000, 30_000, null, 0))
+        assertEquals(0L, nextDanmuFrameDelay(true, false, true, 5_000, 30_000, null, 0))
+        assertEquals(25_000L, nextDanmuFrameDelay(true, false, false, 5_000, 30_000, null, 0))
+        assertNull(nextDanmuFrameDelay(true, false, false, 5_000, null, null, 0))
+        assertNull(nextDanmuFrameDelay(false, true, true, 5_000, 30_000, 1_000, 0))
+        assertEquals(4_000L, nextDanmuFrameDelay(false, false, false, 5_000, 30_000, null, 4_000))
+        assertEquals(500L, nextDanmuFrameDelay(true, false, false, 5_000, 5_500, null, 4_000))
+        // A centred comment leaving is the next change on an otherwise still screen.
+        assertEquals(1_200L, nextDanmuFrameDelay(true, false, false, 5_000, 30_000, 1_200, 4_000))
     }
 }

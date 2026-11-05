@@ -39,23 +39,22 @@ class DanmuRenderCache<K, V>(val maxBytes: Long, private val maxEntries: Int) {
     fun clear() { entries.clear(); bytes = 0 }
 }
 
-/** A static chip needs only its expiry redraw; a blank video sleeps until the next admission. */
+/**
+ * When nothing scrolls, the next frame is needed only for the next admission, a centred comment
+ * leaving or the chip expiring; null sleeps until a sample, seek or prepared glyph wakes it.
+ */
 fun nextDanmuFrameDelay(
     running: Boolean,
-    active: Boolean,
+    moving: Boolean,
+    waiting: Boolean,
     positionMs: Long,
     nextTimeMs: Long?,
+    fixedRemainingMs: Long?,
     chipRemainingMs: Long,
-    waitingForMeasurement: Boolean = false,
 ): Long? {
-    if (running && active) return 0L
-    val commentDelay = if (running && nextTimeMs != null && !waitingForMeasurement) {
-        (nextTimeMs - positionMs).coerceAtLeast(0)
-    } else null
-    val chipDelay = chipRemainingMs.takeIf { it > 0 }
-    return when {
-        commentDelay == null -> chipDelay
-        chipDelay == null -> commentDelay
-        else -> minOf(commentDelay, chipDelay)
-    }
+    if (running && (moving || waiting)) return 0L
+    var delay = if (chipRemainingMs > 0) chipRemainingMs else Long.MAX_VALUE
+    if (running && nextTimeMs != null) delay = minOf(delay, (nextTimeMs - positionMs).coerceAtLeast(0))
+    if (running && fixedRemainingMs != null) delay = minOf(delay, fixedRemainingMs.coerceAtLeast(0))
+    return delay.takeIf { it != Long.MAX_VALUE }
 }

@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import app.zmby.data.DanmuMode
 import app.zmby.danmu.DanmuAss
+import app.zmby.danmu.DanmuStyle
 import app.zmby.playback.TrackPreference
 import app.zmby.overlay.OverlayPermission
 import app.zmby.overlay.DanmuLayer
@@ -282,8 +283,9 @@ class PlaybackActivity : ComponentActivity() {
         val playServer = server
         val danmuEndpoint = app.danmuEndpoint()
         val danmuRows = app.settings.danmuRows.value
-        val danmuLayout = DanmuAss.Config.of(danmuRows, app.settings.danmuOpacity.value,
-            app.settings.danmuFontSize.value, app.settings.danmuLineGap.value, app.settings.danmuTopMargin.value)
+        val danmuStyle = DanmuStyle(danmuRows, app.settings.danmuFontSize.value, app.settings.danmuLineGap.value,
+            app.settings.danmuTopMargin.value, app.settings.danmuOpacity.value)
+        val danmuLayout = DanmuAss.Config.of(danmuRows, danmuStyle.opacityPercent, danmuStyle.fontSize, danmuStyle.lineGap, danmuStyle.topMargin)
         val versionHint = item.mediaSources.firstOrNull { it.id == sourceId }
             ?: carriedVersion ?: item.mediaSources.firstOrNull { it.supportsDirectPlay || it.supportsDirectStream }
         // Start the next episode's lookup and both downloads beside this episode's preparation.
@@ -412,7 +414,7 @@ class PlaybackActivity : ComponentActivity() {
                 applicationContext, app.appScope, skipper,
                 upNext = nextCard,
                 countdown = app.settings.upNextCountdown.value,
-                danmu = danmu?.takeIf { danmuOnOverlay || subtitleUnavailable }?.let { DanmuLayer(applicationContext, app.appScope, it, danmuRows, app.settings.danmuOpacity.value, danmuLayout) },
+                danmu = danmu?.takeIf { danmuOnOverlay || subtitleUnavailable }?.let { DanmuLayer(applicationContext, app.appScope, it, danmuStyle) },
             ) else null
             val zidoo = ZidooIntents.installedPlayer(this@PlaybackActivity)
             val useZidoo = zidoo != null
