@@ -1,8 +1,8 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -94,7 +94,7 @@ internal fun WatchedAction(ref: ServerItem?, instances: List<ServerItem> = empty
     val app = LocalContext.current.zmby
     val scope = rememberCoroutineScope()
     val feedback = LocalActionFeedback.current
-    val progress by app.recentProgress.collectAsState()
+    val progress by app.recentProgress.collectAsStateWithLifecycle()
     val persisted by produceState<app.zmby.emby.UserItemData?>(null, ref?.key) {
         value = if (ref?.server == "catalog") kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             app.store.detail(ref.server, ref.item.id)?.item?.userData
@@ -124,7 +124,7 @@ internal fun FavoriteAction(ref: ServerItem, instances: List<ServerItem>) {
     val app = LocalContext.current.zmby
     val scope = rememberCoroutineScope()
     val feedback = LocalActionFeedback.current
-    val favorites by app.favorites.items.collectAsState()
+    val favorites by app.favorites.items.collectAsStateWithLifecycle()
     val favorite = remember(favorites, ref.key) { app.favorites.isFavorite(ref) }
     var busy by remember { mutableStateOf(false) }
     ActionIconButton(Glyph.Heart, actionTip(HeaderAction.Favorite, favorite, busy), onClick = {
@@ -141,7 +141,7 @@ internal fun WatchlistAction(ref: ServerItem, instances: List<ServerItem>) {
     val app = LocalContext.current.zmby
     val scope = rememberCoroutineScope()
     val feedback = LocalActionFeedback.current
-    val entries by app.watchlist.entries.collectAsState()
+    val entries by app.watchlist.entries.collectAsStateWithLifecycle()
     val listed = remember(entries, ref.key) { app.watchlist.contains(ref) }
     var busy by remember { mutableStateOf(false) }
     ActionIconButton(Glyph.Bookmark, actionTip(HeaderAction.Watchlist, listed, busy), onClick = {

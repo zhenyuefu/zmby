@@ -16,3 +16,5 @@ rootProject.name = "zmby"
 include(":app")
 // Emulator stand-in for the Zidoo player; see tools/mock_emby.py.
 include(":devtools:fake-zidoo-player")
+// Baseline Profile generator and start-up benchmark (performance plan R6); test only.
+include(":baselineprofile")

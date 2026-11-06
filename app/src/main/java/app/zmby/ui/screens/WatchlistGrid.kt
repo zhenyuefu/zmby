@@ -57,6 +57,7 @@ internal fun WatchlistGrid(nav: Nav, search: FocusRequester, entry: FocusRequest
     val app = LocalContext.current.zmby
     val entries by app.watchlist.entries.collectAsStateWithLifecycle()
     val servers by app.registry.servers.collectAsStateWithLifecycle()
+    val faces = app.cardFaces.version.collectAsStateWithLifecycle()
     var sortIndex by rememberSaveable { mutableIntStateOf(0) }
     val sort = WatchlistSort.entries[sortIndex]
     val shown = remember(entries, sort) { WatchlistLogic.sorted(entries, sort) }
@@ -88,9 +89,10 @@ internal fun WatchlistGrid(nav: Nav, search: FocusRequester, entry: FocusRequest
         itemsIndexed(shown, key = { _, e -> e.workKey }, contentType = { _, _ -> "poster" }) { i, e ->
             val ref = watchlistRef(e, servers)
             val count = e.instances.count { !it.startsWith("catalog|") }
+            val face = remember(faces.value, ref?.server, e.workKey) { ref?.let { app.cardFaces.faceOfWork(it.server, e.workKey) } }
             PosterCard2x3(
-                imageUrl = ref?.let { app.library.primaryImage(it) },
-                title = visibleText(e.title) ?: UNTITLED,
+                imageUrl = face?.poster ?: ref?.let { app.library.primaryImage(it) },
+                title = visibleText(face?.title ?: e.title) ?: UNTITLED,
                 onClick = { if (ref != null) nav.open(ref) },
                 topEnd = if (count > 1) "$count 个版本" else null,
                 subtitle = listOfNotNull(if (e.type == "Series") "剧集" else "电影", e.year?.toString()).joinToString(" · "),

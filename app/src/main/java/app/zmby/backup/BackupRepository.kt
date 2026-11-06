@@ -33,11 +33,21 @@ class BackupRepository(private val app: ZmbyApp) : RemoteBackups {
         c.id == row.existingId || c.id == row.incoming.config.id ||
             row.incoming.config.embyServerId?.let { it == c.embyServerId && c.userId == row.incoming.config.userId } == true
     }
-    fun snapshot(): BackupContent = BackupContent(app.registry.all.map { status ->
-        val (home,search) = app.library.backupSwitches(status.id)
-        val caps = app.capsStore.get(status.session.capsKey)
-        BackupServer(status.config, home, search, caps.relay.name, caps.pinyinOverride.name, SourceFeature.entries.filter { !it.ordered }.associate { it.key to app.sources.enabled(it,status.id) })
-    }, app.settings.backupValues(), providers = app.sources.providers().map { BackupProvider(it.provider.key,it.enabled,it.order) })
+    fun snapshot(): BackupContent {
+        val sorted = SourceFeature.entries.filter { !it.ordered && app.sources.custom(it) }
+        val metadata = app.sources.metadata()
+        // 影片信息来源 mixes catalogues and servers: its places come from that list.
+        val orders = sorted.associateWith { f ->
+            if (f == SourceFeature.Metadata) metadata.withIndex().filter { !it.value.catalog }.associate { (i, m) -> m.key to i } else app.sources.order(f)
+        }
+        return BackupContent(app.registry.all.map { status ->
+            val (home,search) = app.library.backupSwitches(status.id)
+            val caps = app.capsStore.get(status.session.capsKey)
+            BackupServer(status.config, home, search, caps.relay.name, caps.pinyinOverride.name, SourceFeature.entries.filter { !it.ordered }.associate { it.key to app.sources.enabled(it,status.id) },
+                sourceOrder = orders.mapNotNull { (f, order) -> order[status.id]?.let { f.key to it + 1 } }.toMap())
+        }, app.settings.backupValues(), providers = app.sources.providers().map { BackupProvider(it.provider.key,it.enabled,it.order) }, sortedFeatures = sorted.map { it.key },
+            metadataCatalogs = metadata.withIndex().filter { it.value.catalog }.map { (i, m) -> BackupProvider(m.key, m.enabled, if (SourceFeature.Metadata in sorted) i + 1 else 0) })
+    }
 
     override suspend fun export(options: BackupOptions, password: String): String = withContext(Dispatchers.IO) {
         BackupCodec.encode(snapshot(), options, password, Build.MODEL)
@@ -105,9 +115,16 @@ class BackupRepository(private val app: ZmbyApp) : RemoteBackups {
             if(content.options.serverSettings) output.zip(plan.rows).forEach { (config,row) ->
                 app.library.restoreSwitches(config.id, row.incoming.homeOff, row.incoming.searchOff)
                 app.sources.restore(row.incoming.sources.mapNotNull { (key,enabled) ->
-                    SourceFeature.entries.firstOrNull { it.key == key && !it.ordered }?.let { DataSourceRow(key,config.id,enabled) }
+                    SourceFeature.entries.firstOrNull { it.key == key && !it.ordered }?.let { DataSourceRow(key,config.id,enabled,(row.incoming.sourceOrder[key] ?: 0).coerceIn(0,10000)) }
                 })
                 app.capsStore.update(config.session().capsKey) { it.copy(relay = Override.valueOf(row.incoming.relay), pinyinOverride = Override.valueOf(row.incoming.pinyin)) }
+            }
+            // Features sorted by hand in the backup; a server without a place there goes last (ord 0).
+            if (content.options.serverSettings) {
+                app.sources.restore(content.sortedFeatures.filter { k -> SourceFeature.entries.any { it.key == k && !it.ordered } }
+                    .map { DataSourceRow(it, SourceRules.ORDER_MARK, true) })
+                app.sources.restore(content.metadataCatalogs.filter { c -> SourceRules.METADATA_CATALOGS.any { it.first == c.key } }
+                    .map { DataSourceRow(SourceFeature.Metadata.key, it.key, it.enabled, it.order.coerceIn(0, 10000)) })
             }
             if (content.options.appSettings) {
                 val ids = plan.rows.zip(output).associate { (row,config) -> row.incoming.config.id to config.id }

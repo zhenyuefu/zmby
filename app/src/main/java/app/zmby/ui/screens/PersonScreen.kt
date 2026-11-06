@@ -56,9 +56,13 @@ fun PersonScreen(nav: Nav, personKey: String, server: String, personId: String) 
     val vm = screenModel("person:$server:$personId") { PersonViewModel(app, personKey, server, personId) }
     val person by vm.person.collectAsStateWithLifecycle()
     val works by vm.works.collectAsStateWithLifecycle()
+    val faces = app.cardFaces.version.collectAsStateWithLifecycle()
+    val sourceRows by app.sources.rows.collectAsStateWithLifecycle()
     var fullBio by remember { mutableStateOf(false) }
     val p = person
-    if (p?.tmdb?.toLongOrNull()?.let { it > 0 } == true && app.catalog.configured) {
+    // 影片信息来源: TMDB's page when TMDB comes before this server there (统一数据层 ④).
+    val tmdbFirst = remember(sourceRows, server) { MetadataMerge.personFromTmdb(app.sources.metadata(), server) }
+    if (p?.tmdb?.toLongOrNull()?.let { it > 0 } == true && app.catalog.configured && tmdbFirst) {
         CatalogPersonScreen(nav, "tmdb", p.tmdb!!)
         return
     }
@@ -114,9 +118,10 @@ fun PersonScreen(nav: Nav, personKey: String, server: String, personId: String) 
             }
             items(shown, key = { it.lead.key }, contentType = { "poster" }) { w ->
                 val first = w === shown.firstOrNull()
+                val face = remember(faces.value, w.lead.key) { app.cardFaces.face(w.lead) }
                 PosterCard2x3(
-                    imageUrl = app.library.primaryImage(w.lead),
-                    title = titleOf(w.lead.item),
+                    imageUrl = face?.poster ?: app.library.primaryImage(w.lead),
+                    title = face?.title ?: titleOf(w.lead.item),
                     onClick = { nav.open(w.lead) },
                     width = 196.dp,
                     topEnd = if (w.versions > 1) "${w.versions} 个版本" else null,

@@ -18,7 +18,7 @@ import app.zmby.ui.screens.danmuLookLabel
 import app.zmby.ui.screens.inheritedMark
 import app.zmby.ui.screens.moved
 import app.zmby.ui.screens.previewBadges
-import app.zmby.ui.screens.qualitySummary
+import app.zmby.ui.screens.versionSummary
 import app.zmby.ui.screens.segmentSourceRows
 import app.zmby.ui.screens.cardInherited
 import app.zmby.ui.screens.textSettingValue
@@ -27,7 +27,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** ui-spec §2.20–2.22: text rows, the 画质偏好 summary, preview badges and the 片头片尾 panel's sources. */
+/** ui-spec §2.20–2.22: text rows, the 版本偏好 summary, preview badges and the 片头片尾 panel's sources. */
 class SettingsRedesignTest {
     @Test fun `text rows show unset, masked or the value`() {
         assertEquals("未设置", textSettingValue("", secret = false))
@@ -43,9 +43,10 @@ class SettingsRedesignTest {
     }
 
     @Test fun `quality summary names resolution, first hdr, imax and the cap`() {
-        assertEquals("自动 · 杜比视界", qualitySummary(VersionPrefs()))
-        assertEquals("4K · 杜比视界 · IMAX · ≤ 80 Mbps", qualitySummary(VersionPrefs(quality = QualityPreference.UHD, imax = ImaxMode.Prefer, bitrateCapMbps = 80)))
-        assertEquals("1080p · SDR", qualitySummary(VersionPrefs(quality = QualityPreference.FHD, hdrOrder = HdrFormat.parse("SDR"))))
+        assertEquals("自动 · 杜比视界", versionSummary(VersionPrefs()))
+        assertEquals("4K · 杜比视界 · IMAX · ≤ 80 Mbps", versionSummary(VersionPrefs(quality = QualityPreference.UHD, imax = ImaxMode.Prefer, bitrateCapMbps = 80)))
+        assertEquals("1080p · SDR", versionSummary(VersionPrefs(quality = QualityPreference.FHD, hdrOrder = HdrFormat.parse("SDR"))))
+        assertEquals("2160p.*REMUX · 自动 · 杜比视界", versionSummary(VersionPrefs(pattern = VersionPrefs.pattern(" 2160p.*REMUX "))))
     }
 
     @Test fun `moving a ranked row stays within the list`() {
@@ -70,6 +71,9 @@ class SettingsRedesignTest {
             listOf(PreviewBadge("1080p", BadgeFit.Miss), PreviewBadge("SDR", BadgeFit.Neutral), PreviewBadge("AV1", BadgeFit.Miss), PreviewBadge("98 Mbps", BadgeFit.Miss)),
             previewBadges(av1, prefs, imax = false),
         )
+        val named = prefs.copy(pattern = VersionPrefs.pattern("/a\\.mkv"))
+        assertEquals(PreviewBadge("匹配", BadgeFit.Hit), previewBadges(dv, named, imax = true).first())
+        assertEquals("1080p", previewBadges(av1, named, imax = false).first().text)
     }
 
     @Test fun `danmu preview tag`() {

@@ -49,6 +49,9 @@ class RedactorTest {
         assertMasked("302 -> https://cdn.example.com/file.mkv?sign=abcdef123456:0&expires=1700000000", "abcdef123456")
         assertMasked("https://bucket.s3.amazonaws.com/a.mkv?X-Amz-Credential=AKIA123&X-Amz-Signature=deadbeef99", "AKIA123", "deadbeef99")
         assertMasked("https://pan.example/d?auth_key=1700000000-0-0-0f0e0d0c", "0f0e0d0c")
+        // CloudFront (IMDb trailers): signature, key pair and policy.
+        assertMasked("https://video.example.com/vi1/a.mp4?Expires=1794030786&Signature=G2Yr1G9n~xyz__&Key-Pair-Id=APKAEXAMPLE123", "G2Yr1G9n~xyz__", "APKAEXAMPLE123")
+        assertMasked("https://video.example.com/a.mp4?Policy=eyJTdGF0ZW1lbnQiOltd&Signature=s1g", "eyJTdGF0ZW1lbnQiOltd")
     }
 
     @Test

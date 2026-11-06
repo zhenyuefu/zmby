@@ -171,13 +171,23 @@ class Settings(context: Context) {
     val homeSource = string("home_source", "")
     /** Browse sort and filters per "server|library" (ui-spec §2.8: 按服务器 + 媒体库记住), one JSON map. */
     val browseQueries = string("browse_queries", "{}")
+    /** What each server's browse grid supports ([BrowseFilters]), by "server|library|kind": probed, so not backed up. */
+    val browseFilters = Pref(prefs, "browse_filters", "{}", { k, d -> getString(k, d) ?: d }, { k, v -> putString(k, v) })
     /** The optional 待看 row on home (favorites spec), off by default. */
     val showWatchlistRow = bool("home_watchlist", false)
     /** The home hero rotates through its titles (外观). */
     val heroRotates = bool("hero_rotates", true)
+    /** IMDb trailers play behind the hero and the detail pages once loaded (设置 › 首页 › 预告片; trailer design). */
+    val trailerAutoplay = bool("trailer_autoplay", true)
+    /** Trailers with their sound; off plays them muted (no audio decoded, no audio focus taken). */
+    val trailerSound = bool("trailer_sound", false)
+    /** IMDb, Tomatometer and Popcornmeter beside the catalogue's rating on the detail pages (影视资料 › 评分). */
+    val externalRatings = bool("external_ratings", true)
     /** Default tracks when nothing was picked (音频与字幕); see [TrackPreference]. */
     val audioLanguage = string("audio_language", TrackPreference.SERVER)
     val subtitleLanguage = string("subtitle_language", TrackPreference.SERVER)
+    /** 特效字幕优先: among the preferred language's subtitles, those with the 「特效」 badge first. */
+    val preferStyledSubtitles = bool("prefer_styled_subtitles", false)
     /** Default version (播放 › 版本选择). */
     val quality = registered(Pref(prefs, "quality", QualityPreference.Auto, { k, d -> getString(k, null)?.let { runCatching { QualityPreference.valueOf(it) }.getOrNull() } ?: d }, { k, v -> putString(k, v.name) }))
     val preferNonDisc = bool("prefer_non_disc", true)

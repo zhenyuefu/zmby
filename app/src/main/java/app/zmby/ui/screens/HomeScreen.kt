@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import app.zmby.TraceRecomposition
 import app.zmby.media.workTitleOf
 import app.zmby.media.titleOf
 import androidx.compose.foundation.background
@@ -28,6 +29,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -68,6 +72,8 @@ import app.zmby.media.remainingLabel
 import app.zmby.ui.Nav
 import app.zmby.ui.Route
 import app.zmby.ui.components.BackdropScreen
+import app.zmby.ui.components.TrailerPlayer
+import app.zmby.ui.components.rememberTrailerPlayer
 import app.zmby.ui.components.ActionFeedbackHost
 import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.GlassSurface
@@ -131,20 +137,23 @@ data class BrowseTarget(val server: String, val libraryId: String, val types: St
  */
 @Composable
 fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
+    TraceRecomposition("Home.root")
     val context = LocalContext.current
     val app = context.zmby
     val library = app.library
-    val servers by library.servers.collectAsState()
-    LaunchedEffect(Unit) { library.measure() }
+    // Coming back to home does not measure again (performance plan RH ①): once, then every ten minutes.
+    LaunchedEffect(Unit) { library.measureIfDue() }
     // Initial focus belongs to entering Home, not to switching back to its first tab.
     val shownAt = rememberShownAt()
     // The hero carousel lives here: its pages are the home backdrop, drawn under the top bar.
     val carousel = rememberRetained("heroCarousel") { HeroCarousel() }
+    // The resting title's IMDb trailer plays behind the hero (trailer design); released on pause.
+    val trailer = rememberTrailerPlayer()
     val backdropVisible = remember(carousel) { { carousel.backdropVisible } }
     val backdropShift = remember(carousel) { { -carousel.scrolled } }
     val vm = screenModel("home") { HomeViewModel(app) }
-    val source by vm.source.collectAsStateWithLifecycle()
-    val watching by vm.watching.collectAsStateWithLifecycle()
+    // The root reads neither 在看 nor the source (performance plan RH ⑤): the top bar, the source panel
+    // and the side bar's count subscribe themselves; key handling reads the current value when pressed.
     var watchingMenu by remember { mutableStateOf<WatchCard?>(null) }
     var removedWatching by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var picking by remember { mutableStateOf(false) }
@@ -164,15 +173,17 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
         watchingMenu = null
         memory?.beginRestore()
     }
-    LaunchedEffect(watching) {
-        val (key, index) = removedWatching ?: return@LaunchedEffect
-        if (watching.any { it.key == key }) return@LaunchedEffect
-        removedWatching = null
-        val neighbor = watching.take(HOME_WATCHING).getOrNull(index.coerceAtMost(HOME_WATCHING - 1).coerceAtMost(watching.lastIndex))
-        if (neighbor != null && memory != null) {
-            memory.lastKey = "watching:${neighbor.key}"
-            memory.beginRestore()
-        } else entry.requestWhenReady()
+    LaunchedEffect(vm) {
+        vm.watching.collect { watching ->
+            val (key, index) = removedWatching ?: return@collect
+            if (watching.any { it.key == key }) return@collect
+            removedWatching = null
+            val neighbor = watching.take(HOME_WATCHING).getOrNull(index.coerceAtMost(HOME_WATCHING - 1).coerceAtMost(watching.lastIndex))
+            if (neighbor != null && memory != null) {
+                memory.lastKey = "watching:${neighbor.key}"
+                memory.beginRestore()
+            } else entry.requestWhenReady()
+        }
     }
 
     fun closeSide() {
@@ -231,7 +242,7 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
             // 在看 has its own actions. Other home cards keep the sidebar Menu shortcut.
             if (tab == 0 && sideBlock.intValue == 0 && e.key == Key.Menu) {
                 if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) {
-                    val card = watching.firstOrNull { "watching:${it.key}" == memory?.lastKey }
+                    val card = vm.watching.value.firstOrNull { "watching:${it.key}" == memory?.lastKey }
                     if (card != null && !sideOpen) watchingMenu = card else sideOpen = true
                 }
                 true
@@ -244,12 +255,12 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
         },
         visible = backdropVisible,
         shift = backdropShift,
-        layer = if (tab == 0) ({ HeroBackdrop(carousel, HOME_SCRIMS) }) else null,
+        layer = if (tab == 0) ({ HeroBackdrop(carousel, HOME_SCRIMS, trailer) }) else null,
         slices = if (tab == 0) heroGlassSlices(carousel) else null,
     ) {
         val openSearch = { nav.go(Route.Search) }
         when (tab) {
-            0 -> HomeFeed(nav, shownAt, carousel, search, entry, onLibrary = { lib ->
+            0 -> HomeFeed(nav, shownAt, carousel, trailer, search, entry, onLibrary = { lib ->
                 val series = lib.item.collectionType == "tvshows"
                 browseTarget = BrowseTarget(lib.server, lib.item.id, if (series) "Series" else "Movie")
                 onTab(if (series) 2 else 1)
@@ -262,18 +273,20 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
         }
         if (tab == 0) {
             HomeTopBar(
-                servers = servers,
-                source = source,
+                vm = vm,
                 search = search,
                 onSearch = openSearch,
                 onSource = { picking = true },
             )
         }
         if (picking) {
+            val servers by app.registry.servers.collectAsStateWithLifecycle()
+            val source by vm.source.collectAsStateWithLifecycle()
             SourcePanel(
                 servers,
                 source,
                 onSource = { id -> closePanel(); vm.setSource(id) },
+                onShown = vm::setShown,
                 onServers = { picking = false; nav.go(Route.Servers) },
                 onToken = { picking = false; tokenInput = true },
                 onDismiss = ::closePanel,
@@ -281,10 +294,10 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
         }
         if (tokenInput) PhoneInputDialog(InputField.TmdbToken, onDismiss = ::closePanel, onRemote = { tokenInput = false; nav.go(Route.Settings) })
         WatchingMenuHost(watchingMenu, nav, vm, onClose = ::closeWatchingMenu, onRemove = { card ->
-            removedWatching = card.key to watching.indexOfFirst { it.key == card.key }.coerceAtLeast(0)
+            removedWatching = card.key to vm.watching.value.indexOfFirst { it.key == card.key }.coerceAtLeast(0)
         })
         if (!sideOpen) SideNavHint()
-        SideNav(sideOpen, tab, onPick = ::pick, onDismiss = ::closeSide, watching = watching.size)
+        HomeSideNav(vm, sideOpen, tab, onPick = ::pick, onDismiss = ::closeSide)
     }
     }
     }
@@ -303,9 +316,19 @@ private fun HomeEmpty(title: String, advice: String, focus: FocusRequester, onRe
     }
 }
 
+/** The side bar with 在看's count, read here rather than at the home root. */
+@Composable
+private fun HomeSideNav(vm: HomeViewModel, open: Boolean, tab: Int, onPick: (SideNavItem) -> Unit, onDismiss: () -> Unit) {
+    val count by vm.watchingCount.collectAsStateWithLifecycle()
+    SideNav(open, tab, onPick = onPick, onDismiss = onDismiss, watching = count)
+}
+
 /** Main.dc.html top bar: the zmby Logo, the search pill beside it, and the source button on the right. */
 @Composable
-private fun HomeTopBar(servers: List<ServerStatus>, source: String, search: FocusRequester, onSearch: () -> Unit, onSource: () -> Unit) {
+private fun HomeTopBar(vm: HomeViewModel, search: FocusRequester, onSearch: () -> Unit, onSource: () -> Unit) {
+    // Health and latency change on every speed test and failure: only this bar reads them, not home.
+    val servers by LocalContext.current.zmby.registry.servers.collectAsStateWithLifecycle()
+    val source by vm.source.collectAsStateWithLifecycle()
     Row(
         // Cached like the rows; the bottom padding keeps the buttons' shadows inside the layer.
         Modifier.fillMaxWidth().cachedLayer().padding(start = 80.dp, end = 80.dp, top = 44.dp, bottom = 40.dp),
@@ -320,74 +343,36 @@ private fun HomeTopBar(servers: List<ServerStatus>, source: String, search: Focu
 }
 
 @Composable
-private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: FocusRequester, entry: FocusRequester, onLibrary: (ServerItem) -> Unit, onWatching: () -> Unit, onWatchingMenu: (WatchCard) -> Unit) {
+private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, trailer: TrailerPlayer, search: FocusRequester, entry: FocusRequester, onLibrary: (ServerItem) -> Unit, onWatching: () -> Unit, onWatchingMenu: (WatchCard) -> Unit) {
+    TraceRecomposition("Home.feed")
     val context = LocalContext.current
     val app = context.zmby
-    val library = app.library
     val tick = rememberResumeTick()
     val vm = screenModel("home") { HomeViewModel(app) }
-    val rows by vm.rows.collectAsStateWithLifecycle()
-    val openWatching = rememberWatchingPlayback(nav)
-    val watching by vm.watching.collectAsStateWithLifecycle()
-    val latest = rows.latest
-    val settings = app.settings
-    val showLatest by settings.showLatestRow.flow.collectAsStateWithLifecycle()
-    val rotates by settings.heroRotates.flow.collectAsStateWithLifecycle()
-    // Shown from the store at once; entering home and coming back from the player ask the servers again.
-    LaunchedEffect(tick) { vm.refresh() }
-    val serverHome by vm.serverHome.collectAsStateWithLifecycle()
-    // 主推区: recent additions (ui-spec §2.1) — the chosen server's own, or every server's merged.
-    val chart by settings.tmdbChart.flow.collectAsStateWithLifecycle()
-    val language by settings.metadataLanguage.flow.collectAsStateWithLifecycle()
-    val posterLanguage by settings.posterLanguage.flow.collectAsStateWithLifecycle()
-    val logoLanguage by settings.logoLanguage.flow.collectAsStateWithLifecycle()
-    val token by settings.tmdbToken.flow.collectAsStateWithLifecycle()
-    var chartError by remember(chart, token) { mutableStateOf<String?>(null) }
-    // 主推区 source (ui-spec §2.1): the TMDB chart needs a token; without one the servers' own titles show.
-    val heroSetting by settings.heroSource.flow.collectAsStateWithLifecycle()
-    val useChart = HeroSource.of(heroSetting) == HeroSource.Tmdb && token.isNotBlank()
-    val chartTitles by produceState<List<ServerItem>>(emptyList(), useChart, chart, listOf(language, posterLanguage, logoLanguage, token), tick) {
-        if (!useChart) { value = emptyList(); return@produceState }
-        withContext(Dispatchers.IO) {
-            try {
-                val titles = app.catalog.chart(CatalogChart.of(chart)).take(8)
-                value = titles.map { (app.catalog.cached(it.ref) ?: it).cardRef() }
-                chartError = null
-                for (work in titles) {
-                    try {
-                        val full = app.catalog.work(work.ref).cardRef()
-                        value = value.map { if (it.item.id == full.item.id) full else it }
-                    } catch (e: CancellationException) { throw e } catch (_: Exception) { /* A title remains a usable catalogue entry. */ }
-                }
-            } catch (e: CancellationException) { throw e } catch (e: Exception) { chartError = e.message }
-        }
-    }
-    val picks by vm.heroPicks.collectAsStateWithLifecycle()
-    val homeSource by vm.source.collectAsStateWithLifecycle()
-    val featured = if (useChart) chartTitles else picks.map { it.ref }
-    // The line above each title says where it came from: 「TMDB · 本周趋势」, or 「家里 NAS · 为你推荐」.
-    val heroLabels = remember(useChart, chart, picks, homeSource) {
-        if (useChart) emptyMap<String, String>()
-        else picks.associate { p -> p.ref.key to listOfNotNull(app.registry.get(p.ref.server)?.name?.takeIf { homeSource.isEmpty() }, p.tier.label).joinToString(" · ") }
-    }
+    // Which rows exist; each row below subscribes to its own cards (performance plan RH ②).
+    val layout by vm.layout.collectAsStateWithLifecycle()
+    val rotates by app.settings.heroRotates.flow.collectAsStateWithLifecycle()
+    // Shown from the store at once. Entering home refreshes what is due; back from the player (tick > 0)
+    // 在看 asks the servers whatever its age (performance plan RN ①).
+    LaunchedEffect(tick) { vm.refresh(fromPlayer = tick > 0) }
+    // 主推区 (ui-spec §2.1): the chart or the servers' picks, worked out in the ViewModel (RH ④).
+    val featured by vm.featured.collectAsStateWithLifecycle()
+    val chart by vm.chart.collectAsStateWithLifecycle()
+    val heroLabels by vm.heroLabels.collectAsStateWithLifecycle()
     SideEffect {
         carousel.labels = heroLabels
-        carousel.defaultLabel = if (useChart) "TMDB · ${CatalogChart.of(chart).label}" else null
+        carousel.defaultLabel = if (chart.use) "TMDB · ${CatalogChart.of(chart.chart).label}" else null
+        carousel.items = featured
     }
-    SideEffect { carousel.items = featured }
     // A slide cut off by leaving home rests on its page when home shows again.
     LaunchedEffect(carousel) { carousel.settle() }
-    LaunchedEffect(tick) { vm.forgetHeroFetches() }
+    // Only back from the player: coming back from a detail page keeps the hero's full items (RN ④).
+    LaunchedEffect(tick) { if (tick > 0) vm.forgetHeroFetches() }
     HeroPrefetch(carousel, tick) { vm.prefetchHero(it) }
-    // Resume/latest rows carry no media streams; the full items give the badges.
-    val heroDetails by vm.heroDetails.collectAsStateWithLifecycle()
-    val serverList by app.registry.servers.collectAsStateWithLifecycle()
-    val watchEntries by app.watchlist.entries.collectAsStateWithLifecycle()
-    val showWatchlist by settings.showWatchlistRow.flow.collectAsStateWithLifecycle()
-    val servers = serverList
+    HeroTrailerHost(vm, carousel, trailer)
 
     val activity = context as? android.app.Activity
-    val shown = featured.isNotEmpty() || watching.isNotEmpty()
+    val shown = featured.isNotEmpty() || layout.watching
     LaunchedEffect(shown) { if (shown && activity != null) Diagnostics.homeShown(activity) }
 
     val scope = rememberCoroutineScope()
@@ -402,41 +387,110 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: Fo
         @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
         val list = rememberLazyListState(cacheWindow = androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow(ahead = 600.dp, behind = 400.dp))
         SideEffect { carousel.list = list }
-        val running = rememberHeroCountdown(carousel, rotates, scope)
+        val running = rememberHeroCountdown(carousel, rotates, scope, trailer)
         LazyColumn(Modifier.fillMaxSize().padding(top = CONTENT_TOP), state = list) {
-          item(key = "hero", contentType = "hero") {
-           // The text pages slide over the backdrop pages; 详情 and the dots stay put. Both fade and
-           // move up with the list as focus goes down to the rows (2026-10-25 user request).
-           Box(Modifier.fillMaxWidth().height(598.dp)) {
-            if (featured.isNotEmpty()) {
-                Column(Modifier.padding(top = 170.dp - CONTENT_TOP)) {
-                    HeroPages(carousel, heroDetails)
-                    HeroControls(
-                        carousel = carousel,
-                        focus = rememberInitialFocus(featured.firstOrNull()?.key, shownAt),
-                        running = running,
-                        scope = scope,
-                        onOpen = { nav.open(it) },
-                        modifier = Modifier.focusRequester(entry).upToSearch(search),
-                        onFocusChange = { focused ->
-                            // Back on the hero: show the whole top of the page again, not just the button.
-                            if (focused && list.canScrollBackward) scope.launch { list.scrollToTopFirmly() }
-                        },
-                    )
+            item(key = "hero", contentType = "hero") {
+                HomeHeroItem(nav, vm, carousel, featured.isNotEmpty(), chart, shownAt, search, entry, running, list, scope)
+            }
+            // 在看 (ui-spec §2.18): the first cards of the 在看 page, then 「全部 ›」 to it.
+            if (layout.watching) item(key = "watching", contentType = "row") { HomeWatchingRow(nav, vm, onWatching, onWatchingMenu) }
+            if (layout.watchlist) item(key = "watchlist", contentType = "row") {
+                TraceRecomposition("Home.row.watchlist")
+                val cards by vm.watchlistRow.collectAsStateWithLifecycle()
+                PosterRow("待看", cards, bottom = 48.dp) { card ->
+                    card.watchlist?.let { e -> watchlistRef(e, app.registry.all)?.let { nav.open(it) } }
                 }
-            } else {
-                Box(Modifier.padding(start = 80.dp, top = 170.dp - CONTENT_TOP).width(880.dp)) {
-                    if (useChart && chartError != null) {
-                        Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                            Text("TMDB · ${CatalogChart.of(chart).label}", fontSize = 38.sp, fontWeight = FontWeight.Bold)
-                            Text(chartError ?: "在设置中填写 TMDB Read Access Token，启用影视榜单轮播", fontSize = 23.sp, color = Z.textSecondary)
-                            GlassButton("元数据设置", { nav.go(Route.Settings) }, Modifier.focusRequester(rememberInitialFocus("catalogSetup", shownAt)).focusRequester(entry).upToSearch(search))
-                        }
-                    } else {
+            }
+            if (layout.libraries) item(key = "libraries", contentType = "row") { HomeLibrariesRow(vm, onLibrary) }
+            layout.libraryRows.forEach { rowKey ->
+                item(key = rowKey, contentType = "row") {
+                    TraceRecomposition("Home.row.libLatest")
+                    val rows by vm.libraryRows.collectAsStateWithLifecycle()
+                    val row = rows.firstOrNull { it.key == rowKey }
+                    if (row != null) PosterRow(row.title, row.cards, bottom = 48.dp) { card -> card.ref?.let { nav.open(it) } }
+                }
+            }
+            if (layout.latest) item(key = "latest", contentType = "row") {
+                TraceRecomposition("Home.row.latest")
+                val cards by vm.latestRow.collectAsStateWithLifecycle()
+                PosterRow("最新添加", cards, bottom = 80.dp) { card -> card.ref?.let { nav.open(it) } }
+            }
+        }
+    }
+}
+
+/**
+ * Tells the ViewModel which title the hero rests on and plays the trailer it finds (trailer design).
+ * Collected here, not read in composition: a trailer arriving or ending recomposes nothing but the
+ * backdrop page it plays on. A slide, scrolling the hero away or leaving home stops it at once.
+ */
+@Composable
+private fun HeroTrailerHost(vm: HomeViewModel, carousel: HeroCarousel, trailer: TrailerPlayer) {
+    val app = LocalContext.current.zmby
+    val lifecycle by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    LaunchedEffect(carousel, trailer) {
+        snapshotFlow { carousel.resting(lifecycle.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) }.collect { ref ->
+            if (ref == null || ref.key != trailer.key) trailer.stop()
+            vm.heroResting(ref)
+        }
+    }
+    LaunchedEffect(vm, trailer) {
+        kotlinx.coroutines.flow.combine(vm.heroTrailer, app.settings.trailerSound.flow) { t, sound -> t to sound }.collect { (t, sound) ->
+            // Null also when 自动播放预告片 is switched off: whatever plays stops.
+            if (t == null) trailer.stop() else if (t.key == carousel.current?.key) trailer.load(t.key, t.info, sound)
+        }
+    }
+    DisposableEffect(trailer) {
+        onDispose {
+            trailer.stop()
+            vm.heroResting(null)
+        }
+    }
+}
+
+/** The hero block: the sliding pages and controls, or the empty / chart-error state. */
+@Composable
+private fun HomeHeroItem(nav: Nav, vm: HomeViewModel, carousel: HeroCarousel, hasTitles: Boolean, chart: ChartState, shownAt: Long, search: FocusRequester, entry: FocusRequester,
+    running: Boolean, list: androidx.compose.foundation.lazy.LazyListState, scope: kotlinx.coroutines.CoroutineScope) {
+    TraceRecomposition("Home.row.hero")
+    val app = LocalContext.current.zmby
+    // The text pages slide over the backdrop pages; 详情 and the dots stay put. Both fade and
+    // move up with the list as focus goes down to the rows (2026-10-25 user request).
+    Box(Modifier.fillMaxWidth().height(598.dp)) {
+        if (hasTitles) {
+            // Resume/latest rows carry no media streams; the full items give the badges.
+            val heroDetails by vm.heroDetails.collectAsStateWithLifecycle()
+            Column(Modifier.padding(top = 170.dp - CONTENT_TOP)) {
+                HeroPages(carousel, heroDetails)
+                HeroControls(
+                    carousel = carousel,
+                    focus = rememberInitialFocus(carousel.items.firstOrNull()?.key, shownAt),
+                    running = running,
+                    scope = scope,
+                    onOpen = { nav.open(it) },
+                    modifier = Modifier.focusRequester(entry).upToSearch(search),
+                    onFocusChange = { focused ->
+                        // Back on the hero: show the whole top of the page again, not just the button.
+                        if (focused && list.canScrollBackward) scope.launch { list.scrollToTopFirmly() }
+                    },
+                )
+            }
+        } else {
+            Box(Modifier.padding(start = 80.dp, top = 170.dp - CONTENT_TOP).width(880.dp)) {
+                if (chart.use && chart.error != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                        Text("TMDB · ${CatalogChart.of(chart.chart).label}", fontSize = 38.sp, fontWeight = FontWeight.Bold)
+                        Text(chart.error, fontSize = 23.sp, color = Z.textSecondary)
+                        GlassButton("元数据设置", { nav.go(Route.Settings) }, Modifier.focusRequester(rememberInitialFocus("catalogSetup", shownAt)).focusRequester(entry).upToSearch(search))
+                    }
+                } else {
                     // Nothing cached and nothing from the servers (P4 离线与错误处理): say why and offer a retry.
-                    val enabled = serverList.filter { it.enabled }
+                    val health by app.registry.servers.collectAsStateWithLifecycle()
+                    val rows by vm.rows.collectAsStateWithLifecycle()
+                    val watching by vm.watching.collectAsStateWithLifecycle()
+                    val enabled = health.filter { it.enabled }
                     val allOff = enabled.isNotEmpty() && enabled.all { it.health == Health.Off }
-                    val nothing = watching.isEmpty() && latest.isEmpty()
+                    val nothing = watching.isEmpty() && rows.latest.isEmpty()
                     if (nothing && (allOff || rows.loaded)) {
                         HomeEmpty(
                             if (allOff) "暂时连不上任何服务器" else "这些服务器上还没有可显示的内容",
@@ -444,7 +498,7 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: Fo
                             focus = rememberInitialFocus(if (allOff) "offline" else "empty", shownAt),
                             onRetry = {
                                 enabled.forEach { app.registry.retry(it.id) }
-                                scope.launch { library.measure() }
+                                scope.launch { app.library.measure() }
                                 vm.refresh(force = true)
                             },
                             onServers = { nav.go(Route.Servers) },
@@ -452,122 +506,77 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, search: Fo
                             entry = entry,
                         )
                     }
-                    }
                 }
             }
-           }
-          }
-            // 在看 (ui-spec §2.18): the first cards of the 在看 page, then 「全部 ›」 to it.
-            if (watching.isNotEmpty()) item(key = "watching", contentType = "row") {
-                Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                    Box(Modifier.padding(start = 80.dp)) { RowTitle("在看") }
-                    LazyRow(
-                        modifier = Modifier.horizontalRow(),
-                        contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 48.dp),
-                        horizontalArrangement = Arrangement.spacedBy(36.dp),
-                    ) {
-                        items(watching.take(HOME_WATCHING), key = { it.key }, contentType = { "watching" }) { card ->
-                            WatchingRowCard(card, onClick = { openWatching(card) }, onMenu = { onWatchingMenu(card) }, focusKey = "watching:${card.key}")
-                        }
-                        item(key = "watching:all", contentType = "more") {
-                            Box(Modifier.height(225.dp), contentAlignment = Alignment.Center) {
-                                GlassButton("全部 ›", onWatching, label = "在看 全部")
-                            }
-                        }
-                    }
+        }
+    }
+}
+
+@Composable
+private fun HomeWatchingRow(nav: Nav, vm: HomeViewModel, onWatching: () -> Unit, onWatchingMenu: (WatchCard) -> Unit) {
+    TraceRecomposition("Home.row.watching")
+    val watching by vm.watching.collectAsStateWithLifecycle()
+    val faces = LocalContext.current.zmby.cardFaces.version.collectAsStateWithLifecycle()
+    val openWatching = rememberWatchingPlayback(nav)
+    Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        Box(Modifier.padding(start = 80.dp)) { RowTitle("在看") }
+        LazyRow(
+            modifier = Modifier.horizontalRow(),
+            contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 48.dp),
+            horizontalArrangement = Arrangement.spacedBy(36.dp),
+        ) {
+            items(watching.take(HOME_WATCHING), key = { it.key }, contentType = { "watching" }) { card ->
+                WatchingRowCard(card, rememberWatchTitle(card, faces.value), onClick = { openWatching(card) }, onMenu = { onWatchingMenu(card) }, focusKey = "watching:${card.key}")
+            }
+            item(key = "watching:all", contentType = "more") {
+                Box(Modifier.height(225.dp), contentAlignment = Alignment.Center) {
+                    GlassButton("全部 ›", onWatching, label = "在看 全部")
                 }
             }
-            if (showWatchlist && watchEntries.isNotEmpty()) item(key = "watchlist", contentType = "row") {
-                Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                    Box(Modifier.padding(start = 80.dp)) { RowTitle("待看") }
-                    LazyRow(
-                        modifier = Modifier.horizontalRow(),
-                        contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 48.dp),
-                        horizontalArrangement = Arrangement.spacedBy(28.dp),
-                    ) {
-                        items(watchEntries, key = { it.workKey }, contentType = { "poster" }) { e ->
-                            val ref = watchlistRef(e, servers)
-                            PosterCard2x3(
-                                imageUrl = ref?.let { library.primaryImage(it) },
-                                title = e.title,
-                                onClick = { if (ref != null) nav.open(ref) },
-                                subtitle = listOfNotNull(if (e.type == "Series") "剧集" else "电影", e.year?.toString()).joinToString(" · "),
-                                focusKey = "watchrow:${e.workKey}",
-                                modifier = Modifier.onMenuKey { if (ref != null) app.toggleWatchlist(scope, ref) },
-                            )
-                        }
-                    }
-                }
+        }
+    }
+}
+
+@Composable
+private fun HomeLibrariesRow(vm: HomeViewModel, onLibrary: (ServerItem) -> Unit) {
+    TraceRecomposition("Home.row.libraries")
+    val libs by vm.librariesRow.collectAsStateWithLifecycle()
+    Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        Box(Modifier.padding(start = 80.dp)) { RowTitle("媒体库") }
+        LazyRow(
+            modifier = Modifier.horizontalRow(),
+            contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 48.dp),
+            horizontalArrangement = Arrangement.spacedBy(28.dp),
+        ) {
+            items(libs, key = { it.key }, contentType = { "library" }) { lib ->
+                MediaCard16x9(imageUrl = lib.image, onClick = { onLibrary(lib.lib) }, width = 360.dp, title = lib.title, focusKey = "library:${lib.key}")
             }
-            serverHome?.let { own ->
-                if (own.libraries.isNotEmpty()) item(key = "libraries", contentType = "row") {
-                    Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                        Box(Modifier.padding(start = 80.dp)) { RowTitle("媒体库") }
-                        LazyRow(
-                            modifier = Modifier.horizontalRow(),
-                            contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 48.dp),
-                            horizontalArrangement = Arrangement.spacedBy(28.dp),
-                        ) {
-                            items(own.libraries, key = { it.key }, contentType = { "library" }) { lib ->
-                                MediaCard16x9(
-                                    imageUrl = library.primaryImage(lib, maxHeight = 340),
-                                    onClick = { onLibrary(lib) },
-                                    width = 360.dp,
-                                    title = lib.item.name,
-                                    focusKey = "library:${lib.key}",
-                                )
-                            }
-                        }
-                    }
-                }
-                own.libraries.forEach { lib ->
-                    val items = own.latest[lib.item.id].orEmpty()
-                    if (items.isNotEmpty()) item(key = "liblatest:${lib.key}", contentType = "row") {
-                        Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                            Box(Modifier.padding(start = 80.dp)) { RowTitle("最新 · ${lib.item.name.orEmpty()}") }
-                            LazyRow(
-                                modifier = Modifier.horizontalRow(),
-                                contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 48.dp),
-                                horizontalArrangement = Arrangement.spacedBy(28.dp),
-                            ) {
-                                items(items, key = { it.key }, contentType = { "poster" }) { ref ->
-                                    PosterCard2x3(
-                                        imageUrl = library.primaryImage(ref),
-                                        title = titleOf(ref.item),
-                                        onClick = { nav.open(ref) },
-                                        subtitle = listOfNotNull(if (ref.item.type == "Series") "剧集" else "电影", ref.item.productionYear?.toString()).joinToString(" · "),
-                                        focusKey = "liblatest:${lib.item.id}:${ref.key}",
-                                        modifier = Modifier.onMenuKey { app.toggleWatchlist(scope, ref) },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if (serverHome == null && showLatest && latest.isNotEmpty()) item(key = "latest", contentType = "row") {
-                Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                    Box(Modifier.padding(start = 80.dp)) { RowTitle("最新添加") }
-                    LazyRow(
-                        modifier = Modifier.horizontalRow(),
-                        contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 80.dp),
-                        horizontalArrangement = Arrangement.spacedBy(28.dp),
-                    ) {
-                        items(latest, key = { it.key }, contentType = { "poster" }) { ref ->
-                            val item = ref.item
-                            val count = rows.latestCopies[ref.key] ?: 1
-                            PosterCard2x3(
-                                imageUrl = library.primaryImage(ref),
-                                title = titleOf(item),
-                                onClick = { nav.open(ref) },
-                                topEnd = if (count > 1) "$count 个版本" else null,
-                                subtitle = listOfNotNull(if (item.type == "Series") "剧集" else "电影", item.productionYear?.toString()).joinToString(" · "),
-                                focusKey = "latest:${ref.key}",
-                                modifier = Modifier.onMenuKey { app.toggleWatchlist(scope, ref) },
-                            )
-                        }
-                    }
-                }
+        }
+    }
+}
+
+/** A titled row of 2:3 posters from prepared [PosterModel]s; Menu adds or removes the work from 待看. */
+@Composable
+private fun PosterRow(title: String, cards: List<PosterModel>, bottom: androidx.compose.ui.unit.Dp, onOpen: (PosterModel) -> Unit) {
+    val app = LocalContext.current.zmby
+    val scope = rememberCoroutineScope()
+    Column(Modifier.cachedLayer(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        Box(Modifier.padding(start = 80.dp)) { RowTitle(title) }
+        LazyRow(
+            modifier = Modifier.horizontalRow(),
+            contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = bottom),
+            horizontalArrangement = Arrangement.spacedBy(28.dp),
+        ) {
+            items(cards, key = { it.key }, contentType = { "poster" }) { card ->
+                PosterCard2x3(
+                    imageUrl = card.image,
+                    title = card.title,
+                    onClick = { onOpen(card) },
+                    topEnd = card.badge,
+                    subtitle = card.subtitle,
+                    focusKey = card.focusKey,
+                    modifier = Modifier.onMenuKey { card.ref?.let { app.toggleWatchlist(scope, it) } },
+                )
             }
         }
     }
@@ -582,5 +591,5 @@ internal fun genresLabel(item: BaseItemDto): String? = item.genres.take(2).joinT
  * frame; a cached layer is redrawn only when something in it changes (the row being scrolled, the
  * focused card), the others are one textured quad each.
  */
-private fun Modifier.cachedLayer(): Modifier =
+private fun Modifier.cachedLayer(): Modifier = if ("rowlayer" in Diagnostics.drawOff) this else
     graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }

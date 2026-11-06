@@ -67,7 +67,31 @@ mock 加 `--segments` 给「漫长的季节」各集加片头片尾标记，并�
 
 宿主机代理或 VPN 拦截模拟器访问 `10.0.2.2` 时，可改走 adb 反向端口：`adb reverse tcp:8096 tcp:8096`，在服务器管理里给 mock 服务器添加线路 `127.0.0.1:8096`，并用 `adb shell setprop debug.zmby.fake_zidoo_base http://127.0.0.1:8096` 让假播放器回报状态。
 
-mock 还支持 `--pinyin`、`--redirect`、`--sign-ttl`、`--require-ua`、`--video` 和 `--suggestions`（主推区建议接口的有无），并提供相似作品、建议、电影推荐与一个只接受假令牌的最小 TMDB（调试构建用 `adb shell setprop debug.zmby.tmdb_base http://10.0.2.2:8096/_mock/tmdb/3/` 指向它）；用 `python3 -I tools/mock_emby.py --help` 查看参数。真实播放测试请使用你有权分发的测试视频，仓库不附带影片。
+mock 还支持 `--pinyin`、`--redirect`、`--sign-ttl`、`--require-ua`、`--video`、`--suggestions`（主推区建议接口的有无）和 `--trailer <MP4>`（假的 IMDb 预告片接口，调试构建用 `adb shell setprop debug.zmby.imdb_base http://10.0.2.2:8096/_mock/imdb` 指向它；测试视频请自行生成，例如 ffmpeg 的 `testsrc2`），`--trailer-hls <目录>`（烂番茄备选预告片的 HLS，用 ffmpeg 从测试 MP4 切出）、服务器本地预告片，另有虚构评分的 Wikidata 与烂番茄页面（`debug.zmby.wikidata_base http://10.0.2.2:8096/_mock/wikidata`、`debug.zmby.rt_base http://10.0.2.2:8096/_mock/rt/`），并提供相似作品、建议、电影推荐与一个只接受假令牌的最小 TMDB（调试构建用 `adb shell setprop debug.zmby.tmdb_base http://10.0.2.2:8096/_mock/tmdb/3/` 指向它）；用 `python3 -I tools/mock_emby.py --help` 查看参数。真实播放测试请使用你有权分发的测试视频，仓库不附带影片。
+
+### 性能走查与请求计数
+
+`tools/perf_walk.py` 在模拟器或设备上按固定遥控按键序列走查首页、详情、剧集页、搜索、浏览、在看与「我的」，每个场景报告 `dumpsys gfxinfo` 帧时间（p50 / p90 / p99、超过 33 ms 的帧，以及最近约 120 帧按阶段拆分的重组与动画、测量布局、绘制记录、渲染线程耗时）、调试构建记录的各区块重组次数，以及从详情返回首页到首帧、到焦点恢复的耗时。按键默认通过设备上常驻的 `monkey --port` 发送（一个进程，不像每次 `adb shell input` 那样与应用争抢 CPU）；设备有可写的虚拟输入设备时可用 `--input /dev/input/eventN` 改用 `sendevent`。场景路径按 `mock_emby.py --multi` 的数据编写，`--list` 列出场景。`box-` 开头的场景用于连着自己服务器的 Zidoo 盒子：详情与剧集页从电影 / 剧集网格的第一张海报进入，不在「在看」上按确认；盒子的 logcat 为空，用 `--settle <毫秒>` 代替等待首页日志；`--player-guard <盒子地址>` 从本机轮询播放器的 9529 状态，一旦意外起播就发送停止键并中止走查。盒子的虚拟输入设备没有 `KEY_BACK`，脚本用 `KEY_ESC`（系统回退为返回键）。
+
+```bash
+python3 -I tools/mock_emby.py --multi > /tmp/mock.log
+```
+
+```bash
+python3 -I tools/perf_walk.py --serial emulator-5580 --mock http://127.0.0.1:8096 --out /tmp/walk.json
+```
+
+```bash
+python3 -I tools/request_count.py /tmp/mock.log
+```
+
+`--mock` 让走查在每个场景开始时向 mock 打标记，`request_count.py` 据此按场景统计请求数、各服务器与端点的分布，并列出同一服务器重复请求的相同 URL；给出场景名可看单个场景的明细。Baseline Profile 由 `:baselineprofile` 模块生成：连接一台 Android 13 及以上（或已 root）的模拟器或设备，按上文导入 `mock_emby.py --multi` 的服务器后运行下面的命令，结果写入 `app/src/release/generated/baselineProfiles/`（随源码提交）。Android 11 的盒子未 root 时不能生成。同一模块的冷启动基准（不预编译与使用 Profile 各 4 次）用 `./gradlew :baselineprofile:connectedBenchmarkReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.zmby.baselineprofile.StartupBenchmark`；在模拟器上它默认拒绝运行，只作参考时再加 `-Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.suppressErrors=EMULATOR`。两者都只是测试模块，不进入 APK（其依赖 androidx.benchmark、uiautomator 均为 Apache-2.0，不随应用分发）。注意它们会在连接的设备上安装并在结束后卸载 `app.zmby`，设备上的服务器与缓存随之清空，只在专用模拟器上运行；`:baselineprofile:assemble` 也会触发这一步，只检查编译时用 `./gradlew :baselineprofile:compileNonMinifiedReleaseKotlin`。常规检查（`:app:` 的单元测试、lint 与构建）不连接设备。
+
+```bash
+./gradlew :app:generateBaselineProfile
+```
+
+Compose 编译器的可跳过性报告用 `./gradlew :app:assembleDebug -PcomposeReports` 生成到 `app/build/compose_reports`。模拟器帧时间只作相对比较。
 
 ## 代码结构
 
@@ -94,7 +118,7 @@ flowchart LR
 | `playback/`、`zidoo/` | 播放准备、流地址、字幕、转发和 Zidoo 协议。 |
 | `log/`、`net/` | 脱敏日志与小型 HTTP 服务。 |
 | `app/src/test/` | JUnit、MockWebServer 与 Robolectric 测试。 |
-| `devtools/fake-zidoo-player/`、`tools/mock_emby.py` | 模拟器测试工具。 |
+| `devtools/fake-zidoo-player/`、`tools/mock_emby.py`、`tools/perf_walk.py`、`tools/request_count.py` | 模拟器测试、性能走查与请求计数工具。 |
 
 表中包名目录均相对于 `app/src/main/java/app/zmby/`，完整目录除外。
 

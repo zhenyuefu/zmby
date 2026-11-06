@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import app.zmby.TraceRecomposition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -85,11 +86,13 @@ private enum class WatchingFilter(val label: String) { All("全部"), Series("�
  */
 @Composable
 internal fun WatchingPage(nav: Nav, search: FocusRequester, entry: FocusRequester, onHome: () -> Unit) {
+    TraceRecomposition("Watching.root")
     val context = LocalContext.current
     val app = context.zmby
     val vm = screenModel("home") { HomeViewModel(app) }
     val openWatching = rememberWatchingPlayback(nav)
     val cards by vm.watching.collectAsStateWithLifecycle()
+    val faces = LocalContext.current.zmby.cardFaces.version.collectAsStateWithLifecycle()
     var filterIndex by rememberSaveable { mutableIntStateOf(0) }
     val filter = WatchingFilter.entries[filterIndex]
     val shown = remember(cards, filter) {
@@ -99,6 +102,7 @@ internal fun WatchingPage(nav: Nav, search: FocusRequester, entry: FocusRequeste
             WatchingFilter.Movies -> cards.filter { !it.series }
         }
     }
+    val seriesCount = remember(cards) { cards.count { it.series } }
     var menu by remember { mutableStateOf<WatchCard?>(null) }
     // Focus goes back to the card when the menu closes; once a removed card is gone, to its neighbour.
     val memory = LocalNavEntry.current?.focus
@@ -129,8 +133,8 @@ internal fun WatchingPage(nav: Nav, search: FocusRequester, entry: FocusRequeste
                     SegmentedWell(
                         items = listOf(
                             Segment(WatchingFilter.All.label),
-                            Segment("${WatchingFilter.Series.label} ${cards.count { it.series }}"),
-                            Segment("${WatchingFilter.Movies.label} ${cards.count { !it.series }}"),
+                            Segment("${WatchingFilter.Series.label} $seriesCount"),
+                            Segment("${WatchingFilter.Movies.label} ${cards.size - seriesCount}"),
                         ),
                         selected = filterIndex,
                         onSelect = { filterIndex = it },
@@ -158,7 +162,7 @@ internal fun WatchingPage(nav: Nav, search: FocusRequester, entry: FocusRequeste
             ) {
                 itemsIndexed(shown, key = { _, c -> c.key }, contentType = { _, c -> if (c.series) "series" else "movie" }) { i, card ->
                     WatchingCard(
-                        card, now,
+                        card, rememberWatchTitle(card, faces.value), now,
                         onClick = { openWatching(card) },
                         modifier = Modifier
                             .then(if (i == 0) Modifier.focusRequester(entry) else Modifier)
@@ -231,11 +235,10 @@ private val CardShape = RoundedCornerShape(32.dp)
 
 /** Watching.dc.html `.wc`: 236 high; a 360×204 picture with this session's progress, then title, when and where, state and the series bar. */
 @Composable
-private fun WatchingCard(card: WatchCard, now: Long, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun WatchingCard(card: WatchCard, title: String, now: Long, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val app = LocalContext.current.zmby
-    val item = card.shown.item
     Focusable(onClick, modifier.height(236.dp).fillMaxWidth(), shape = CardShape, focusedScale = 1.02f, shadow = 30.dp,
-        label = "在看 ${workTitleOf(item)}", focusKey = "watching:${card.key}", dimmed = card.state == WatchState.Waiting) { focused ->
+        label = "在看 $title", focusKey = "watching:${card.key}", dimmed = card.state == WatchState.Waiting) { focused ->
         Row(
             Modifier.fillMaxSize().background(Color.White.copy(alpha = if (focused) 0.12f else 0.06f), CardShape).padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 28.dp),
             horizontalArrangement = Arrangement.spacedBy(28.dp),
@@ -257,7 +260,7 @@ private fun WatchingCard(card: WatchCard, now: Long, onClick: () -> Unit, modifi
                 }
             }
             Column(Modifier.weight(1f).fillMaxHeight().padding(top = 6.dp)) {
-                Text(workTitleOf(item), fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(whereLine(card, now, app.registry.get(card.server)?.name), fontSize = 20.sp, color = Z.textSecondary, maxLines = 1, modifier = Modifier.padding(top = 8.dp))
                 Spacer(Modifier.weight(1f))
                 Text(stateLine(card), fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -288,15 +291,29 @@ private fun SeriesBar(bar: EpisodeBar, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * A 在看 card's title by 影片信息来源 (统一数据层 ④): the work's canonical title when this device has
+ * loaded it (keyed `movie:tmdb:…` / `series:tmdb:…`), else the server copy's. The picture stays the
+ * server's episode still or backdrop: the canonical face has only a poster.
+ */
+@Composable
+internal fun rememberWatchTitle(card: WatchCard, faces: Int): String {
+    val app = LocalContext.current.zmby
+    return remember(faces, card.key, card.server, card.shown.key) {
+        app.cardFaces.faceOfWork(card.server, card.key)?.title ?: workTitleOf(card.shown.item)
+    }
+}
+
 /** The home row's card: 16:9 with the server (and 「n 台」) on the picture and the state underneath. */
 @Composable
-internal fun WatchingRowCard(card: WatchCard, onClick: () -> Unit, onMenu: () -> Unit, focusKey: String) {
+internal fun WatchingRowCard(card: WatchCard, title: String, onClick: () -> Unit, onMenu: () -> Unit, focusKey: String) {
+    TraceRecomposition("Card.watching")
     val app = LocalContext.current.zmby
     MediaCard16x9(
         imageUrl = app.library.landscapeImage(card.shown),
         onClick = onClick,
         modifier = Modifier.watchingCardInput(onClick, onMenu),
-        title = workTitleOf(card.shown.item),
+        title = title,
         topStart = app.registry.get(card.server)?.name,
         topEnd = if (card.servers.size > 1) "${card.servers.size} 台" else null,
         progress = if (card.state == WatchState.Resume) card.progress else 0f,

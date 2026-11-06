@@ -1,5 +1,7 @@
 package app.zmby.ui.screens
 
+import kotlinx.coroutines.flow.toList
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,7 +13,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -36,6 +37,9 @@ import app.zmby.aggregate.StoredRecommendations
 import app.zmby.catalog.CatalogId
 import app.zmby.data.ServerItem
 import app.zmby.data.SourceFeature
+import app.zmby.aggregate.Persist
+import app.zmby.emby.BaseItemDto
+import kotlinx.serialization.builtins.ListSerializer
 import app.zmby.log.ZLog
 import app.zmby.media.titleOf
 import app.zmby.ui.Nav
@@ -51,6 +55,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
+/** Each server's Similar answer is kept across restarts too (统一数据层 ③). */
+private val SIMILAR_PERSIST = Persist(FanOut.KIND_SIMILAR, ListSerializer(BaseItemDto.serializer()))
+
 /**
  * 为你推荐 of the work on the page (ui-spec §2.14): the stored list at once, then each server copy's
  * Similar (only servers in 资源聚合, and the page's own) and, with a TMDB token and ID, TMDB's
@@ -59,9 +66,9 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun rememberRecommendations(workKey: String, copies: List<ServerItem>, tmdb: CatalogId?, refresh: Int): List<Recommendation>? {
     val app = LocalContext.current.zmby
-    val token by app.settings.tmdbToken.flow.collectAsState()
-    val sourceRows by app.sources.rows.collectAsState()
-    val servers by app.registry.servers.collectAsState()
+    val token by app.settings.tmdbToken.flow.collectAsStateWithLifecycle()
+    val sourceRows by app.sources.rows.collectAsStateWithLifecycle()
+    val servers by app.registry.lineup.collectAsStateWithLifecycle()
     var recs by remember(workKey) { mutableStateOf<List<Recommendation>?>(null) }
     LaunchedEffect(workKey) {
         app.catalog.storedRecommendations(workKey)?.let { stored -> if (recs == null) recs = stored.items }
@@ -74,10 +81,14 @@ internal fun rememberRecommendations(workKey: String, copies: List<ServerItem>, 
     LaunchedEffect(workKey, askedKey, tmdb?.key, token, refresh) {
         // Copies come in as servers answer the version lookup: ask once they have settled.
         delay(800)
-        val order = servers.associate { it.id to it.order }
-        val answers = app.fanOut.all(asked.map { it.server }, FanOut.LIST_TIMEOUT_MS) { server ->
-            app.library.similar(server, asked.first { it.server == server }.item.id)
-        }
+        // 资源聚合's order (统一数据层 · 每项来源的优先级).
+        val order = app.sources.order(SourceFeature.Aggregate)
+        // Each server's answer is kept six hours (performance plan RN ⑤): copies arriving later only
+        // add the servers not asked yet, and coming back to the page asks nobody again.
+        val itemOf = asked.associate { it.server to it.item.id }
+        val answers = app.fanOut.run(asked.map { it.server }, FanOut.LIST_TIMEOUT_MS, share = "similar", cacheMs = FanOut.RESOURCE_CACHE_MS,
+            persist = SIMILAR_PERSIST,
+            context = { server -> itemOf[server] }) { server -> app.library.similar(server, itemOf.getValue(server)) }.toList()
         answers.filterIsInstance<Outcome.Failed>().forEach { ZLog.d("Recs", "Similar from ${app.registry.get(it.server)?.name}: ${it.error.message}") }
         val lists = answers.filterIsInstance<Outcome.Ok<List<app.zmby.emby.BaseItemDto>>>().sortedBy { order[it.server] ?: Int.MAX_VALUE }.map { it.server to it.value }
         val fromTmdb = if (tmdb == null || token.isBlank()) emptyList() else try {
@@ -140,7 +151,7 @@ internal fun recommendationTitle(rec: Recommendation): String =
 internal fun RecommendationsBlock(nav: Nav, recs: List<Recommendation>, entry: FocusRequester) {
     val textShadow = detailTextShadow()
     val app = LocalContext.current.zmby
-    val servers by app.registry.servers.collectAsState()
+    val servers by app.registry.lineup.collectAsStateWithLifecycle()
     Column(Modifier.padding(vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Box(Modifier.padding(horizontal = 80.dp)) { RowTitle("为你推荐", trailing = "${recs.size} 部", textShadow = textShadow) }
         LazyRow(Modifier.horizontalRow(), contentPadding = PaddingValues(start = 80.dp, end = 120.dp, bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {

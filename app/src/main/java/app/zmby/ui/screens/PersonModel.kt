@@ -35,7 +35,7 @@ class PersonViewModel(private val app: ZmbyApp, private val initialKey: String, 
                 _person.value = Person(initialKey, p.name.orEmpty(), overview = p.overview, birthDate = p.premiereDate,
                     birthPlace = p.productionLocations.firstOrNull(), image = p.imageTags["Primary"]?.let { ImageRef(server, personId, it) }, tmdb = p.providerId("tmdb"), imdb = p.providerId("imdb"))
                 // With a provider ID the screen switches directly to the provider's biography and credits.
-                if (p.providerId("tmdb") != null && app.catalog.configured) return@launch
+                if (p.providerId("tmdb") != null && app.catalog.configured && MetadataMerge.personFromTmdb(app.sources.metadata(), server)) return@launch
                 val items = app.library.worksOf(server, personId).filter { MetadataIdentity.member(it, personId) }
                 val cards = items.distinctBy { it.id }.map { item ->
                     val rows = item.people.filter { it.id == personId }

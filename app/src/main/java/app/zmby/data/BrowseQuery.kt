@@ -80,14 +80,20 @@ data class BrowseQuery(
  * collation).
  */
 object SortCheck {
-    fun consistent(items: List<BaseItemDto>, sort: BrowseSort, descending: Boolean): Boolean {
+    fun consistent(items: List<BaseItemDto>, sort: BrowseSort, descending: Boolean): Boolean = verdict(items, sort, descending) ?: true
+
+    /**
+     * Whether the page came back in [sort] order; null when it cannot tell: fewer than three values,
+     * or all of them equal (any order "keeps" a sort of identical ratings).
+     */
+    fun verdict(items: List<BaseItemDto>, sort: BrowseSort, descending: Boolean): Boolean? {
         val keys: List<String> = when (sort) {
             BrowseSort.Released -> items.mapNotNull { it.premiereDate?.take(10) ?: it.productionYear?.let { y -> "%04d".format(y) } }
             BrowseSort.Added -> items.mapNotNull { it.dateCreated }
             BrowseSort.Rating -> items.mapNotNull { it.communityRating?.let { r -> "%06.2f".format(r) } }
-            else -> return true
+            else -> return null
         }
-        if (keys.size < 3) return true
+        if (keys.size < 3 || keys.distinct().size < 2) return null
         val pairs = keys.zipWithNext()
         val wrong = pairs.count { (a, b) -> if (descending) a < b else a > b }
         // A stray pair can be a missing date filled by the server; most pairs out of order is not.

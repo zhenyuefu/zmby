@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -26,7 +27,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -145,8 +145,8 @@ internal fun rememberDanmuPanel(): DanmuPanelState = remember { DanmuPanelState(
 @Composable
 internal fun DanmuAction(ref: ServerItem?, panel: DanmuPanelState) {
     val app = LocalContext.current.zmby
-    val enabled by app.settings.danmu.flow.collectAsState()
-    val address by app.settings.danmuApiBase.flow.collectAsState()
+    val enabled by app.settings.danmu.flow.collectAsStateWithLifecycle()
+    val address by app.settings.danmuApiBase.flow.collectAsStateWithLifecycle()
     if (address.isBlank()) return
     // No version yet (resources still being looked up): the button holds its place, dimmed, so the
     // header does not shift when one arrives (ui-spec §2.15).
@@ -212,7 +212,7 @@ private fun DanmuPanel(ref: ServerItem, matchPending: Boolean, onDismiss: () -> 
     val footer = remember { FocusRequester() }
     val toggle = remember { FocusRequester() }
     // 显示弹幕 in the panel is the same global setting as 设置 › 播放 › 弹幕 (ui-spec §2.19 修订).
-    val enabled by app.settings.danmu.flow.collectAsState()
+    val enabled by app.settings.danmu.flow.collectAsStateWithLifecycle()
     // Switched on here: the content comes back and searches, but focus stays on the switch.
     var keepFocus by remember { mutableStateOf(false) }
     val list = rememberLazyListState()

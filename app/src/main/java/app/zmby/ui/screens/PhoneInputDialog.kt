@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
@@ -16,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -121,9 +121,9 @@ fun PhoneInputDialog(field: InputField, server: String? = null, onDismiss: () ->
     }
     DisposableEffect(session) { onDispose { session.close() } }
     DisposableEffect(Unit) { onDispose { if (!app.settings.lanLog.value) app.appScope.launch(Dispatchers.IO) { app.lanServer.stop() } } }
-    val state by session.state.collectAsState()
-    val locked by session.locked.collectAsState()
-    val expires by session.expiresAt.collectAsState()
+    val state by session.state.collectAsStateWithLifecycle()
+    val locked by session.locked.collectAsStateWithLifecycle()
+    val expires by session.expiresAt.collectAsStateWithLifecycle()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(session) {
         while (true) {

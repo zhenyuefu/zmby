@@ -62,6 +62,19 @@ import okhttp3.OkHttpClient
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+/** How many of this box's newest progress reports stay in memory (and are read back at startup). */
+private const val RECENT_PROGRESS = 128
+
+/** Stored server answers older than this are deleted at startup (they are only used for six hours). */
+private const val STORED_ANSWERS_MS = 7 * 24 * 60 * 60_000L
+
+/** IMDb's GraphQL endpoint (trailers); a debug build may point `debug.zmby.imdb_base` at the mock server. */
+private const val IMDB_GRAPHQL = "https://caching.graphql.imdb.com/"
+
+/** Wikidata (IMDb ID → Rotten Tomatoes ID) and Rotten Tomatoes title pages (ratings design); `debug.zmby.wikidata_base` / `debug.zmby.rt_base` in debug builds. */
+private const val WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
+private const val ROTTEN_TOMATOES = "https://www.rottentomatoes.com/"
+
 class ZmbyApp : Application(), ImageLoaderFactory {
 
     /** Outlives activities so the final playback report is not cancelled when the screen closes. */
@@ -120,6 +133,9 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         private set
     lateinit var catalog: app.zmby.catalog.CatalogRepository
         private set
+    /** List cards' canonical titles and posters by 影片信息来源 (统一数据层 ④), from works already loaded. */
+    lateinit var cardFaces: app.zmby.catalog.CardFaces
+        private set
     /** 片头片尾: segment markers from the providers in 片段标记来源 (P4). */
     lateinit var segments: app.zmby.segments.SegmentRepository
         private set
@@ -136,6 +152,12 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         private set
     /** 观看进度回写: after a playback, the same film or episode on the other servers chosen for it. */
     lateinit var watchSync: app.zmby.playback.WatchSync
+        private set
+    /** IMDb trailers behind the home hero and the detail pages (trailer design), with their playback cache. */
+    lateinit var trailers: app.zmby.trailer.Trailers
+        private set
+    /** IMDb, Tomatometer and Popcornmeter on the detail pages (ratings design). */
+    lateinit var ratings: app.zmby.ratings.Ratings
         private set
 
     val backups by lazy { app.zmby.backup.BackupRepository(this) }
@@ -179,8 +201,23 @@ class ZmbyApp : Application(), ImageLoaderFactory {
     /** The playback currently handed to the external player, if any. */
     var activePlayback: ActivePlayback? = null
 
+    /**
+     * This box's newest progress per copy (stop reports, 标记为已观看), merged by time with the
+     * servers' answers on every page. Written through to the store's `progress_report` table and read
+     * back at startup, so a restart does not lose what was just watched (统一数据层 · 观看进度).
+     */
     private val _recentProgress = MutableStateFlow<Map<String, app.zmby.emby.UserItemData>>(emptyMap())
     val recentProgress: StateFlow<Map<String, app.zmby.emby.UserItemData>> = _recentProgress.asStateFlow()
+
+    private fun noteProgress(ref: ServerItem, data: app.zmby.emby.UserItemData) {
+        _recentProgress.update { (it - ref.key + (ref.key to data)).entries.toList().takeLast(RECENT_PROGRESS).associate { row -> row.toPair() } }
+        if (ref.server == "catalog") return
+        val at = data.lastPlayedDate?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() } ?: System.currentTimeMillis()
+        appScope.launch(Dispatchers.IO) {
+            runCatching { store.putReport(ref.server, ref.item.id, data.playbackPositionTicks, data.played, at) }
+                .onFailure { ZLog.w(TAG, "progress report not stored", it) }
+        }
+    }
 
     /**
      * False until [init] has read the preferences and built the app's parts on a background thread;
@@ -246,6 +283,12 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         zidooStatus = ZidooStatusApi(local)
         registry = ServerRegistry(PrefsRegistryStore(this), persist = Disk::write)
         store = LocalStore(ZmbyDatabase.open(this), emby.json)
+        // Reports from before the restart, under any made since (a stop report can arrive first).
+        appScope.launch(Dispatchers.IO) {
+            runCatching { store.recentReports(RECENT_PROGRESS) }.getOrNull()?.let { stored ->
+                _recentProgress.update { now -> app.zmby.data.newestProgress(stored, now) }
+            }
+        }
         catalogCache = app.zmby.catalog.LimitedCatalogCache(store.db, { settings.metadataCacheMb.value * app.zmby.data.CacheLimits.MIB })
         val catalogHttp = app.zmby.catalog.CatalogHttp(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build(),
             catalogCache, { settings.tmdbToken.value },
@@ -256,6 +299,11 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             userAgent = "zmby/${BuildConfig.VERSION_NAME} (https://github.com/zhenyuefu/zmby)")
         catalog = app.zmby.catalog.CatalogRepository(catalogHttp, catalogCache,
             { settings.metadataLanguage.value }, { settings.posterLanguage.value }, { settings.logoLanguage.value }, { settings.animeAliases.value })
+        cardFaces = app.zmby.catalog.CardFaces(catalogCache, catalogHttp.json, appScope, { "${settings.metadataLanguage.value}:${settings.posterLanguage.value}" })
+        catalog.onWork = cardFaces::remember
+        appScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.flow.combine(settings.metadataLanguage.flow, settings.posterLanguage.flow) { _, _ -> }.collect { cardFaces.load() }
+        }
         ZLog.secret(settings.tmdbToken.value)
         catalogCache.prune(System.currentTimeMillis() - 30 * app.zmby.catalog.CatalogHttp.DAY)
         runCatching { catalogCache.dropLegacyRows() }.onSuccess { if (it > 0) ZLog.i(TAG, "dropped $it whole bangumi-data cache row(s)") }
@@ -281,7 +329,11 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             { server, id -> store.detail(server, id)?.item }, { library.backdrop(it) }, { library.logo(it) }, artworkServer::cached)
         preparer = PlaybackPreparer(emby, StreamProbe(http, emby.clientInfo.userAgent), capsStore, relay, localStrm,
             artwork = { session, item -> playbackArtwork.resolve(session.id, item) })
-        fanOut = FanOut(registry, cacheContext = { registry.session(it) })
+        // Server answers also kept in Room for their freshness (统一数据层 ①③), per server login.
+        val results = app.zmby.store.RoomResultStore(store.db.repoCache())
+        fanOut = FanOut(registry, cacheContext = { registry.session(it) }, results = results,
+            login = { id -> registry.session(id)?.let { "${it.userId}@${it.baseUrl}" } }, json = emby.json)
+        appScope.launch(Dispatchers.IO) { runCatching { results.prune(STORED_ANSWERS_MS) } }
         home = HomeFeed(library, fanOut, store)
         versions = VersionFinder(library, fanOut)
         search = AggregateSearch(library, fanOut)
@@ -290,6 +342,9 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             if (p == SegmentProvider.PublicMetaDB) settings.publicMetaDbKey.value else null
         })
         sources.load(store.sources.sources(), store.marked(SOURCES_MIGRATED)) { store.mark(SOURCES_MIGRATED) }
+        appScope.launch(Dispatchers.Default) {
+            kotlinx.coroutines.flow.combine(sources.rows, registry.lineup) { _, _ -> sources.metadata() }.collect { cardFaces.order = it }
+        }
         library.searchScope = { sources.servers(SourceFeature.Search) }
         favorites = Favorites(this, library, fanOut, appScope, store, inSource = { sources.enabled(SourceFeature.Favorites, it) })
         favorites.load()
@@ -321,6 +376,25 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             },
             name = { library.status(it)?.name ?: it },
         )
+        val agent = "zmby/${BuildConfigCompat.versionName(this)} (https://github.com/zhenyuefu/zmby)"
+        val trailerMedia = app.zmby.trailer.TrailerMedia(this, cacheDir.resolve("trailers"), agent)
+        val imdbMock = debugUrl("debug.zmby.imdb_base")
+        val trailerApi = app.zmby.trailer.ImdbTrailerApi(http, { imdbMock ?: IMDB_GRAPHQL }, agent)
+        val imdbTitles = app.zmby.trailer.ImdbTitleRepository(trailerApi::query, results, appScope,
+            complete = trailerMedia::complete,
+            // The screen's height decides the copy: 1080p on a 1080p or 4K output, less on smaller ones.
+            maxHeight = { minOf(1080, maxOf(resources.displayMetrics.heightPixels, 480)) },
+            allowHttp = imdbMock != null)
+        val rtMock = debugUrl("debug.zmby.rt_base")
+        val rtApi = app.zmby.ratings.RottenTomatoesApi(http, { debugUrl("debug.zmby.wikidata_base") ?: WIKIDATA_SPARQL },
+            { rtMock ?: ROTTEN_TOMATOES }, agent)
+        val rottenTomatoes = app.zmby.ratings.RottenTomatoesRepository(rtApi::path, rtApi::page, results,
+            videos = rtApi::videos, smil = rtApi::smil, anyHost = rtMock != null)
+        // IMDb, then Rotten Tomatoes, then the trailers stored on the servers (trailer design).
+        trailers = app.zmby.trailer.Trailers(imdbTitles, trailerMedia, rottenTomatoes::trailer,
+            app.zmby.trailer.ServerTrailers(library::localTrailers, library::trailerStream,
+                login = { id -> registry.session(id)?.let { "${it.userId}@${it.baseUrl}" } }, store = results))
+        ratings = app.zmby.ratings.Ratings(imdbTitles, rottenTomatoes)
         // No playback survives a new process: what the last run left open ends at its last checkpoint.
         appScope.launch(Dispatchers.IO) { playSessions.closeAbandoned() }
         appScope.launch(Dispatchers.IO) { runCatching { store.trim() }.onFailure { ZLog.w(TAG, "trim failed", it) } }
@@ -334,6 +408,7 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         // Emby image URLs carry the image's tag, so a cached copy is valid until the URL changes;
         // servers rarely send cache headers, and honouring them would leave posters blank offline.
         .respectCacheHeaders(false)
+        .components { add(app.zmby.ui.components.SingleFlightImages()) }
         .build().also { loader ->
             appScope.launch(Dispatchers.IO) {
                 runCatching { loader.diskCache?.enforceStartupLimit() }
@@ -446,9 +521,11 @@ class ZmbyApp : Application(), ImageLoaderFactory {
                 suspend fun record(target: ServerItem) {
                     if (target.server == "catalog") store.putItems(target.server, listOf(target.item.copy(userData = data)))
                     else store.recordProgress(target.server, target.item.id, 0, played)
-                    _recentProgress.update { (it - target.key + (target.key to data)).entries.toList().takeLast(128).associate { row -> row.toPair() } }
+                    library.invalidateDetail(target.server, target.item.id)
+                    noteProgress(target, data)
                 }
                 record(ref)
+                home.watching.invalidate()
                 if (played) watchlist.removeStarted(listOf(ref.copy(item = ref.item.copy(userData = data))))
                 val known = (instances + ref).filter { it.server != "catalog" && it.item.type == ref.item.type }.groupBy { it.server }
                 val ids = ref.item.providerIds.map { (key, id) -> "${key.lowercase()}.$id" }
@@ -484,7 +561,10 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             played = outcome.watched,
             lastPlayedDate = java.time.Instant.now().toString(),
         )
-        _recentProgress.update { (it - ref.key + (ref.key to data)).entries.toList().takeLast(128).associate { row -> row.toPair() } }
+        noteProgress(ref, data)
+        home.watching.invalidate()
+        library.invalidateDetail(ref.server, ref.item.id)
+        ref.item.seriesId?.let { library.invalidateDetail(ref.server, it) }
         watchlist.removeStarted(listOf(ServerItem(ref.server, ref.item.copy(userData = data))))
     }
 

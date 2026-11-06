@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import app.zmby.TraceRecomposition
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,7 +27,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -176,7 +176,7 @@ class MeViewModel(private val app: ZmbyApp) : ViewModel() {
             CalendarSeries(w.workKey, w.title, first?.let { ServerItem(it[0], BaseItemDto(id = it[1], type = "Series", name = w.title)) })
         }
         val servers = app.sources.servers(SourceFeature.WatchHistory)
-        val order = app.registry.all.associate { it.id to it.order }
+        val order = app.sources.order(SourceFeature.WatchHistory)
         val watching = runCatching { app.home.watching.cards(servers, order).first() }.getOrDefault(emptyList()).filter { it.series }.map { c ->
             val ep = c.shown.item
             CalendarSeries(c.key, ep.seriesName ?: ep.name.orEmpty(), ep.seriesId?.let { ServerItem(c.shown.server, BaseItemDto(id = it, type = "Series", name = ep.seriesName)) })
@@ -216,6 +216,7 @@ class MeViewModel(private val app: ZmbyApp) : ViewModel() {
  */
 @Composable
 fun MeScreen(nav: Nav) {
+    TraceRecomposition("Me.root")
     val app = LocalContext.current.zmby
     val vm = screenModel("me") { MeViewModel(app) }
     val summary by vm.summary.collectAsStateWithLifecycle()
@@ -560,9 +561,9 @@ private fun heatColor(level: Int): Color = when (level) {
 @Composable
 private fun FavoritesCard(nav: Nav, modifier: Modifier) {
     val app = LocalContext.current.zmby
-    val favorites by app.favorites.items.collectAsState()
+    val favorites by app.favorites.items.collectAsStateWithLifecycle()
     val posters = remember(favorites) {
-        favorites.take(2).mapNotNull { f -> f.instances.firstOrNull()?.let { app.library.primaryImage(ServerItem(it.server, favoriteItem(f, it.itemId)), 300) } }
+        favorites.take(2).mapNotNull { f -> f.instances.firstOrNull()?.let { app.library.primaryImage(ServerItem(it.server, favoriteItem(f, it.itemId))) } }
     }
     StatCard(modifier.height(330.dp), "收藏", onClick = { nav.home(3) }) {
         Column {
@@ -577,9 +578,11 @@ private fun FavoritesCard(nav: Nav, modifier: Modifier) {
 @Composable
 private fun WatchlistCard(nav: Nav, modifier: Modifier) {
     val app = LocalContext.current.zmby
-    val entries by app.watchlist.entries.collectAsState()
-    val servers by app.registry.servers.collectAsState()
-    val posters = remember(entries, servers) { entries.take(3).mapNotNull { e -> watchlistRef(e, servers)?.let { app.library.primaryImage(it, 300) } } }
+    val entries by app.watchlist.entries.collectAsStateWithLifecycle()
+    // The posters other pages show (one size, so one download and one cache entry each), from the
+    // configured order: a speed test does not rebuild them.
+    val servers by app.registry.lineup.collectAsStateWithLifecycle()
+    val posters = remember(entries, servers) { entries.take(3).mapNotNull { e -> watchlistRef(e, servers)?.let { app.library.primaryImage(it) } } }
     StatCard(modifier.height(330.dp), "待看", onClick = { nav.home(4) }) {
         Column {
             Text("${entries.size}", fontSize = 52.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)

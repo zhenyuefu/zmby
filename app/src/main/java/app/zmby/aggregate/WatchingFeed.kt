@@ -54,13 +54,27 @@ class WatchingFeed(private val library: Library, private val fanOut: FanOut, pri
         }.flowOn(Dispatchers.Default)
     }
 
+    /** When [refresh] last asked the servers; 0 = not yet in this process, or invalidated. */
+    private val refreshedAt = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /** A watch operation (played, marked, removed) changed progress: the next [refresh] asks the servers. */
+    fun invalidate() = refreshedAt.set(0L)
+
     /**
-     * Resume, NextUp and the recently played list from each server (every time: progress changes
-     * with each playback), then the series behind them and the episode lists of the series being
-     * watched, which tell 下一集 across servers and the 剧集整体进度.
+     * Resume, NextUp and the recently played list from each server, then the series behind them and
+     * the episode lists of the series being watched, which tell 下一集 across servers and the 剧集整体进度.
+     * Asks the servers on the first refresh after the app starts, when [force]d (back from the player),
+     * after a watch operation ([invalidate]) and otherwise only when the last one is older than
+     * [REFRESH_MS] (performance plan RN ①): coming back to home from a detail page asks nothing.
      */
-    suspend fun refresh(servers: List<String>) {
+    suspend fun refresh(servers: List<String>, force: Boolean = false, now: Long = System.currentTimeMillis()) {
         if (servers.isEmpty()) return
+        val last = refreshedAt.get()
+        if (!force && last != 0L && now - last in 0 until REFRESH_MS) {
+            ZLog.d(TAG, "在看 asked ${(now - last) / 1000} s ago; not again")
+            return
+        }
+        refreshedAt.set(now)
         coroutineScope {
             launch { collect(servers, "resume") { s -> library.resume(s).map { it.item } }.forEach { (s, items) -> store.putList(resumeKey(s), s, items) } }
             launch { collect(servers, "next up") { s -> library.nextUp(s).map { it.item } }.forEach { (s, items) -> store.putList(nextUpKey(s), s, items) } }
@@ -81,10 +95,18 @@ class WatchingFeed(private val library: Library, private val fanOut: FanOut, pri
         val targets = servers.associateWith { s ->
             seriesIn(s, all).filter { id -> (s to id) in current || ids(s, id).entries.any { (it.key to it.value) in currentIds } }.take(MAX_SERIES)
         }.filterValues { it.isNotEmpty() }
-        fanOut.run(targets.keys.toList(), FanOut.SEARCH_TIMEOUT_MS) { s ->
+        // A series' whole episode list is asked again only when it is older than EPISODES_MS or what
+        // the servers just said about its episodes (progress, played, next up) is not in it (RN ①).
+        val stored = store.listsFlow(targets.flatMap { (s, ids) -> ids.map { episodesKey(s, it) } }).first()
+        val due = targets.mapValues { (s, ids) ->
+            ids.filter { id -> episodesDue(stored[episodesKey(s, id)], watchedEpisodes(s, id, lists), System.currentTimeMillis()) }
+        }.filterValues { it.isNotEmpty() }
+        if (due.size < targets.size || due.values.sumOf { it.size } < targets.values.sumOf { it.size })
+            ZLog.d(TAG, "episode lists: ${due.values.sumOf { it.size }} of ${targets.values.sumOf { it.size }} series due")
+        fanOut.run(due.keys.toList(), FanOut.SEARCH_TIMEOUT_MS) { s ->
             val slots = Semaphore(3)
             coroutineScope {
-                targets.getValue(s).map { id ->
+                due.getValue(s).map { id ->
                     async {
                         slots.withPermit {
                             try {
@@ -107,6 +129,7 @@ class WatchingFeed(private val library: Library, private val fanOut: FanOut, pri
      * server could be cleared the card stays, so nothing looks removed that was not.
      */
     suspend fun remove(card: WatchCard): RemoveOutcome = coroutineScope {
+        invalidate()
         val failed = card.resumePoints.map { ref ->
             async {
                 try {
@@ -141,6 +164,10 @@ class WatchingFeed(private val library: Library, private val fanOut: FanOut, pri
 
     private fun items(list: CachedList?): List<BaseItemDto> = list?.items.orEmpty().map { it.item }
 
+    /** The episodes of [seriesId] that the servers' resume, next up and played lists of [server] mention. */
+    private fun watchedEpisodes(server: String, seriesId: String, lists: Map<String, CachedList>): List<BaseItemDto> =
+        listOf(resumeKey(server), nextUpKey(server), playedKey(server)).flatMap { items(lists[it]) }.filter { it.seriesId == seriesId }
+
     /** Series ids of the episodes in [server]'s Resume, NextUp and played lists. */
     private fun seriesIn(server: String, lists: Map<String, CachedList>): List<String> =
         listOf(resumeKey(server), nextUpKey(server), playedKey(server)).flatMap { items(lists[it]) }
@@ -158,5 +185,25 @@ class WatchingFeed(private val library: Library, private val fanOut: FanOut, pri
         fun playedKey(server: String) = "played:$server"
         fun seriesKey(server: String) = "watchseries:$server"
         fun episodesKey(server: String, seriesId: String) = "watcheps:$server:$seriesId"
+
+        /** Resume, NextUp and recently played are asked again only after this long (user-confirmed 2026-11-04). */
+        const val REFRESH_MS = 2 * 60_000L
+        /** A watched series' whole episode list is kept this long when nothing about it changed. */
+        const val EPISODES_MS = 6 * 60 * 60_000L
+
+        /**
+         * Whether a series' stored episode list must be asked again: never fetched, older than
+         * [EPISODES_MS], or an episode the servers just listed (resume, next up, recently played)
+         * is missing from it or has other progress or played state there.
+         */
+        fun episodesDue(stored: CachedList?, seen: List<BaseItemDto>, now: Long): Boolean {
+            if (stored == null || stored.fetchedAt <= 0 || now - stored.fetchedAt !in 0 until EPISODES_MS) return true
+            val byId = stored.items.associateBy { it.item.id }
+            return seen.any { ep ->
+                val have = byId[ep.id]?.item ?: return@any true
+                (have.userData?.played == true) != (ep.userData?.played == true) ||
+                    (have.userData?.playbackPositionTicks ?: 0) != (ep.userData?.playbackPositionTicks ?: 0)
+            }
+        }
     }
 }

@@ -63,6 +63,17 @@ data class CastCard(val key: String, val name: String, val role: String, val ima
 internal fun catalogCastCards(nav: Nav, cast: List<CatalogPerson>): List<CastCard> =
     cast.map { p -> CastCard("catalogCast:${p.key}", p.name, p.role, p.image) { nav.go(Route.CatalogPerson(p.source, p.id)) } }
 
+/** 演职人员 cards from the source [MetadataMerge.cast] chose. */
+internal fun castCards(app: app.zmby.ZmbyApp, nav: Nav, source: MetadataMerge.Cast): List<CastCard> = when (source) {
+    is MetadataMerge.Cast.Catalog -> catalogCastCards(nav, source.people)
+    is MetadataMerge.Cast.Server -> serverCastCards(app, nav, source.ref)
+    MetadataMerge.Cast.None -> emptyList()
+}
+
+/** The page's catalogue work, then the other catalogue's entry for it when that is loaded. */
+internal fun catalogsOf(canonical: app.zmby.catalog.CatalogWork?, companion: CompanionWork?): List<app.zmby.catalog.CatalogWork> =
+    if (canonical == null) emptyList() else listOfNotNull(canonical, companion?.takeIf { it.primary == canonical.ref.key }?.work)
+
 /** The server's People of [ref]: actors, directors and writers, one card per person. */
 internal fun serverCastCards(app: app.zmby.ZmbyApp, nav: Nav, ref: ServerItem): List<CastCard> =
     ref.item.people.filter { it.id != null && !it.name.isNullOrBlank() && it.type in setOf("Actor", "Director", "Writer") }
@@ -80,7 +91,7 @@ internal fun serverCastCards(app: app.zmby.ZmbyApp, nav: Nav, ref: ServerItem): 
                 p.primaryImageTag?.let { app.library.imageUrl(ImageRef(ref.server, p.id!!, it), "Primary", 280) },
             ) {
                 val tmdb = p.providerIds.entries.firstOrNull { it.key.equals("tmdb", true) }?.value
-                if (tmdb?.toLongOrNull()?.let { it > 0 } == true) nav.go(Route.CatalogPerson("tmdb", tmdb))
+                if (tmdb?.toLongOrNull()?.let { it > 0 } == true && MetadataMerge.personFromTmdb(app.sources.metadata(), ref.server)) nav.go(Route.CatalogPerson("tmdb", tmdb))
                 else nav.go(Route.Person("local:${ref.server}:${p.id}", ref.server, p.id!!))
             }
         }

@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,7 +70,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /*
  * Detail navigation (ui-spec §2.14). The page is the header and a column of blocks. 版本 and
- * 音轨与字幕 collapse to a summary bar while focus is elsewhere; 剧集, 演职人员 and 为你推荐 always
+ * 音轨与字幕 collapse to a summary bar while focus is elsewhere; 剧集, 合集, 演职人员 and 为你推荐 always
  * stay as they are. Moving between blocks is one transition: focus parks on the destination's
  * anchor, then in the same frame the destination expands and the source collapses while the page
  * aligns once to a row above every changing block; focus then returns to the block's last element.
@@ -83,6 +85,7 @@ private const val TRANSITION_MS = 200
 /** The names the hold hints use for each block. */
 internal val SECTION_NAMES = mapOf(
     SECTION_EPISODES to "剧集",
+    SECTION_COLLECTION to "合集",
     SECTION_VERSIONS to "版本",
     SECTION_TRACKS to "音轨与字幕",
     SECTION_CAST to "演职人员",
@@ -136,6 +139,18 @@ class Accordion(first: String) {
 
     fun entry(key: String): FocusRequester = entries.getOrPut(key) { FocusRequester() }
     internal fun anchor(key: String): FocusRequester = anchors.getOrPut(key) { FocusRequester() }
+
+    /**
+     * Sets the blocks on the page; when the active block is gone, [fallback] (or the first) becomes
+     * active. Reads [active] without subscribing the page to it (performance plan R4): moving between
+     * blocks recomposes only the blocks that collapse or expand, not the whole page.
+     */
+    fun arrange(blocks: List<String>, fallback: String? = null) {
+        order = blocks
+        androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation {
+            if (active !in blocks && blocks.isNotEmpty()) active = fallback?.takeIf { it in blocks } ?: blocks.first()
+        }
+    }
 
     /** A single block never collapses; otherwise only the active collapsible block is expanded. */
     fun isExpanded(key: String): Boolean = key !in COLLAPSIBLE || active == key || order.size <= 1
@@ -306,21 +321,60 @@ fun CollapsibleSection(
     content: @Composable () -> Unit,
 ) {
     val expanded = accordion.isExpanded(key)
-    val reveal by animateFloatAsState(if (expanded) 1f else 0f, tween(TRANSITION_MS, easing = FastOutSlowInEasing), label = "section-reveal")
+    val revealState = animateFloatAsState(if (expanded) 1f else 0f, tween(TRANSITION_MS, easing = FastOutSlowInEasing), label = "section-reveal")
+    // Placement changes only when a layer appears or disappears, not on every animation frame (R4).
+    val showMini by remember(expanded) { derivedStateOf { !expanded || revealState.value < 1f } }
+    val showFull by remember(expanded) { derivedStateOf { expanded || revealState.value > 0f } }
     BlockFrame(accordion, key) {
         Layout(content = {
-            Box(Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = 1f - reveal }) { MiniBar(title, count, barHeight, summary) }
-            Box(Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = reveal; translationY = (1f - reveal) * 12.dp.toPx() }) { content() }
+            // A layer of its own only while fading: at rest the section draws straight into the page.
+            Box(Modifier.graphicsLayer { val r = revealState.value; compositingStrategy = fading(r); alpha = 1f - r }) { MiniBar(title, count, barHeight, summary) }
+            Box(Modifier.graphicsLayer { val r = revealState.value; compositingStrategy = fading(r); alpha = r; translationY = (1f - r) * 12.dp.toPx() }) { content() }
         }) { children, constraints ->
             val mini = children[0].measure(constraints)
             val full = children[1].measure(constraints)
             val visible = if (expanded) full else mini
             layout(visible.width, visible.height) {
-                if (!expanded || reveal < 1f) mini.placeRelative(0, 0)
-                if (expanded || reveal > 0f) full.placeRelative(0, 0)
+                if (showMini) mini.placeRelative(0, 0)
+                if (showFull) full.placeRelative(0, 0)
             }
         }
     }
+}
+
+/**
+ * What a collapsible section's hidden full layer shows (performance plan, Z9X 8K 2026-11-05): while
+ * the section is collapsed it follows [value] only once [value] has held still for [quietMs] and no
+ * remote key came in meanwhile, so moving along the episode row or another server's version answer
+ * does not recompose and measure dozens of hidden version cards and track chips every time; while
+ * [live] (expanded) it is [value] itself. The mini bar's summary keeps reading the live value.
+ */
+@Composable
+fun <T> rememberSettled(value: T, live: Boolean, quietMs: Long = 700): T {
+    var settled by remember { mutableStateOf(value) }
+    androidx.compose.runtime.LaunchedEffect(value, live) {
+        if (!live) {
+            kotlinx.coroutines.delay(quietMs)
+            while (android.os.SystemClock.uptimeMillis() - app.zmby.ui.RemoteInput.lastKeyAt < quietMs) kotlinx.coroutines.delay(quietMs / 2)
+        }
+        settled = value
+    }
+    return if (live) value else settled
+}
+
+/** Offscreen while the crossfade runs (alpha on a whole subtree), the default otherwise. */
+private fun fading(reveal: Float) = if (reveal > 0f && reveal < 1f) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+
+/**
+ * [content] from the frame after the page's first one (performance plan R4): blocks below the fold
+ * (演职人员, 为你推荐) do not add to the frame that opens a detail page. Their block frame, with its
+ * focus anchor and position, is there from the start.
+ */
+@Composable
+fun AfterFirstFrame(content: @Composable () -> Unit) {
+    var ready by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { androidx.compose.runtime.withFrameNanos { }; ready = true }
+    if (ready) content()
 }
 
 /** Focus and key handling shared by all blocks. */

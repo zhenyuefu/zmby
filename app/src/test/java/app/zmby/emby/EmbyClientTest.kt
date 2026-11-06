@@ -23,6 +23,13 @@ class EmbyClientTest {
         assertEquals("4.9", version)
         assertEquals(2, server.requestCount)
     }
+
+    @Test fun pingAsksOnceWhenTheLineAnswers() = runTest {
+        server.enqueue(MockResponse().setBody("""{"Version":"4.9"}"""))
+        val (latency, _) = client.ping(session.baseUrl)
+        assertTrue(latency != null)
+        assertEquals(1, server.requestCount)
+    }
     private val server = MockWebServer()
     private val client = EmbyClient(OkHttpClient(), ClientInfo(device = "Z9X", deviceId = "dev-1", version = "0.1.0"))
     private lateinit var session: ServerSession

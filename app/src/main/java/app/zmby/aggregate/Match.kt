@@ -12,6 +12,7 @@ import app.zmby.emby.BaseItemDto
 enum class Confidence { Strong, Possible, Weak, None }
 
 /** A judged match and the reason shown on its server card (「TMDB 一致」…). */
+@kotlinx.serialization.Serializable
 data class Verdict(val confidence: Confidence, val reason: String) {
     val merges: Boolean get() = confidence == Confidence.Strong || confidence == Confidence.Possible
 }

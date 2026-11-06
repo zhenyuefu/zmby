@@ -9,20 +9,29 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
     private val textLanguage: () -> String, private val posterLanguage: () -> String, private val logoLanguage: () -> String,
     private val animeEnabled: () -> Boolean) {
     val configured get() = api.configured
+    /** Whether TMDB answered lately; series pages fall back to server directories while it does not. */
+    val reachability = CatalogReachability()
     /** Null when TMDB accepts [token] (用手机输入 checks it before saving), else why not. */
     suspend fun verifyToken(token: String): String? = api.verifyToken(token)
     private fun viewKey(ref: CatalogId) = "view:${ref.key}:${textLanguage()}:${posterLanguage()}:${logoLanguage()}"
-    suspend fun cached(ref: CatalogId): CatalogWork? = withContext(Dispatchers.IO) {
+    suspend fun cached(ref: CatalogId): CatalogWork? = cachedAt(ref)?.first
+
+    /** [cached] with when it was fetched (epoch ms). */
+    suspend fun cachedAt(ref: CatalogId): Pair<CatalogWork, Long>? = withContext(Dispatchers.IO) {
         val key = viewKey(ref)
-        cache.get(key)?.let { runCatching { api.json.decodeFromString(CatalogWork.serializer(), it.json) }.getOrNull() }
-            ?.also { remember(key, it) }
+        val row = cache.get(key) ?: return@withContext null
+        runCatching { api.json.decodeFromString(CatalogWork.serializer(), row.json) }.getOrNull()
+            ?.also { remember(key, it) }?.let { it to row.fetchedAt }
     }
 
     /** Works read or fetched in this run, by view key (most recent last): a page opened from a card shows at once. */
     private val recent = object : LinkedHashMap<String, CatalogWork>(RECENT_WORKS, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CatalogWork>?) = size > RECENT_WORKS
     }
-    private fun remember(key: String, work: CatalogWork) = synchronized(recent) { recent[key] = work }
+    private fun remember(key: String, work: CatalogWork) { synchronized(recent) { recent[key] = work }; onWork?.invoke(work) }
+
+    /** Every work read or fetched for the current languages (list cards remember its title and poster). */
+    @Volatile var onWork: ((CatalogWork) -> Unit)? = null
 
     /** The work as last read or fetched in this run for the current languages, without I/O (safe on the main thread). */
     fun recent(ref: CatalogId): CatalogWork? = synchronized(recent) { recent[viewKey(ref)] }
@@ -72,6 +81,31 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
         if (animeEnabled()) alias(item)?.let { subject -> return@withContext CatalogId("bangumi", kind, subject) }
         null
     }
+    /**
+     * The other catalogue's entry for [primary] (影片信息来源 TMDB 与 Bangumi 逐字段互补): for a TMDB work, a
+     * server copy's explicit Bangumi ID, else bangumi-data's unique alias when the work looks like
+     * animation; for a Bangumi work, the TMDB entry a copy's explicit IDs give. No title search.
+     */
+    suspend fun companion(primary: CatalogWork, copies: List<BaseItemDto>): CatalogId? = withContext(Dispatchers.IO) {
+        val kind = primary.ref.kind
+        fun positive(id: String?) = id?.takeIf { it.toLongOrNull()?.let { n -> n > 0 } == true }
+        if (primary.ref.source == "tmdb") {
+            copies.firstNotNullOfOrNull { positive(MetadataIdentity.ids(it)["bangumi"]) }?.let { return@withContext CatalogId("bangumi", kind, it) }
+            if (!animeEnabled() || !looksAnimated(primary)) return@withContext null
+            val names = listOf(primary.originalTitle, primary.title) + copies.flatMap { listOfNotNull(it.name, it.originalTitle) }
+            api.animeIndex().find(names.filter { it.isNotBlank() }.distinct(), primary.year)?.let { positive(it) }?.let { CatalogId("bangumi", kind, it) }
+        } else {
+            if (!configured) return@withContext null
+            for (copy in copies) {
+                val id = try { resolve(copy) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+                if (id?.source == "tmdb" && id.kind == kind) return@withContext id
+            }
+            null
+        }
+    }
+
+    private fun looksAnimated(work: CatalogWork) = work.genres.any { it in ANIMATION_GENRES }
+
     /** The Bangumi subject bangumi-data's aliases give [item] unambiguously, if any. */
     suspend fun alias(item: BaseItemDto): String? = withContext(Dispatchers.IO) {
         api.animeIndex().find(listOfNotNull(item.name, item.originalTitle), item.productionYear)
@@ -239,5 +273,9 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
         result
     }
 
-    private companion object { const val RECENT_WORKS = 64 }
+    private companion object {
+        const val RECENT_WORKS = 64
+        /** TMDB's Animation genre in the metadata languages offered. */
+        val ANIMATION_GENRES = setOf("动画", "動畫", "Animation", "アニメーション", "애니메이션")
+    }
 }

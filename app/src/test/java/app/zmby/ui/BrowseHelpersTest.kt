@@ -23,6 +23,22 @@ class BrowseHelpersTest {
     @Test fun `captions show year with rating for films and seasons for series`() {
         assertEquals("2024 · 8.1", browseCaption(BaseItemDto("m", type = "Movie", productionYear = 2024, communityRating = 8.06)))
         assertEquals("2014 · 6 季", browseCaption(BaseItemDto("s", type = "Series", productionYear = 2014, childCount = 6)))
+        assertEquals("4 部", browseCaption(BaseItemDto("c", type = "BoxSet", productionYear = 2021, childCount = 4)))
+    }
+
+    @Test fun `a film's collections are only those that hold it`() {
+        fun film(id: String, year: Int? = null) = app.zmby.data.ServerItem("s", BaseItemDto(id, type = "Movie", productionYear = year, communityRating = 8.06))
+        val box = { id: String, films: List<String> -> app.zmby.ui.screens.MovieCollection(app.zmby.data.ServerItem("s", BaseItemDto(id, type = "BoxSet")), films.map { film(it) }) }
+        val kept = app.zmby.ui.screens.MovieCollectionsModel.keepContaining("m0", listOf(box("a", listOf("m0", "m1")), box("b", listOf("m2"))))
+        assertEquals(listOf("a"), kept.map { it.box.item.id })
+        assertEquals("2014 · 8.1", app.zmby.ui.screens.collectionCardLine(film("m0", 2014)))
+    }
+
+    @Test fun `a collection's line counts its titles and the years they span`() {
+        fun film(id: String, year: Int?) = app.zmby.data.ServerItem("s", BaseItemDto(id, type = "Movie", productionYear = year))
+        assertEquals("3 部 · 1999–2021", app.zmby.ui.screens.collectionMeta(listOf(film("a", 2021), film("b", 1999), film("c", null))))
+        assertEquals("1 部 · 2024", app.zmby.ui.screens.collectionMeta(listOf(film("a", 2024))))
+        assertEquals("", app.zmby.ui.screens.collectionMeta(emptyList()))
     }
 
     @Test fun `rail letters come from the sort name or the pinyin initial`() {

@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         jank = Diagnostics.track(this)
+        if ("winbg" in Diagnostics.drawOff) window.setBackgroundDrawable(null)
     }
 
     override fun onResume() {
@@ -71,7 +72,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun App(activity: android.app.Activity) {
     val library = androidx.compose.ui.platform.LocalContext.current.zmby.library
-    val servers by library.servers.collectAsState()
+    val servers by androidx.compose.ui.platform.LocalContext.current.zmby.registry.lineup.collectAsState()
     val stack = remember { mutableStateListOf(NavEntry(0, if (servers.isEmpty()) Route.AddServer else Route.Home)) }
     var nextId by remember { androidx.compose.runtime.mutableLongStateOf(1L) }
     var homeTab by rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
@@ -84,6 +85,7 @@ private fun App(activity: android.app.Activity) {
             }
             override fun back() {
                 if (stack.size > 1) {
+                    Diagnostics.backPressed()
                     val from = stack.removeAt(stack.lastIndex)
                     states.removeState(from.id)
                     from.viewModelStore.clear()
@@ -108,7 +110,11 @@ private fun App(activity: android.app.Activity) {
     }
     BackHandler(enabled = stack.size > 1) { nav.back() }
     val entry = stack.last()
-    androidx.compose.runtime.LaunchedEffect(entry.id) { Diagnostics.screen(activity, entry.route.javaClass.simpleName) }
+    androidx.compose.runtime.LaunchedEffect(entry.id) {
+        Diagnostics.screen(activity, entry.route.javaClass.simpleName)
+        androidx.compose.runtime.withFrameNanos { }
+        Diagnostics.afterBack(entry.route.javaClass.simpleName, "first frame")
+    }
     key(entry.id) {
         // Each back-stack entry owns its screen's ViewModels; they are cleared when it is popped.
         CompositionLocalProvider(LocalNavEntry provides entry, androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner provides entry) {
@@ -126,6 +132,7 @@ private fun App(activity: android.app.Activity) {
                     // Backup and restore run only on the phone, tablet or computer page (no file picker on the box).
                     Route.Backup -> ImportScreen(onDone = nav::back, backupTab = true)
                     Route.Settings -> SettingsScreen(nav)
+                    is Route.Collection -> app.zmby.ui.screens.CollectionScreen(nav, route.server, route.collectionId)
                     is Route.Person -> app.zmby.ui.screens.PersonScreen(nav, route.personKey, route.server, route.personId)
                     is Route.DataSource -> app.zmby.ui.screens.DataSourceScreen(nav, route.feature)
                     Route.Me -> app.zmby.ui.screens.MeScreen(nav)

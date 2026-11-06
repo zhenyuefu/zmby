@@ -7,6 +7,7 @@ import app.zmby.SessionStore
 import app.zmby.aggregate.FanOut
 import app.zmby.aggregate.HomeFeed
 import app.zmby.aggregate.HomeServers
+import app.zmby.aggregate.WatchingFeed
 import app.zmby.data.Library
 import app.zmby.data.MemoryCapsStore
 import app.zmby.data.MemoryRegistryStore
@@ -88,7 +89,23 @@ class HomeLocalFirstTest {
         return HomeFeed(library, FanOut(registry), store) to HomeServers(listOf("s1"), listOf("s1"), mapOf("s1" to 0))
     }
 
-    @Test fun `latest is not asked again within ten minutes, resume always is`() = runBlocking {
+    @Test fun `在看 is asked again after two minutes, from the player at once, otherwise not`() = runBlocking {
+        val (home, servers) = feed()
+        home.refresh(servers, now = now)
+        now += 60_000
+        home.refresh(servers, now = now)
+        assertEquals("back to home within two minutes asks nothing", 1, count("resume"))
+        home.refresh(servers, now = now, watchingForce = true)
+        assertEquals("back from the player always asks", 2, count("resume"))
+        home.watching.invalidate()
+        home.refresh(servers, now = now)
+        assertEquals("a watch operation makes the next refresh ask", 3, count("resume"))
+        now += WatchingFeed.REFRESH_MS
+        home.refresh(servers, now = now)
+        assertEquals(4, count("resume"))
+    }
+
+    @Test fun `latest is not asked again within ten minutes, resume after two`() = runBlocking {
         val (home, servers) = feed()
         home.refresh(servers, now = now)
         now += 5 * 60_000

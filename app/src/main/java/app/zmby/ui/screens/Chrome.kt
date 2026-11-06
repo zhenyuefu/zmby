@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -31,7 +32,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +59,10 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import app.zmby.catalog.CatalogChart
 import app.zmby.data.ServerStatus
+import app.zmby.data.SourceFeature
+import app.zmby.data.SourceRules
+import app.zmby.ui.components.Focusable
+import app.zmby.ui.components.GlassToggle
 import app.zmby.ui.components.GlassSurface
 import app.zmby.ui.components.Glyph
 import app.zmby.ui.components.Health
@@ -152,7 +156,9 @@ internal fun latencyLabel(s: ServerStatus): String = when {
  */
 @Composable
 fun SourceButton(servers: List<ServerStatus>, source: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val enabled = servers.filter { it.enabled }
+    // Servers hidden from home (首页与影视来源) are not counted.
+    val rows by LocalContext.current.zmby.sources.rows.collectAsStateWithLifecycle()
+    val enabled = remember(servers, rows) { servers.filter { it.enabled && SourceRules.enabled(rows, SourceFeature.Browse, it.id) } }
     val chosen = enabled.firstOrNull { it.id == source }
     val label = chosen?.let { "${it.name} · ${latencyLabel(it)}" } ?: "全部 · ${enabled.count { it.health != Health.Off }} 台在线"
     GlassSurface(onClick, modifier, label = "首页来源") {
@@ -191,13 +197,15 @@ private fun Divider() = Box(Modifier.padding(horizontal = 20.dp, vertical = 12.d
 /**
  * 首页来源 (MainSource.dc.html): 首页内容 (全部 and the servers in priority order, offline ones dimmed
  * but selectable, scrolling past six), 主推区 (媒体库推荐 · TMDB 榜单, with the chart or the TMDB token
- * row), and 服务器管理. Back closes it, or goes back from the chart list.
+ * row), and 服务器管理. Back closes it, or goes back from the chart list. Each server has a switch on
+ * its right (首页与影视来源): off leaves it out of 全部 and the 电影 / 剧集 pages; choosing it shows it again.
  */
 @Composable
 fun SourcePanel(
     servers: List<ServerStatus>,
     source: String,
     onSource: (String) -> Unit,
+    onShown: (String, Boolean) -> Unit,
     onServers: () -> Unit,
     onToken: () -> Unit,
     onDismiss: () -> Unit,
@@ -205,9 +213,9 @@ fun SourcePanel(
     BlockSideNav()
     val app = LocalContext.current.zmby
     val settings = app.settings
-    val heroSource by settings.heroSource.flow.collectAsState()
-    val chart by settings.tmdbChart.flow.collectAsState()
-    val token by settings.tmdbToken.flow.collectAsState()
+    val heroSource by settings.heroSource.flow.collectAsStateWithLifecycle()
+    val chart by settings.tmdbChart.flow.collectAsStateWithLifecycle()
+    val token by settings.tmdbToken.flow.collectAsStateWithLifecycle()
     val configured = token.isNotBlank()
     var charts by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler { if (charts) charts = false else onDismiss() }
@@ -239,25 +247,53 @@ fun SourcePanel(
                 return@Column
             }
             GroupTitle("首页内容")
+            val rows by app.sources.rows.collectAsStateWithLifecycle()
             val enabled = servers.filter { it.enabled }
+            val shown = remember(enabled, rows) { enabled.filter { SourceRules.enabled(rows, SourceFeature.Browse, it.id) }.map { it.id }.toSet() }
             val options = listOf<ServerStatus?>(null) + enabled
-            val current = source.takeIf { s -> enabled.any { it.id == s } }.orEmpty()
+            val current = source.takeIf { it in shown }.orEmpty()
             Column(Modifier.heightIn(max = 408.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 options.forEach { s ->
                     val id = s?.id.orEmpty()
-                    SelectableRow(
-                        { onSource(id) },
-                        if (id == current) Modifier.focusRequester(first) else Modifier,
-                        selected = id == current,
-                        dimmed = s?.health == Health.Off,
-                        radius = 18.dp,
-                        padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 17.dp),
-                        label = "首页来源 ${s?.name ?: "全部"}",
-                        focusKey = null,
-                    ) {
-                        if (s != null) HealthDot(s.health) else Spacer(Modifier.size(12.dp))
-                        Text(s?.name ?: "全部", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        Text(if (s == null) "${enabled.size} 台合并" else latencyLabel(s), fontSize = 18.sp, color = secondaryText(), maxLines = 1)
+                    val visible = s == null || id in shown
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SelectableRow(
+                            { onSource(id) },
+                            Modifier.weight(1f).then(if (id == current) Modifier.focusRequester(first) else Modifier),
+                            selected = id == current,
+                            dimmed = s?.health == Health.Off || !visible,
+                            radius = 18.dp,
+                            padding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 17.dp),
+                            label = "首页来源 ${s?.name ?: "全部"}",
+                            focusKey = null,
+                        ) {
+                            if (s != null) HealthDot(s.health) else Spacer(Modifier.size(12.dp))
+                            Text(s?.name ?: "全部", fontSize = 21.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Text(
+                                when {
+                                    s == null -> "${shown.size} 台合并"
+                                    !visible -> "已隐藏"
+                                    else -> latencyLabel(s)
+                                },
+                                fontSize = 18.sp, color = secondaryText(), maxLines = 1,
+                            )
+                        }
+                        if (s != null) {
+                            // Right of the row: shows or hides the server on home and the 电影 / 剧集 pages.
+                            Focusable(
+                                { onShown(id, !visible) },
+                                // A white ring on focus: the switch alone looks the same focused or not.
+                                Modifier.padding(end = 6.dp),
+                                shape = RoundedCornerShape(50),
+                                focusedScale = 1.06f,
+                                outline = 3.dp,
+                                shadow = 0.dp,
+                                label = "在首页与影视显示 ${s.name} ${if (visible) "开" else "关"}",
+                                focusKey = null,
+                            ) { GlassToggle(visible) }
+                        } else {
+                            Spacer(Modifier.width(90.dp))
+                        }
                     }
                 }
             }
@@ -355,9 +391,9 @@ fun SideNav(
         enter = slideInHorizontally(tween(260)) { -it } + fadeIn(tween(180)),
         exit = slideOutHorizontally(tween(220)) { -it } + fadeOut(tween(180)),
     ) {
-        val favorites by app.favorites.items.collectAsState()
-        val watchlist by app.watchlist.entries.collectAsState()
-        val servers by app.registry.servers.collectAsState()
+        val favorites by app.favorites.items.collectAsStateWithLifecycle()
+        val watchlist by app.watchlist.entries.collectAsStateWithLifecycle()
+        val servers by app.registry.servers.collectAsStateWithLifecycle()
         val online = servers.count { it.enabled && it.health != Health.Off }
         val current = remember { FocusRequester() }
         LaunchedEffect(Unit) { current.requestWhenReady() }

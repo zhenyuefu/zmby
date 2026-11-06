@@ -1,5 +1,7 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.zmby.TraceRecomposition
 import android.content.Context
 import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
@@ -20,7 +22,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
@@ -77,6 +78,9 @@ import app.zmby.ui.components.rememberBlurredBackdrop
 import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.Scrims
 import app.zmby.ui.components.TitleLogo
+import app.zmby.ui.components.TrailerPlayer
+import app.zmby.ui.components.TrailerSurface
+import androidx.compose.runtime.snapshotFlow
 import app.zmby.ui.components.backdropRequest
 import app.zmby.ui.components.blurredBackdropKey
 import app.zmby.ui.components.blurredBackdropRequest
@@ -204,6 +208,22 @@ class HeroCarousel {
         return true
     }
 
+    /**
+     * While a trailer plays the bar shows how far it has played instead of the countdown, and the
+     * countdown starts again from zero if the trailer stops before its end.
+     */
+    fun follow(fraction: Float) {
+        elapsed = 0L
+        progress = fraction
+    }
+
+    /**
+     * The title the hero rests on: no slide under way, its text on screen and [resumed]. Null
+     * otherwise (a trailer neither starts nor goes on then).
+     */
+    fun resting(resumed: Boolean): ServerItem? =
+        current.takeIf { resumed && position.value == target.toFloat() && scrolled < TEXT_FADE_PX }
+
     /** One countdown step; turns to the next title when the bar is full. */
     fun tick(scope: CoroutineScope, ms: Long) {
         elapsed += ms
@@ -251,7 +271,7 @@ internal fun screenPx(context: Context): Pair<Int, Int> =
  * a resting page is one textured quad (P4 perf). The pages move up and fade with the scroll.
  */
 @Composable
-fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims) {
+fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims, trailer: TrailerPlayer? = null) {
     val context = LocalContext.current
     val library = context.zmby.library
     val (w, h) = remember(context) { screenPx(context) }
@@ -265,17 +285,21 @@ fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims) {
                         translationX = (i - carousel.position.value) * size.width
                         translationY = -carousel.scrolled
                         alpha = carousel.backdropVisible
-                        compositingStrategy = CompositingStrategy.Offscreen
+                        compositingStrategy = if ("herolayer" in app.zmby.Diagnostics.drawOff) CompositingStrategy.Auto else CompositingStrategy.Offscreen
                     },
             ) {
-                if (url != null) {
+                // The trailer of the title resting here, under the scrims (trailer design). Once it
+                // covers the page the still backdrop is not drawn: one full-screen pass less per frame.
+                val playing = trailer != null && i == carousel.target && trailer.key != null && trailer.key == carousel.itemAt(i)?.key
+                if (url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) {
                     AsyncImage(
                         model = remember(url) { backdropRequest(context, url, w, h) },
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().then(if (playing) Modifier.graphicsLayer { alpha = if (trailer!!.covering) 0f else 1f } else Modifier),
                     )
                 }
+                if (playing) TrailerSurface(trailer!!, Modifier.fillMaxSize())
                 Box(Modifier.fillMaxSize().drawWithCache { onDrawBehind { with(scrims) { draw(size) } } })
             }
         }
@@ -297,6 +321,7 @@ fun heroGlassSlices(carousel: HeroCarousel): List<BackdropSlice> {
 /** The sliding text pages: Logo or title, the meta line with badges, two lines of overview. */
 @Composable
 fun HeroPages(carousel: HeroCarousel, details: Map<String, BaseItemDto>) {
+    TraceRecomposition("Home.heroPages")
     Box(Modifier.fillMaxWidth().height(INFO_HEIGHT)) {
         for (i in carousel.pages) {
             val ref = carousel.itemAt(i)
@@ -325,7 +350,7 @@ private fun HeroInfo(ref: ServerItem, full: BaseItemDto?, label: String?) {
     val item = ref.item
     val isEpisode = item.type == "Episode"
     val rankPrefs = rememberVersionPrefs()
-    val audioLanguage by app.settings.audioLanguage.flow.collectAsState()
+    val audioLanguage by app.settings.audioLanguage.flow.collectAsStateWithLifecycle()
     val resumeTick = rememberResumeTick()
     // Only this item's known sources; do not mix capabilities from different versions or servers.
     val badges by key(ref.key, full) {
@@ -377,6 +402,7 @@ fun HeroControls(
     onFocusChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    TraceRecomposition("Home.heroControls")
     Column(
         Modifier
             .padding(start = 80.dp, top = 32.dp)
@@ -436,7 +462,7 @@ private fun PageDots(carousel: HeroCarousel, running: Boolean) {
  * Returns whether it runs.
  */
 @Composable
-fun rememberHeroCountdown(carousel: HeroCarousel, rotates: Boolean, scope: CoroutineScope): Boolean {
+fun rememberHeroCountdown(carousel: HeroCarousel, rotates: Boolean, scope: CoroutineScope, trailer: TrailerPlayer? = null): Boolean {
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val resumed = lifecycle.isAtLeast(Lifecycle.State.RESUMED)
     val shown by remember(carousel) { derivedStateOf { carousel.scrolled < TEXT_FADE_PX } }
@@ -444,11 +470,25 @@ fun rememberHeroCountdown(carousel: HeroCarousel, rotates: Boolean, scope: Corou
     LaunchedEffect(running) {
         while (running) {
             delay(HERO_TICK_MS)
-            carousel.tick(scope, HERO_TICK_MS)
+            // A trailer of the current title holds the turn until it ends; the bar follows it.
+            if (trailer != null && trailer.showing && trailer.key == carousel.current?.key) carousel.follow(trailer.progress())
+            else carousel.tick(scope, HERO_TICK_MS)
+        }
+    }
+    // Its end turns to the next title once it has faded out.
+    LaunchedEffect(running, trailer) {
+        if (!running || trailer == null) return@LaunchedEffect
+        snapshotFlow { trailer.finished }.collect { key ->
+            if (key == null || key != carousel.current?.key) return@collect
+            delay(TRAILER_END_PAUSE_MS)
+            if (trailer.finished == key && carousel.current?.key == key) carousel.turn(scope, 1, auto = true)
         }
     }
     return rotates && carousel.size > 1
 }
+
+/** After a trailer ends, the still backdrop shows this long before the next title slides in. */
+private const val TRAILER_END_PAUSE_MS = 1_500L
 
 /**
  * Fetches the titles around the current one ([HERO_PREFETCH] each side) with the requests the hero

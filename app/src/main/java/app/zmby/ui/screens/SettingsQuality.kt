@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.background
@@ -23,7 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -70,14 +70,16 @@ import app.zmby.ui.components.SelectableRow
 import app.zmby.ui.components.SettingsGroup
 import app.zmby.ui.components.ToggleSetting
 import app.zmby.ui.components.groupCard
+import app.zmby.data.InputField
 import app.zmby.ui.theme.Z
 import app.zmby.zmby
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.withContext
 
-/** The 画质偏好 row's value: 「4K · 杜比视界 · IMAX」, plus the bitrate cap when one is set. */
-internal fun qualitySummary(p: VersionPrefs): String = listOfNotNull(
+/** The 版本偏好 row's value: 「4K · 杜比视界 · IMAX」, the name pattern first and the bitrate cap last when set. */
+internal fun versionSummary(p: VersionPrefs): String = listOfNotNull(
+    p.pattern?.pattern,
     p.quality.label,
     p.hdrOrder.firstOrNull()?.label,
     "IMAX".takeIf { p.imax == ImaxMode.Prefer },
@@ -96,8 +98,9 @@ internal fun <T> moved(order: List<T>, item: T, delta: Int): List<T> {
 }
 
 /**
- * 画质偏好 (ui-spec §2.22, SettingsQuality.dc.html): the rules on the left (about 870 wide), the
+ * 版本偏好 (ui-spec §2.22, SettingsQuality.dc.html): the rules on the left (about 870 wide), the
  * 「按当前偏好」 preview fixed on the right (470). Back returns to the settings row (handled by the screen).
+ * The name pattern (once its own 版本偏好 row on the settings page) is the last group here.
  */
 @Composable
 internal fun QualitySettings(modifier: Modifier) {
@@ -105,7 +108,7 @@ internal fun QualitySettings(modifier: Modifier) {
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
     Column(modifier.padding(start = 56.dp, end = 72.dp, top = 56.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
         Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            Text("画质偏好", fontSize = 44.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text("版本偏好", fontSize = 44.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Text("播放 › 版本选择", fontSize = 20.sp, color = Z.textSecondary)
         }
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
@@ -122,15 +125,16 @@ internal fun QualitySettings(modifier: Modifier) {
 @Composable
 private fun QualityRules() {
     val settings = LocalContext.current.zmby.settings
-    val quality by settings.quality.flow.collectAsState()
-    val acceptLower by settings.acceptLowerResolution.flow.collectAsState()
-    val imax by settings.imaxMode.flow.collectAsState()
-    val cap by settings.bitrateCapMbps.flow.collectAsState()
-    val bitrateOrder by settings.bitrateOrder.flow.collectAsState()
-    val codec by settings.codecAvoid.flow.collectAsState()
-    val lossless by settings.preferLossless.flow.collectAsState()
-    val nonDisc by settings.preferNonDisc.flow.collectAsState()
-    val order by settings.rankOrder.flow.collectAsState()
+    val quality by settings.quality.flow.collectAsStateWithLifecycle()
+    val acceptLower by settings.acceptLowerResolution.flow.collectAsStateWithLifecycle()
+    val imax by settings.imaxMode.flow.collectAsStateWithLifecycle()
+    val cap by settings.bitrateCapMbps.flow.collectAsStateWithLifecycle()
+    val bitrateOrder by settings.bitrateOrder.flow.collectAsStateWithLifecycle()
+    val codec by settings.codecAvoid.flow.collectAsStateWithLifecycle()
+    val lossless by settings.preferLossless.flow.collectAsStateWithLifecycle()
+    val nonDisc by settings.preferNonDisc.flow.collectAsStateWithLifecycle()
+    val order by settings.rankOrder.flow.collectAsStateWithLifecycle()
+    val pattern by settings.versionPattern.flow.collectAsStateWithLifecycle()
     SettingsGroup("分辨率") {
         val tiers = listOf(QualityPreference.UHD, QualityPreference.FHD, QualityPreference.Auto)
         ChoiceSetting("分辨率", tiers.map { it.label }, tiers.indexOf(quality), { settings.quality.set(tiers[it]) })
@@ -153,6 +157,12 @@ private fun QualityRules() {
     SettingsGroup("排序方式") {
         ChoiceSetting("画质与线路", RankOrder.entries.map { it.label }, order.ordinal, { settings.rankOrder.set(RankOrder.entries[it]) })
     }
+    // Ranks right after a hand-picked version, ahead of every rule above; never hides the others.
+    SettingsGroup("名称匹配") {
+        TextSetting("优先匹配", pattern, InputField.VersionPattern, save = { v ->
+            versionPatternError(v) ?: run { settings.versionPattern.set(v); null }
+        }, mono = true, placeholder = "2160p.*REMUX")
+    }
 }
 
 /**
@@ -163,7 +173,7 @@ private fun QualityRules() {
 @Composable
 private fun HdrRanking() {
     val settings = LocalContext.current.zmby.settings
-    val stored by settings.hdrOrder.flow.collectAsState()
+    val stored by settings.hdrOrder.flow.collectAsStateWithLifecycle()
     val order = remember(stored) { HdrFormat.parse(stored) }
     var moving by remember { mutableStateOf<HdrFormat?>(null) }
     var origin by remember { mutableStateOf<List<HdrFormat>?>(null) }
@@ -221,9 +231,10 @@ internal enum class BadgeFit { Hit, Neutral, Miss }
 
 internal data class PreviewBadge(val text: String, val fit: BadgeFit)
 
-/** The badges of one preview row (ui-spec §2.22): resolution, HDR, IMAX, disc, avoided codec, bitrate. */
+/** The badges of one preview row (ui-spec §2.22): name pattern hit, resolution, HDR, IMAX, disc, avoided codec, bitrate. */
 internal fun previewBadges(source: MediaSourceInfo, prefs: VersionPrefs, imax: Boolean): List<PreviewBadge> {
     val out = mutableListOf<PreviewBadge>()
+    if (prefs.pattern != null && VersionRanker.matches(prefs.pattern, source)) out += PreviewBadge("匹配", BadgeFit.Hit)
     val wanted = VersionRanker.wantedTier(prefs.quality)
     resolutionLabel(source)?.let { label ->
         val tier = qualityTier(source)

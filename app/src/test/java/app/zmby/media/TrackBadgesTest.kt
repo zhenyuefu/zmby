@@ -24,7 +24,7 @@ class TrackBadgesTest {
             sub(5, "chi", "繁體"),
             sub(6, "chi", "简英双语", external = true),
         )
-        assertEquals(listOf("HDR10", "TrueHD Atmos", "AC3", "国语", "粤语", "简繁", "双语"), versionBadges(s))
+        assertEquals(listOf("HDR10", "TrueHD Atmos 5.1", "国语", "粤语", "简繁", "双语"), versionBadges(s))
     }
 
     @Test fun `an effects subtitle is named by its title or file, not by the ASS codec alone`() {
@@ -32,7 +32,10 @@ class TrackBadgesTest {
         assertFalse("特效" in subtitleBadges(listOf(sub(1, "chi", "简体", codec = "ass"))))
         assertTrue("特效" in subtitleBadges(listOf(sub(1, "chi", "简体特效"))))
         assertTrue("特效" in subtitleBadges(listOf(sub(1, null, external = true, path = "/m/Film.2024.chs&eng.effects.ass"))))
-        assertEquals(listOf("简中", "双语", "特效"), subtitleBadges(listOf(sub(1, null, external = true, path = "/m/Film.chs&eng.特效.ass"))))
+        assertEquals(listOf("简中", "特效"), subtitleBadges(listOf(sub(1, null, external = true, path = "/m/Film.chs&eng.特效.ass"))))
+        // 特效 wins over 双语 even on different tracks; 双语 shows when nothing is 特效.
+        assertEquals(listOf("简繁", "特效"), subtitleBadges(listOf(sub(1, "chi", "简体"), sub(2, "chi", "繁體"), sub(3, "chi", "简英特效"))))
+        assertEquals(listOf("简中", "双语"), subtitleBadges(listOf(sub(1, "chi", "简体"), sub(2, "chi", "简英双语"))))
     }
 
     @Test fun `short tags match whole words only`() {
@@ -45,9 +48,15 @@ class TrackBadgesTest {
         assertEquals(listOf("ISO"), versionBadges(MediaSourceInfo("iso", container = "iso")))
     }
 
-    @Test fun `audio formats are distinct, default first, at most three`() {
+    @Test fun `audio badges keep the best tier with channels, default first, at most three`() {
         val s = source(audio(1, "eng", "aac"), audio(2, "eng", "dts", profile = "DTS-HD MA", default = true), audio(3, "jpn", "aac"), audio(4, "kor", "flac"), audio(5, "fre", "opus"))
-        assertEquals(listOf("HDR10", "DTS-HD MA", "AAC", "FLAC", "+1"), versionBadges(s))
+        assertEquals(listOf("HDR10", "DTS-HD MA 5.1", "FLAC 5.1"), versionBadges(s))
+        // DDP 5.1 hides AAC; one format keeps its widest layout.
+        val stereo = MediaStream(3, "Audio", codec = "eac3", language = "eng", channels = 2, channelLayout = "stereo")
+        assertEquals(listOf("DDP 5.1"), audioBadges(listOf(audio(1, "chi", "aac"), stereo, audio(2, "eng", "eac3"))))
+        val lossless = listOf("truehd", "dts", "flac", "pcm_s24le").mapIndexed { i, c -> audio(i, "eng", c, profile = if (c == "dts") "MA" else null) }
+        assertEquals(listOf("TrueHD 5.1", "DTS-HD MA 5.1", "FLAC 5.1", "+1"), versionBadges(source(*lossless.toTypedArray())).drop(1))
+        assertEquals(listOf("TrueHD Atmos 5.1", "DTS:X 5.1"), audioBadges(listOf(audio(1, "eng", "truehd", profile = "Atmos"), audio(2, "eng", "dts", title = "DTS:X"), audio(3, "eng", "truehd"))))
     }
 
     @Test fun `subtitle chips put the current one first, then preferred language, other Chinese, English, the rest`() {
@@ -76,7 +85,9 @@ class TrackBadgesTest {
         assertEquals(null, TrackFacts.audioLanguage(audio(1, "eng", "aac", title = "Cantoneseology")))
         val s = source(audio(1, "chi", "aac"), audio(2, "chi", "ac3", title = "粤语"), audio(3, "cmn", "ac3"))
         assertEquals(listOf("中文", "粤语", "国语"), audioRows(s).map { it.language })
-        assertEquals(listOf("HDR10", "AAC", "AC3", "国语", "粤语", "中文"), versionBadges(s))
+        assertEquals(listOf("HDR10", "AC3 5.1", "国语", "粤语"), versionBadges(s))
+        // Generic Chinese stays 中文 on its own badge only when no track says Mandarin.
+        assertEquals(listOf("中文", "粤语"), audioLanguageBadges(listOf(audio(1, "chi", "aac"), audio(2, "chi", "ac3", title = "粤语"))))
     }
 
     @Test fun `Chinese subtitle scripts may coexist in one track and missing language uses explicit script tags`() {
@@ -95,7 +106,7 @@ class TrackBadgesTest {
         assertEquals(emptyList<String>(), subtitleBadges(listOf(sub(1, "eng", path = "/m/Film.chs.srt"))))
         assertEquals(emptyList<String>(), subtitleBadges(listOf(sub(1, null, "Chineseology SpecialEffects"))))
         assertEquals(listOf("简中"), subtitleBadges(listOf(sub(1, null, path = "/m/Film.SC.srt"))))
-        assertEquals(listOf("简中", "双语", "特效"), subtitleBadges(listOf(sub(1, null, path = "C:\\m\\Film.[简英特效].ass"))))
+        assertEquals(listOf("简中", "特效"), subtitleBadges(listOf(sub(1, null, path = "C:\\m\\Film.[简英特效].ass"))))
         assertEquals(listOf("特效"), subtitleBadges(listOf(sub(1, "eng", path = "/m/Film.eng.effects.ass"))))
         for (tag in listOf("chs.eng", "chs_eng", "chseng", "chs&eng")) {
             assertEquals(tag, listOf("简中", "双语"), subtitleBadges(listOf(sub(1, null, path = "/m/Film.$tag.ass"))))
@@ -142,9 +153,9 @@ class TrackBadgesTest {
             assertEquals("", subtitleRows(subtitles).single().format)
             assertEquals("外挂", subtitleChips(subtitles, 2, null).single().detail)
         }
-        // Missing formats neither consume one of the three visible slots nor inflate the overflow count.
+        // Missing formats neither take a badge nor decide the tier.
         val s = source(MediaStream(1, "Audio", isDefault = true), audio(2, "eng", "aac"), audio(3, "eng", "flac"), audio(4, "eng", "opus"))
-        assertEquals(listOf("HDR10", "AAC", "FLAC", "Opus"), versionBadges(s))
+        assertEquals(listOf("HDR10", "FLAC 5.1"), versionBadges(s))
         assertEquals("VORBIS", audioFormat(MediaStream(1, "Audio", codec = "vorbis")))
     }
 
@@ -153,6 +164,6 @@ class TrackBadgesTest {
             audio(2, "chi", "eac3"))
         assertEquals("10ch", audioRows(s).first().format)
         assertEquals("中文 · 10ch", audioSummary(s, 1).first)
-        assertEquals(listOf("HDR10", "DDP", "中文"), versionBadges(s))
+        assertEquals(listOf("HDR10", "DDP 5.1", "中文"), versionBadges(s))
     }
 }

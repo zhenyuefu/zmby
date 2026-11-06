@@ -1,8 +1,8 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,8 +28,8 @@ internal class VersionProgress(val ordered: List<Version>, val default: Version?
 @Composable
 internal fun rememberVersionProgress(versions: VersionsState, tick: Int): VersionProgress {
     val app = LocalContext.current.zmby
-    val local by app.recentProgress.collectAsState()
-    val percent by app.settings.watchedPercent.collectAsState()
+    val local by app.recentProgress.collectAsStateWithLifecycle()
+    val percent by app.settings.watchedPercent.collectAsStateWithLifecycle()
     val copies = remember(versions.ordered) { versions.ordered.map { it.ref }.distinctBy { it.key } }
     val keys = remember(copies) { copies.map { it.key } }
     // Kept while the copies change, so a version arriving does not drop the resume point for a frame.

@@ -27,6 +27,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
@@ -356,6 +358,29 @@ fun Badge(text: String, fill: Boolean = false, fontSize: Int = 15) {
             )
             .padding(horizontal = 10.dp, vertical = 4.dp),
     )
+}
+
+/**
+ * A rating in the `.bdg fill` style (ui-spec §1.2; ratings design): the source as a word ([label],
+ * 「IMDb」「TMDB」) or a single-colour [glyph] (Tomatometer, Popcornmeter), then the value. [spoken]
+ * is what accessibility reads (the glyph alone says nothing).
+ */
+@Composable
+fun RatingBadge(value: String, label: String? = null, glyph: Glyph? = null, spoken: String? = null, fontSize: Int = 15) {
+    val inverted = LocalInverted.current
+    val color = if (inverted) Color.White else LocalContentColor.current
+    Row(
+        Modifier
+            .background(if (inverted) Z.onFocus else Color.White.copy(alpha = 0.16f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .then(if (spoken != null) Modifier.semantics(mergeDescendants = true) { contentDescription = spoken } else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (glyph != null) Icon(glyph, size = (fontSize + 6).dp, color = color)
+        if (label != null) Text(label, fontSize = fontSize.sp, fontWeight = FontWeight.Black, maxLines = 1, color = color)
+        Text(value, fontSize = fontSize.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = color)
+    }
 }
 
 @Composable

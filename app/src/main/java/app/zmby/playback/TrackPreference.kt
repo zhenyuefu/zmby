@@ -2,6 +2,7 @@ package app.zmby.playback
 
 import app.zmby.emby.MediaSourceInfo
 import app.zmby.emby.MediaStream
+import app.zmby.media.TrackFacts
 import app.zmby.zidoo.ZidooTracks
 
 /**
@@ -22,7 +23,20 @@ object TrackPreference {
     /** Offered languages: stored code to label. */
     val LANGUAGES = listOf("chi" to "中文", "eng" to "英语", "jpn" to "日语")
 
-    fun choose(source: MediaSourceInfo, picked: TrackChoice, audioLanguage: String, subtitleLanguage: String, originalLanguage: String? = null): TrackChoice {
+    /**
+     * [preferStyled] (特效字幕优先) puts the wanted language's effects subtitles first, recognised
+     * as the 「特效」 badge is ([TrackFacts.effects]: the track title or an external file's name
+     * tags, never the codec); the server's default still wins among them. It only applies when a
+     * language is chosen, never to 跟随服务器 or 关闭.
+     */
+    fun choose(
+        source: MediaSourceInfo,
+        picked: TrackChoice,
+        audioLanguage: String,
+        subtitleLanguage: String,
+        originalLanguage: String? = null,
+        preferStyled: Boolean = false,
+    ): TrackChoice {
         val origin = originalLanguage?.takeIf { it.isNotBlank() && it != "und" }
             ?: source.videoStream?.language?.takeUnless { it == "und" }
         fun resolve(pref: String) = if (pref == ORIGINAL) origin.orEmpty() else pref
@@ -31,7 +45,8 @@ object TrackPreference {
             SERVER -> null
             OFF -> ZidooTracks.SUBTITLE_OFF
             // Forced tracks are for foreign dialogue only; external ones only if the player can load them.
-            else -> pick(source.subtitleStreams.filter { !it.isForced && (!it.isExternal || LocalStrm.supports(it)) }, language)?.index
+            else -> pick(source.subtitleStreams.filter { !it.isForced && (!it.isExternal || LocalStrm.supports(it)) }, language,
+                rank = if (preferStyled) { track -> if (TrackFacts.effects(track)) 0 else 1 } else { _ -> 0 })?.index
         }
         return TrackChoice(audio, subtitle)
     }
@@ -57,9 +72,11 @@ object TrackPreference {
         return TrackLanguages(audio, subtitle)
     }
 
-    private fun pick(streams: List<MediaStream>, language: String): MediaStream? {
+    private fun pick(streams: List<MediaStream>, language: String, rank: (MediaStream) -> Int = { 0 }): MediaStream? {
         val matching = streams.filter { matches(it, language) }
-        return matching.firstOrNull { it.isDefault } ?: matching.firstOrNull()
+        val best = matching.minOfOrNull(rank) ?: return null
+        val top = matching.filter { rank(it) == best }
+        return top.firstOrNull { it.isDefault } ?: top.first()
     }
 
     private fun normalized(language: String): String {

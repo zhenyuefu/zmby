@@ -1,5 +1,6 @@
 package app.zmby.ui
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -22,7 +23,6 @@ import app.zmby.emby.BaseItemDto
 import app.zmby.log.ZLog
 import app.zmby.playback.TrackChoice
 import app.zmby.playback.WatchThreshold
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.LocalContext
 import app.zmby.zmby
 
@@ -42,6 +42,8 @@ sealed interface Route {
     data object Import : Route
     data object Backup : Route
     data object Settings : Route
+    /** 合集页: one collection (BoxSet) on [server] and the films it holds. */
+    data class Collection(val server: String, val collectionId: String) : Route
     /** 人物页: [personKey] in the store, reached from [server]'s own person [personId]. */
     data class Person(val personKey: String, val server: String, val personId: String) : Route
     /** 设置 › 数据来源 › one feature's servers or providers. */
@@ -61,7 +63,7 @@ interface Nav {
 /**
  * Opens what a card points at. Series, seasons and episodes all go to the series page (an episode
  * opens it on its season, focused): episodes have no page of their own, so switching episodes is
- * always one press away. Films and other videos go to the detail page.
+ * always one press away. Collections open the collection page; films and other videos the detail page.
  */
 fun Nav.open(ref: ServerItem) {
     val item = ref.item
@@ -72,6 +74,7 @@ fun Nav.open(ref: ServerItem) {
     when (item.type) {
         "Series" -> go(Route.Series(ref.server, item.id))
         "Season" -> item.seriesId?.let { go(Route.Series(ref.server, it)) }
+        "BoxSet" -> go(Route.Collection(ref.server, item.id))
         "Episode" -> item.seriesId?.let { go(Route.Series(ref.server, it, episodeId = item.id)) } ?: go(Route.Detail(ref.server, item.id))
         else -> go(Route.Detail(ref.server, item.id))
     }
@@ -80,7 +83,7 @@ fun Nav.open(ref: ServerItem) {
 /** The resume point a play button offers: none once it is past the watch threshold. */
 @Composable
 fun resumeMsOf(item: BaseItemDto): Long {
-    val percent by LocalContext.current.zmby.settings.watchedPercent.collectAsState()
+    val percent by LocalContext.current.zmby.settings.watchedPercent.collectAsStateWithLifecycle()
     return WatchThreshold.startPosition(item.resumeMs, item.runtimeMs, percent)
 }
 

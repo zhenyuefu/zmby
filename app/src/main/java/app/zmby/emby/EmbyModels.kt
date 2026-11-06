@@ -37,6 +37,13 @@ data class SystemInfoPublic(
     @SerialName("Version") val version: String? = null,
 )
 
+/** `/Items/Filters` (QueryFiltersLegacy): what a library's items use. */
+@Serializable
+data class QueryFilters(
+    @SerialName("Genres") val genres: List<String>? = null,
+    @SerialName("Years") val years: List<Int>? = null,
+)
+
 @Serializable
 data class ItemsResult(
     @SerialName("Items") val items: List<BaseItemDto> = emptyList(),
@@ -91,6 +98,8 @@ data class BaseItemDto(
     /** A person's birthplace. */
     @SerialName("ProductionLocations") val productionLocations: List<String> = emptyList(),
     @SerialName("OriginalLanguage") val originalLanguage: String? = null,
+    /** Trailers stored with the item on the server (Emby, Jellyfin); null when the answer does not say. */
+    @SerialName("LocalTrailerCount") val localTrailerCount: Int? = null,
 ) {
     val isPlayable: Boolean get() = type in PLAYABLE_TYPES
 

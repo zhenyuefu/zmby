@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
  * An item and the server it came from. Every cross-server operation passes the pair: the same item
  * id on another server can be a different film (aggregation spec, 归属与标识).
  */
+@kotlinx.serialization.Serializable
 data class ServerItem(val server: String, val item: BaseItemDto) {
     val key: String get() = "$server:${item.id}"
 }
@@ -155,16 +156,51 @@ class Library(
         ZLog.i(TAG, "removed server $id")
     }
 
-    /** 测速: pings every line of [only] (or of every enabled server) and records health. */
+    /** When each item's full detail was last fetched (`server|id`), for [detailFresh]. */
+    private val detailFetched = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Whether the stored full detail of [id] is recent enough to show without asking (performance plan RN ③). */
+    fun detailFresh(server: String, id: String): Boolean =
+        detailFetched["$server|$id"]?.let { System.currentTimeMillis() - it in 0 until DETAIL_FRESH_MS } == true
+
+    fun markDetailFresh(server: String, id: String) { detailFetched["$server|$id"] = System.currentTimeMillis() }
+
+    /** A watch operation changed [id]: the next detail page asks its server again. */
+    fun invalidateDetail(server: String, id: String) { detailFetched.remove("$server|$id") }
+
+    /** When every server was last measured; entering home measures again only after [MEASURE_INTERVAL_MS]. */
+    private val measuredAt = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /**
+     * 测速 on entering home (performance plan RH ①, RN ②): the first time after the process starts,
+     * then at most every [MEASURE_INTERVAL_MS]; coming back from a detail page does not measure again.
+     * Failures between measurements show through the requests themselves (FanOut health).
+     */
+    suspend fun measureIfDue() {
+        val last = measuredAt.get()
+        val now = System.currentTimeMillis()
+        if (last != 0L && now - last < MEASURE_INTERVAL_MS) return
+        if (!measuredAt.compareAndSet(last, now)) return
+        measure()
+    }
+
+    /**
+     * 测速: pings every line of [only] (or of every enabled server) and records health. Lines that
+     * answer within [MEASURE_BATCH_MS] are published together, later ones as they come.
+     */
     suspend fun measure(only: String? = null) = coroutineScope {
+        if (only == null) measuredAt.set(System.currentTimeMillis())
         val targets = registry.enabled.filter { only == null || it.id == only }
-        targets.flatMap { s -> s.config.lines.map { line -> s to line } }
+        val pings = targets.flatMap { s -> s.config.lines.map { line -> s to line } }
             .map { (s, line) ->
                 async {
                     val (ms, version) = emby.ping(line.url, s.config.ua, s.id)
-                    registry.recordLatency(s.id, line.id, ms, version)
+                    ServerRegistry.Ping(s.id, line.id, ms, version)
                 }
-            }.awaitAll()
+            }
+        kotlinx.coroutines.withTimeoutOrNull(MEASURE_BATCH_MS) { pings.awaitAll() }
+        registry.recordLatencies(pings.filter { it.isCompleted }.map { it.getCompleted() })
+        pings.filterNot { it.isCompleted }.map { p -> async { registry.recordLatencies(listOf(p.await())) } }.awaitAll()
         Unit
     }
 
@@ -288,6 +324,80 @@ class Library(
     suspend fun genres(server: String, parentId: String?, types: String): List<String> =
         emby.genres(session(server), parentId, types).items.mapNotNull { it.name?.takeIf(String::isNotBlank) }
 
+    /** A collection's films (and series), oldest first. */
+    suspend fun collectionItems(server: String, collectionId: String): List<ServerItem> =
+        emby.collectionItems(session(server), collectionId).items.map { ServerItem(server, it) }.also(::note)
+
+    /**
+     * The collections on [server] holding [itemId], each with its titles (电影详情 › 合集). At most
+     * three are opened, and only those whose titles include [itemId] are kept: a server that ignores
+     * `ListItemIds` answers with collections the film is not in.
+     */
+    suspend fun collectionsOf(server: String, itemId: String): List<Pair<ServerItem, List<ServerItem>>> = coroutineScope {
+        // A server seen ignoring ListItemIds is not asked again for a day: its answer is any three
+        // collections, four requests per film opened for almost never a hit (performance plan RN).
+        ignoresListItemIds[server]?.let { if (System.currentTimeMillis() - it < DAY_MS) return@coroutineScope emptyList() }
+        val s = session(server)
+        val boxes = emby.collectionsOf(s, itemId).items.filter { it.type == "BoxSet" && it.id != itemId }.take(3)
+        val opened = boxes.map { b -> async { ServerItem(server, b) to emby.collectionItems(s, b.id).items.map { ServerItem(server, it) } } }.awaitAll()
+        val found = opened.filter { (_, films) -> films.any { it.item.id == itemId } }
+        if (found.size < opened.size) {
+            ZLog.i("Library", "${status(server)?.name} ignores ListItemIds; collections of a film not asked for a day")
+            ignoresListItemIds[server] = System.currentTimeMillis()
+        }
+        note(found.flatMap { (box, films) -> listOf(box) + films })
+        found
+    }
+
+    /** Servers whose collections answer ignored ListItemIds, and when that was seen. */
+    private val ignoresListItemIds = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val DAY_MS = 24 * 60 * 60 * 1000L
+
+    /**
+     * Which sorts and filters [server] honours for one browse grid (浏览页筛选): Limit=0 counts with
+     * each filter against the library's total, the years it lists, and the first page of three sorts.
+     * About a dozen small requests, at most three at a time; a failed one leaves its filter offered.
+     */
+    suspend fun probeFilters(server: String, types: String, parentId: String?, genres: List<String>, now: Long): BrowseFilters = coroutineScope {
+        val s = session(server)
+        val slots = Semaphore(3)
+        suspend fun count(query: Map<String, String>): Int? = slots.withPermit {
+            runCatching { emby.browse(s, types, false, start = 0, limit = 0, parentId = parentId, query = query).totalRecordCount }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+        }
+        val total = count(emptyMap()) ?: throw java.io.IOException("no total")
+        val played = async { count(mapOf("Filters" to "IsPlayed")) }
+        val unplayed = async { count(mapOf("Filters" to "IsUnplayed")) }
+        val favorite = async { count(mapOf("Filters" to "IsFavorite")) }
+        val uhd = async { count(mapOf("Is4K" to "true")) }
+        val genreCount = async { genres.firstOrNull()?.let { count(mapOf("Genres" to it)) } }
+        val sorts = BrowseFilters.SORT_PROBES.map { sort ->
+            async {
+                slots.withPermit {
+                    runCatching {
+                        val page = emby.browse(s, types, false, start = 0, limit = 12, parentId = parentId,
+                            query = mapOf("SortBy" to sort.sortBy, "SortOrder" to if (sort.descendingByDefault) "Descending" else "Ascending")).items
+                        // A page that cannot tell (identical ratings, too few dates) is no evidence either way.
+                        SortCheck.verdict(page, sort, sort.descendingByDefault)?.let { sort to it }
+                    }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+                }
+            }
+        }
+        val years = slots.withPermit {
+            runCatching { emby.queryFilters(s, parentId, types).years }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+        }
+        val newest = years?.let(BrowseFilters::decadesOf)?.firstOrNull() ?: BrowseQuery.DECADES.first()
+        val yearCount = count(mapOf("Years" to (newest..newest + 9).joinToString(",")))
+        BrowseFilters.from(
+            BrowseFilterProbe(
+                total = total, played = played.await(), unplayed = unplayed.await(), favorite = favorite.await(), uhd = uhd.await(),
+                years = years, yearCount = yearCount, genreCount = genreCount.await(), sortsKept = sorts.mapNotNull { it.await() }.toMap(),
+            ),
+            now,
+        )
+    }
+
     /** Searches the server's libraries whose search switch is on; one request when all of them are. */
     override suspend fun search(server: String, term: String): List<BaseItemDto> = coroutineScope {
         val s = session(server)
@@ -316,6 +426,13 @@ class Library(
 
     override suspend fun item(server: String, id: String): BaseItemDto = emby.item(session(server), id)
 
+    /** The trailers stored with [id] on [server]. */
+    suspend fun localTrailers(server: String, id: String): List<BaseItemDto> = emby.localTrailers(session(server), id)
+
+    /** Where a server trailer plays from, with the server's User-Agent (some proxies check it). */
+    fun trailerStream(server: String, trailerId: String): Pair<String, String?> =
+        emby.trailerStreamUrl(session(server), trailerId).let { url -> url to agentFor(url) }
+
     suspend fun playedItems(server: String, start: Int, limit: Int) = emby.playedItems(session(server), start, limit)
 
     /** [id]'s base fields and ProviderIds only (a series' IDs for the segment databases). */
@@ -336,8 +453,19 @@ class Library(
     override suspend fun episodePage(server: String, seriesId: String, seasonId: String, start: Int, limit: Int): ItemsResult =
         emby.episodes(session(server), seriesId, seasonId, start = start, limit = limit)
 
-    override suspend fun sources(server: String, itemId: String): List<MediaSourceInfo> =
-        emby.playbackInfo(session(server), itemId, 0, isPlayback = false).mediaSources
+    /**
+     * Versions listed for display (not for playing): requests for the same item share one answer
+     * for [SOURCES_TTL_MS] (performance plan RN ⑦). Playback asks again for fresh stream addresses.
+     */
+    private val sourcesCache = app.zmby.net.RequestCache<List<Any?>, List<MediaSourceInfo>>(64, { SOURCES_TTL_MS })
+
+    override suspend fun sources(server: String, itemId: String): List<MediaSourceInfo> {
+        val s = session(server)
+        // The session's line, user and token are part of the key: another login never sees these.
+        return sourcesCache.get(listOf(server, s.baseUrl, s.userId, s.accessToken.hashCode(), itemId)) {
+            emby.playbackInfo(s, itemId, 0, isPlayback = false).mediaSources
+        }
+    }
 
     /** The version picked by hand for a work last time: (server, media source id). */
     private val picked = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -546,6 +674,14 @@ class Library(
     companion object {
         const val PAGE = 60
         private const val VIEWS_TTL_MS = 10 * 60_000L
+        /** How long listed versions of an item are reused (performance plan RN ⑦). */
+        private const val SOURCES_TTL_MS = 2 * 60_000L
+        /** A detail page shows a full item fetched this recently without asking (user-confirmed 2026-11-04). */
+        const val DETAIL_FRESH_MS = 10 * 60_000L
+        /** Entering home measures again only after this long (performance plan RN ②). */
+        const val MEASURE_INTERVAL_MS = 10 * 60_000L
+        /** Speed tests answered within this are published as one update. */
+        private const val MEASURE_BATCH_MS = 1_500L
         private const val TAG = "Library"
         private const val MAX_LOCAL_TITLES = 2000
         private const val MAX_HISTORY = 50

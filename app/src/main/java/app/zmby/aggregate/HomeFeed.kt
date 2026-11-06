@@ -54,8 +54,11 @@ data class ServerHome(
     val loaded: Boolean,
 )
 
-/** Which servers each home row asks, in priority order. */
-data class HomeServers(val watch: List<String>, val latest: List<String>, val order: Map<String, Int>)
+/**
+ * Which servers each home row asks, in priority order: [order] is 首页与影视来源's (最新添加, 主推区),
+ * [watchOrder] 观看记录来源's (在看). Each follows the server page's order until sorted by hand.
+ */
+data class HomeServers(val watch: List<String>, val latest: List<String>, val order: Map<String, Int>, val watchOrder: Map<String, Int> = order)
 
 /**
  * The home rows (ui-spec §2.1), local first (local-data spec): [rows] merges what the store holds
@@ -74,7 +77,7 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
             HomeMerge.latest(hits) to lists.values.any { it.fetchedAt > 0 }
         }
         val watchKeys = servers.watch.map(WatchingFeed::resumeKey)
-        return kotlinx.coroutines.flow.combine(latest, watching.cards(servers.watch, servers.order), store.listsFlow(watchKeys)) { (l, loaded), cards, watchLists ->
+        return kotlinx.coroutines.flow.combine(latest, watching.cards(servers.watch, servers.watchOrder), store.listsFlow(watchKeys)) { (l, loaded), cards, watchLists ->
             HomeRows(
                 watching = cards,
                 latest = l.first,
@@ -89,10 +92,10 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
      * the player), 最新添加 only when older than ten minutes unless [force]. Returns each server's
      * fresh 最新添加 (for its pinyin probe).
      */
-    suspend fun refresh(servers: HomeServers, force: Boolean = false, now: Long = System.currentTimeMillis()): Map<String, List<BaseItemDto>> = coroutineScope {
+    suspend fun refresh(servers: HomeServers, force: Boolean = false, now: Long = System.currentTimeMillis(), watchingForce: Boolean = force): Map<String, List<BaseItemDto>> = coroutineScope {
         val latestDue = servers.latest.filter { force || Freshness.due(Freshness.Kind.Latest, store.list(latestKey(it))?.fetchedAt, now) }
         val fresh = ConcurrentHashMap<String, List<BaseItemDto>>()
-        launch { watching.refresh(servers.watch) }
+        launch { watching.refresh(servers.watch, watchingForce, now) }
         launch {
             collect(latestDue, "latest") { s -> library.latest(s) }.forEach { (s, items) ->
                 store.putList(latestKey(s), s, items)

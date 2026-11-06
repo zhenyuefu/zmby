@@ -21,37 +21,57 @@ import androidx.compose.ui.unit.dp
 fun Modifier.detailGlass(shape: Shape): Modifier = composed {
     val backdrop = LocalBackdrop.current
     var offset by remember { mutableStateOf(Offset.Zero) }
-    this.shadow(18.dp, shape, clip = false,
-        ambientColor = Color.Black.copy(alpha = 0.30f), spotColor = Color.Black.copy(alpha = 0.30f))
+    val off = app.zmby.Diagnostics.drawOff
+    this.then(if ("shadow" in off) Modifier else Modifier.shadow(18.dp, shape, clip = false,
+        ambientColor = Color.Black.copy(alpha = 0.30f), spotColor = Color.Black.copy(alpha = 0.30f)))
         .onGloballyPositioned { c ->
             backdrop?.coordinates?.takeIf { it.isAttached && c.isAttached }?.let { offset = it.localPositionOf(c, Offset.Zero) }
         }
         .drawWithCache {
             val outline = shape.createOutline(size, layoutDirection, this)
-            val path = Path().apply { addOutline(outline) }
-            val stroke = Stroke(2.dp.toPx()) // Clipping keeps the inner 1px.
+            // The rim is the inner 1 px of a 2 px stroke: a 1 px stroke on the outline inset by half a pixel.
+            val hairline = 1.dp.toPx()
+            val inner = shape.createOutline(Size(size.width - hairline, size.height - hairline), layoutDirection, this)
+            val stroke = Stroke(hairline)
             val edge = Brush.verticalGradient(0f to Color.White.copy(alpha = 0.16f),
                 (2.dp.toPx() / size.height).coerceIn(0.001f, 1f) to Color.Transparent)
             onDrawBehind {
-                clipPath(path) {
-                    backdrop?.let { drawDetailSlice(it, offset) }
-                    val area = backdrop?.coordinates?.size
-                    val image = backdrop?.blurred
-                    val bright = if (area != null && image != null) {
-                        val scale = maxOf(area.width.toFloat() / image.width, area.height.toFloat() / image.height)
-                        val imageWidth = image.width * scale
-                        val imageHeight = image.height * scale
-                        val cropX = (imageWidth - area.width) / 2f
-                        val cropY = (imageHeight - area.height) / 2f
-                        (backdrop.luminance?.average((offset.x + cropX) / imageWidth, (offset.y + cropY) / imageHeight,
-                            (offset.x + size.width + cropX) / imageWidth, (offset.y + size.height + cropY) / imageHeight) ?: 0f) > 0.55f
-                    } else false
-                    drawRect(Color(0xFF101115).copy(alpha = if (bright) 0.62f else 0.46f))
-                    drawOutline(outline, Color.White.copy(alpha = 0.08f), style = stroke)
-                    drawOutline(outline, edge, style = stroke)
+                // Every layer is painted straight into the panel's rounded shape (performance plan R6):
+                // a rounded clip around full-screen draws cost a full-screen fill per layer and panel.
+                if ("slice" !in off) backdrop?.let { drawDetailSliceInto(it, offset, outline) }
+                val area = backdrop?.coordinates?.size.takeIf { "tint" !in off }
+                val image = backdrop?.blurred
+                val bright = if (area != null && image != null) {
+                    val scale = maxOf(area.width.toFloat() / image.width, area.height.toFloat() / image.height)
+                    val imageWidth = image.width * scale
+                    val imageHeight = image.height * scale
+                    val cropX = (imageWidth - area.width) / 2f
+                    val cropY = (imageHeight - area.height) / 2f
+                    (backdrop.luminance?.average((offset.x + cropX) / imageWidth, (offset.y + cropY) / imageHeight,
+                        (offset.x + size.width + cropX) / imageWidth, (offset.y + size.height + cropY) / imageHeight) ?: 0f) > 0.55f
+                } else false
+                drawOutline(outline, Color(0xFF101115).copy(alpha = if (bright) 0.62f else 0.46f))
+                translate(hairline / 2, hairline / 2) {
+                    drawOutline(inner, Color.White.copy(alpha = 0.08f), style = stroke)
+                    drawOutline(inner, edge, style = stroke)
                 }
             }
         }
+}
+
+/**
+ * The backdrop under a panel at [offset] (the blurred copy with the page's scrims), painted into
+ * [outline] in one fill from [Backdrop.sliceSource] placed in backdrop coordinates (performance plan
+ * R6); under a clip it looked the same as four full-area layers.
+ */
+private fun DrawScope.drawDetailSliceInto(backdrop: Backdrop, offset: Offset, outline: Outline) {
+    val area = backdrop.coordinates?.size?.let { Size(it.width.toFloat(), it.height.toFloat()) } ?: return
+    val source = backdrop.sliceSource(area, this) ?: return
+    val s = area.width / source.width
+    val shader = ImageShader(source, TileMode.Clamp, TileMode.Clamp).apply {
+        setLocalMatrix(android.graphics.Matrix().apply { setScale(s, s); postTranslate(-offset.x, -offset.y) })
+    }
+    drawOutline(outline, ShaderBrush(shader))
 }
 
 /** No tinted plate or reveal mask: the same backdrop gradually gains blur, light and a shadow. */

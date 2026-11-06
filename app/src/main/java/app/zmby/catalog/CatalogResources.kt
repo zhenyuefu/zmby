@@ -8,7 +8,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 
 /** Stable resource addresses remain server + item; catalogue addresses can never be played. */
+@kotlinx.serialization.Serializable
 data class ResourceBatch(val server: String, val episodes: List<ServerItem>, val verified: Boolean)
+
+/** A series' resources on each server are kept across restarts too (统一数据层 ③). */
+private val RESOURCES_PERSIST = app.zmby.aggregate.Persist("catalog-resources", kotlinx.serialization.builtins.ListSerializer(ResourceBatch.serializer()))
 data class EpisodeResources(
     val matched: Map<String, List<ServerItem>>,
     val unmatched: List<ServerItem>,
@@ -139,11 +143,14 @@ class CatalogResources(private val source: VersionSource, private val fanOut: Fa
     private fun key(work: CatalogWork, fallback: ServerItem?): Any = listOf("series-resources", work.ref, work.ids,
         work.title, work.originalTitle, work.year, fallback?.server, fallback?.item?.id, fallback?.item?.providerIds)
 
-    fun invalidate(servers: List<String>, work: CatalogWork, fallback: ServerItem? = null) = fanOut.invalidate(key(work, fallback), servers)
+    fun invalidate(servers: List<String>, work: CatalogWork, fallback: ServerItem? = null) {
+        fanOut.invalidate(key(work, fallback), servers, RESOURCES_PERSIST)
+        fanOut.invalidateSteps(servers)
+    }
 
     /** All seasons are inspected, including server-only seasons, with pagination and a loop guard. */
     fun series(servers: List<String>, work: CatalogWork, fallback: ServerItem? = null) = fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS,
-        share = key(work, fallback), cacheMs = FanOut.RESOURCE_CACHE_MS) { server ->
+        share = key(work, fallback), cacheMs = FanOut.RESOURCE_CACHE_MS, persist = RESOURCES_PERSIST) { server ->
         val ids = work.ids.map { (key, value) -> "${key.lowercase()}.$value" }
         val lookedUp = try { source.byProviderIds(server, "Series", ids) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -166,11 +173,11 @@ class CatalogResources(private val source: VersionSource, private val fanOut: Fa
         val output = mutableListOf<ServerItem>()
         // Multiple editions of the same series are resources; keep their independent addresses.
         for (series in matches + originals) {
-            for (season in source.seasons(server, series.id)) {
+            for (season in fanOut.seasons(server, series.id) { source.seasons(server, series.id) }) {
                 var start = 0
                 val seen = mutableSetOf<String>()
                 while (true) {
-                    val page = source.episodePage(server, series.id, season.id, start, 100)
+                    val page = fanOut.episodePage(server, series.id, season.id, start, 100) { source.episodePage(server, series.id, season.id, start, 100) }
                     val fresh = page.items.filter { seen.add(it.id) }
                     if (page.items.isNotEmpty() && fresh.isEmpty()) throw CatalogException("服务器剧集分页未前进")
                     output += fresh.map { ep -> ServerItem(server, ep.copy(parentIndexNumber = ep.parentIndexNumber ?: season.indexNumber,

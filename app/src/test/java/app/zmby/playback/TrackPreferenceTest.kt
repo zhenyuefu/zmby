@@ -56,4 +56,31 @@ class TrackPreferenceTest {
         assertNull(c.audio)
         assertNull(c.subtitle)
     }
+
+    @Test fun `styled subtitles first only when asked and only within the language`() {
+        val fansub = MediaSourceInfo(
+            id = "f",
+            mediaStreams = listOf(
+                MediaStream(0, "Video"),
+                MediaStream(1, "Subtitle", language = "chi", codec = "subrip", title = "简体", isDefault = true),
+                MediaStream(2, "Subtitle", language = "chi", codec = "ass", title = "简体"),
+                MediaStream(3, "Subtitle", language = "chi", codec = "ass", title = "简体特效"),
+                MediaStream(4, "Subtitle", language = "eng", codec = "ass", title = "English 特效"),
+            ),
+        )
+        val server = TrackPreference.SERVER
+        assertEquals(1, TrackPreference.choose(fansub, TrackChoice(), server, "chi").subtitle)
+        assertEquals(3, TrackPreference.choose(fansub, TrackChoice(), server, "chi", preferStyled = true).subtitle)
+        // Like the 「特效」 badge: ASS alone is not an effects subtitle, so the server default stays.
+        val plainAss = fansub.copy(mediaStreams = fansub.mediaStreams.filter { it.index != 3 })
+        assertEquals(1, TrackPreference.choose(plainAss, TrackChoice(), server, "chi", preferStyled = true).subtitle)
+        // An external file named …特效.ass counts, as it does for the badge.
+        val external = plainAss.copy(mediaStreams = plainAss.mediaStreams + MediaStream(5, "Subtitle", language = "chi", codec = "ass",
+            isExternal = true, path = "/m/Film.chs.特效.ass"))
+        assertEquals(5, TrackPreference.choose(external, TrackChoice(), server, "chi", preferStyled = true).subtitle)
+        // 跟随服务器, 关闭 and a pick are untouched.
+        assertNull(TrackPreference.choose(fansub, TrackChoice(), server, server, preferStyled = true).subtitle)
+        assertEquals(ZidooTracks.SUBTITLE_OFF, TrackPreference.choose(fansub, TrackChoice(), server, TrackPreference.OFF, preferStyled = true).subtitle)
+        assertEquals(1, TrackPreference.choose(fansub, TrackChoice(subtitle = 1), server, "chi", preferStyled = true).subtitle)
+    }
 }

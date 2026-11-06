@@ -45,6 +45,20 @@ class LocalStoreTest {
         providerIds = tmdb?.let { mapOf("Tmdb" to it) }.orEmpty(), imageTags = mapOf("Primary" to "p$id"),
     )
 
+    @Test fun `progress reports survive as the newest per copy, oldest first, and are pruned`() = runBlocking {
+        store.putReport("a", "1", 100, played = false, at = 10)
+        store.putReport("b", "2", 0, played = true, at = 20)
+        store.putReport("a", "1", 300, played = false, at = 30)
+        val all = store.recentReports(10)
+        assertEquals(listOf("b:2", "a:1"), all.keys.toList())
+        assertEquals(300L, all.getValue("a:1").playbackPositionTicks)
+        assertEquals(true, all.getValue("b:2").played)
+        assertEquals(java.time.Instant.ofEpochMilli(30).toString(), all.getValue("a:1").lastPlayedDate)
+        assertEquals(listOf("a:1"), store.recentReports(1).keys.toList())
+        repeat(600) { i -> store.putReport("c", "$i", 1, played = false, at = 100L + i) }
+        assertEquals(512, store.recentReports(1000).size)
+    }
+
     @Test fun `items keep their work key and what an earlier detail fetch stored`() = runBlocking {
         store.putDetail("a", movie("1", "Inception").copy(people = listOf(PersonDto("p1", "Leonardo DiCaprio", "Cobb", "Actor"))))
         store.putItems("a", listOf(movie("1", "Inception")))

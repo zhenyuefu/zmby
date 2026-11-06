@@ -31,6 +31,9 @@ data class CachedDetail(val ref: ServerItem, val full: Boolean, val workKey: Str
  * here pages through a library to fill the cache. All calls suspend and run on Room's executors;
  * decoding runs on [Dispatchers.Default].
  */
+/** How many of this box's progress reports the store keeps. */
+private const val REPORTS_KEPT = 512
+
 class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock: () -> Long = System::currentTimeMillis) {
     private val works = db.works()
     private val lists = db.lists()
@@ -218,6 +221,18 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
         works.upsertInstances(listOf(row.copy(itemJson = json.encodeToString(BaseItemDto.serializer(), item.copy(userData = data)))))
     }
 
+    private val reports = db.progressReports()
+
+    /** This box's newest report for a copy (stop report, 标记为已观看); kept across restarts. */
+    suspend fun putReport(server: String, itemId: String, positionTicks: Long, played: Boolean, at: Long = clock()) {
+        reports.put(ProgressReportRow(server, itemId, if (played) 0 else positionTicks, played, at))
+        reports.prune(REPORTS_KEPT)
+    }
+
+    /** The newest [limit] reports by [app.zmby.data.ServerItem.key], oldest first. */
+    suspend fun recentReports(limit: Int): Map<String, app.zmby.emby.UserItemData> =
+        reports.recent(limit).asReversed().associate { it.key to it.userData() }
+
     /** 在看 移除: the resume point is gone, the last played date (the work's activity) stays. */
     suspend fun clearProgress(server: String, itemId: String) {
         val row = works.instance(server, itemId) ?: return
@@ -293,6 +308,7 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
             lists.deleteItemsLike(prefix)
         }
         versionDao.deleteServer(server)
+        db.repoCache().deleteServer(server)
         db.playHistory().deleteServer(server)
         db.episodeMappings().deleteServer(server)
         people.deleteServerAliases(server)

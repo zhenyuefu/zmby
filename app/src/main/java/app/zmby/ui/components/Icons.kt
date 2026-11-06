@@ -71,6 +71,13 @@ enum class Glyph(val path: String, val filled: Boolean = false) {
     Phone("M9.5 2.5h5A2.5 2.5 0 0 1 17 5v14a2.5 2.5 0 0 1-2.5 2.5h-5A2.5 2.5 0 0 1 7 19V5a2.5 2.5 0 0 1 2.5-2.5zM11 18.5h2"),
     // A picked-up row in a ranked list (SettingsQuality.dc.html).
     Reorder("M8 9l4-4 4 4M8 15l4 4 4-4"),
+    // Rating badges (ratings design): single-colour silhouettes drawn for zmby, not the services' logos.
+    // Tomatometer fresh: a tomato under its calyx; rotten: a splat.
+    Tomato("M12 8c4.7 0 8.5 3 8.5 6.8S16.7 21.5 12 21.5 3.5 18.6 3.5 14.8 7.3 8 12 8zM12 2.2l.9 2.6 2.8-.8-1.6 2.2 2.4 1.2-3.4.1L12 7.6l-1.1-1.1-3.4-.1 2.4-1.2L8.3 4l2.8.8z", filled = true),
+    Splat("M12 3l1.8 4.2 4-2.4-.9 4.5 4.6.5-3.6 2.9 3.4 3.2-4.6.2.9 4.6-4-2.4-1.6 4.3-1.7-4.3-4 2.4.9-4.6-4.6-.2 3.4-3.2L2.5 9.8l4.6-.5-.9-4.5 4 2.4z", filled = true),
+    // Popcornmeter positive: a full bucket of three slats; negative: the bucket tipped over.
+    Popcorn("M5.5 11h3.6l.7 10.5H7.2zM10.3 11h3.4l-.3 10.5h-2.8zM14.9 11h3.6l-1.7 10.5h-2.6zM5 10.3a2.6 2.6 0 0 1 2.3-4 3 3 0 0 1 4.7-2.3 3 3 0 0 1 4.7 2.3 2.6 2.6 0 0 1 2.3 4z", filled = true),
+    PopcornSpilled("M2 10.5L14 7v4.27L2 12.43zM2 13.03l12-1.16v4.26L2 14.97zM2 15.57l12 1.16V21L2 17.5zM15.8 9.5a1.7 1.7 0 1 0 3.4 0a1.7 1.7 0 1 0-3.4 0zM18.9 13.5a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0zM16 17a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0zM19.7 19.6a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0-2.6 0z", filled = true),
 }
 
 private val parsed = HashMap<Glyph, Path>()

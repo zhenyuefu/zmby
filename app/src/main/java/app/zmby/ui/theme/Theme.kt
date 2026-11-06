@@ -126,7 +126,7 @@ fun ZmbyTheme(content: @Composable () -> Unit) {
             // No colour here: Text falls back to LocalContentColor, which buttons flip when focused.
             LocalTextStyle provides TextStyle(fontSize = 22.sp),
         ) {
-            Box(Modifier.fillMaxSize().background(Z.bg)) { content() }
+            Box(Modifier.fillMaxSize().then(if ("rootbg" in app.zmby.Diagnostics.drawOff) Modifier else Modifier.background(Z.bg))) { content() }
         }
     }
 }

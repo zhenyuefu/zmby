@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.zmby.media.visibleText
 import app.zmby.media.UNTITLED
 import androidx.compose.foundation.layout.Arrangement
@@ -14,8 +15,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import app.zmby.data.SourceFeature
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,8 +43,12 @@ import app.zmby.zmby
 @Composable
 internal fun FavoritesGrid(nav: Nav, search: FocusRequester, entry: FocusRequester) {
     val app = LocalContext.current.zmby
-    val favorites by app.favorites.items.collectAsState()
-    val servers by app.registry.servers.collectAsState()
+    val favorites by app.favorites.items.collectAsStateWithLifecycle()
+    val faces = app.cardFaces.version.collectAsStateWithLifecycle()
+    val servers by app.registry.servers.collectAsStateWithLifecycle()
+    // 收藏数据来源's order picks the copy a card shows and opens (统一数据层 · 每项来源的优先级).
+    val sourceRows by app.sources.rows.collectAsStateWithLifecycle()
+    val order = remember(sourceRows, servers) { app.sources.order(SourceFeature.Favorites) }
     LaunchedEffect(Unit) { app.favorites.pull() }
     Column(Modifier.fillMaxSize()) {
     PageHeader("收藏", favorites.size.takeIf { it > 0 }?.let { "$it 部" }, search) { nav.go(Route.Search) }
@@ -61,14 +67,15 @@ internal fun FavoritesGrid(nav: Nav, search: FocusRequester, entry: FocusRequest
     ) {
         itemsIndexed(favorites, key = { _, f -> f.workKey }, contentType = { _, _ -> "poster" }) { i, f ->
             // Shown from the first instance on a server that is on and reachable; offline instances stay listed.
-            val usable = f.instances.sortedBy { i -> servers.firstOrNull { it.id == i.server }?.let { if (it.enabled && it.health != Health.Off) it.order else 1000 + it.order } ?: 9999 }
+            val usable = f.instances.sortedBy { i -> servers.firstOrNull { it.id == i.server }?.let { val o = order[it.id] ?: it.order; if (it.enabled && it.health != Health.Off) o else 1000 + o } ?: 9999 }
                 .firstOrNull { i -> servers.any { it.id == i.server } }
             val catalog = f.instances.firstOrNull { it.server == "catalog" }
             val count = f.instances.count { it.server != "catalog" }
             val ref = (usable ?: catalog)?.let { ServerItem(it.server, favoriteItem(f, it.itemId)) }
+            val face = remember(faces.value, ref?.server, f.workKey) { ref?.let { app.cardFaces.faceOfWork(it.server, f.workKey) } }
             PosterCard2x3(
-                imageUrl = if (catalog != null && f.imageTag?.startsWith("https://") == true) f.imageTag else ref?.let { app.library.primaryImage(it) },
-                title = visibleText(f.title) ?: UNTITLED,
+                imageUrl = face?.poster ?: if (catalog != null && f.imageTag?.startsWith("https://") == true) f.imageTag else ref?.let { app.library.primaryImage(it) },
+                title = visibleText(face?.title ?: f.title) ?: UNTITLED,
                 onClick = { if (ref != null) nav.open(ref) },
                 topEnd = if (count > 1) "$count 个版本" else null,
                 subtitle = listOfNotNull(if (f.type == "Series") "剧集" else "电影", f.year?.toString()).joinToString(" · "),

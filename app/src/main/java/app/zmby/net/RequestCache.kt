@@ -49,6 +49,11 @@ class RequestCache<K, V>(
         entries[key]?.let { it.generation++; it.cached = null }
     }
 
+    /** Drops every cached answer whose key matches [predicate]; work in flight is not stored afterwards. */
+    fun invalidateWhere(predicate: (K) -> Boolean) = synchronized(guard) {
+        entries.forEach { (k, e) -> if (predicate(k)) { e.generation++; e.cached = null } }
+    }
+
     fun clear() = synchronized(guard) {
         entries.values.forEach { it.generation++; it.cached = null }
         entries.entries.removeAll { it.value.users == 0 }

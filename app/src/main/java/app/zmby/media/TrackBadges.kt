@@ -95,9 +95,11 @@ object TrackFacts {
 }
 
 /**
- * Badges under a version row: HDR format, every distinct audio format (default track first, at most
- * three plus an overflow count), 国语 · 粤语 · 中文 audio, then the Chinese subtitles (简中, 繁中,
- * 简繁 or 中字), 双语 and 特效.
+ * Badges under a version row (2026-11-05 user request: fewer, merged badges): HDR format; the audio
+ * formats of the best tier only, each with its channel layout (「DDP 5.1」 hides 「AAC 2.0」; formats of
+ * one tier all show, default track first, at most three plus an overflow count); one Chinese audio
+ * badge (国语, or 中文 when no track says Mandarin) and 粤语; then the Chinese subtitle script (简中,
+ * 繁中, 简繁 or 中字) and the better one of 特效 and 双语.
  * An unprobed file shows its container only.
  */
 fun versionBadges(source: MediaSourceInfo): List<String> {
@@ -106,16 +108,54 @@ fun versionBadges(source: MediaSourceInfo): List<String> {
     hdrBadge(source.videoStream)?.let { out += it }
     val default = defaultAudio(source)
     val audio = (listOfNotNull(default) + source.audioStreams.filter { it !== default })
-    val formats = audio.mapNotNull(::audioFormat).distinct()
+    val formats = audioBadges(audio)
     out += formats.take(MAX_AUDIO_FORMATS)
     if (formats.size > MAX_AUDIO_FORMATS) out += "+${formats.size - MAX_AUDIO_FORMATS}"
-    out += audio.mapNotNull(TrackFacts::audioLanguage).distinct().sortedBy { listOf("国语", "粤语", "中文").indexOf(it) }
+    out += audioLanguageBadges(audio)
     out += subtitleBadges(source.subtitleStreams)
     return out
 }
 
 private const val MAX_AUDIO_FORMATS = 3
 
+/**
+ * Audio format tiers for the version badges, best first: object-based lossless, lossless, lossy
+ * Atmos, DTS-HD HRA, DDP and DTS, AC3, the common stereo codecs, anything else.
+ */
+internal fun audioTier(format: String): Int = when (format) {
+    "TrueHD Atmos", "DTS:X" -> 0
+    "TrueHD", "DTS-HD MA", "LPCM", "FLAC" -> 1
+    "DDP Atmos" -> 2
+    "DTS-HD HRA" -> 3
+    "DDP", "DTS" -> 4
+    "AC3" -> 5
+    "AAC", "Opus", "MP3" -> 6
+    else -> 7
+}
+
+/** 「7.1」 → 8, 「5.1.2」 → 8, 「10ch」 → 10: for keeping the widest layout of one format. */
+private fun channelWeight(label: String): Int =
+    label.removeSuffix("ch").split('.').sumOf { it.toIntOrNull() ?: 0 }
+
+/** The best tier's formats in track order ([audio] has the default first), each with its widest layout. */
+internal fun audioBadges(audio: List<MediaStream>): List<String> {
+    val tracks = audio.mapNotNull { a -> audioFormat(a)?.let { it to channelLabel(a) } }
+    val best = tracks.minOfOrNull { audioTier(it.first) } ?: return emptyList()
+    return tracks.filter { audioTier(it.first) == best }
+        .groupBy({ it.first }, { it.second })
+        .map { (format, layouts) -> listOfNotNull(format, layouts.filterNotNull().maxByOrNull(::channelWeight)).joinToString(" ") }
+}
+
+/** 国语 and generic 中文 read the same on a badge: one of them (国语 when a track says so), then 粤语. */
+internal fun audioLanguageBadges(audio: List<MediaStream>): List<String> {
+    val languages = audio.mapNotNull(TrackFacts::audioLanguage).toSet()
+    return listOfNotNull(
+        when { "国语" in languages -> "国语"; "中文" in languages -> "中文"; else -> null },
+        "粤语".takeIf { it in languages },
+    )
+}
+
+/** The Chinese script across all subtitles, then 特效 or else 双语 (never both). */
 internal fun subtitleBadges(subs: List<MediaStream>): List<String> {
     val chinese = subs.filter(TrackFacts::isChinese)
     val out = mutableListOf<String>()
@@ -128,8 +168,10 @@ internal fun subtitleBadges(subs: List<MediaStream>): List<String> {
             else -> "中字"
         }
     }
-    if (subs.any(TrackFacts::bilingual)) out += "双语"
-    if (subs.any(TrackFacts::effects)) out += "特效"
+    when {
+        subs.any(TrackFacts::effects) -> out += "特效"
+        subs.any(TrackFacts::bilingual) -> out += "双语"
+    }
     return out
 }
 

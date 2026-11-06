@@ -136,6 +136,22 @@ class CatalogRepositoryTest {
         }
     }
 
+    @Test fun `the other catalogue's entry comes from explicit IDs without a title search`() = runBlocking {
+        MockWebServer().use { server ->
+            val cache = MemoryCache()
+            val api = CatalogHttp(OkHttpClient(), cache, { "test-token" }, server.url("/3/").toString())
+            val repo = CatalogRepository(api, cache, { "zh-CN" }, { "zh-CN" }, { "zh-CN" }, { false })
+            val copy = app.zmby.emby.BaseItemDto("x", name = "芙莉莲", type = "Series", providerIds = mapOf("Tmdb" to "209867", "Bangumi" to "400602"))
+            val tmdb = CatalogWork(CatalogId("tmdb", "tv", "209867"), "葬送的芙莉莲", genres = listOf("动画"))
+            assertEquals(CatalogId("bangumi", "tv", "400602"), repo.companion(tmdb, listOf(copy)))
+            val bgm = CatalogWork(CatalogId("bangumi", "tv", "400602"), "葬送的芙莉莲")
+            assertEquals(CatalogId("tmdb", "tv", "209867"), repo.companion(bgm, listOf(copy)))
+            // No IDs and aliases off: nothing, and nothing asked.
+            assertNull(repo.companion(tmdb, listOf(copy.copy(providerIds = emptyMap()))))
+            assertEquals(0, server.requestCount)
+        }
+    }
+
     private class MemoryCache : CatalogStorage {
         val rows = mutableMapOf<String, CatalogCache>()
         override suspend fun get(key: String) = rows[key]

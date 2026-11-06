@@ -9,12 +9,15 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.IOException
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ResourceCacheTest {
     @Test fun `returning two hours later reuses versions and a transient source failure is retried`() = runTest {
         var now = 0L
@@ -105,10 +108,24 @@ class ResourceCacheTest {
         book.cooling = true
         assertTrue(fan.run(listOf("a"), 1000, "resources", 5000) { "wrong" }.toList().single() is Outcome.Skipped)
         book.cooling = false
-        assertNull(withTimeoutOrNull(20) { fan.run(listOf("a"), 1000, "resources", 5000) { delay(100); "late" }.toList() })
         val result = fan.run(listOf("a"), 1000, "resources", 5000) { "recovered" }.toList().single()
         assertEquals("recovered", (result as Outcome.Ok).value)
         assertEquals(1, book.failures)
+    }
+
+    @Test fun `a cached lookup left by its screen is joined by the same query asked again, else cancelled`() = runTest {
+        val fan = FanOut(Book(), scope = backgroundScope)
+        var calls = 0
+        var cancelled = 0
+        val call: suspend (String) -> String = { calls++; try { delay(1_000); "answer" } catch (e: kotlinx.coroutines.CancellationException) { cancelled++; throw e } }
+        // The screen's effect restarts while the answer is on its way: one request, not two.
+        assertNull(withTimeoutOrNull(20) { fan.run(listOf("a"), 5000, "versions", 5000, call = call).toList() })
+        assertEquals("answer", (fan.run(listOf("a"), 5000, "versions", 5000, call = call).toList().single() as Outcome.Ok).value)
+        assertEquals(1, calls)
+        // Nobody asks again: the request stops once the grace has passed.
+        assertNull(withTimeoutOrNull(20) { fan.run(listOf("b"), 5000, "slow", 5000) { calls++; try { delay(10_000); "x" } catch (e: kotlinx.coroutines.CancellationException) { cancelled++; throw e } }.toList() })
+        advanceTimeBy(FanOut.ORPHAN_GRACE_MS + 10); runCurrent()
+        assertEquals(1, cancelled)
     }
 
     @Test fun `transient transport and gateway failures retry once without poisoning health`() = runTest {

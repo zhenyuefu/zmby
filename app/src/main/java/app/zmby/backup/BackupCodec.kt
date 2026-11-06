@@ -15,12 +15,23 @@ import javax.crypto.spec.SecretKeySpec
 @Serializable
 data class BackupOptions(val accounts: Boolean = true, val tokens: Boolean = true, val serverSettings: Boolean = true, val appSettings: Boolean = false)
 @Serializable
-data class BackupServer(val config: ServerConfig, val homeOff: List<String> = emptyList(), val searchOff: List<String> = emptyList(), val relay: String = "Auto", val pinyin: String = "Auto", val sources: Map<String,Boolean> = emptyMap())
+data class BackupServer(
+    val config: ServerConfig, val homeOff: List<String> = emptyList(), val searchOff: List<String> = emptyList(), val relay: String = "Auto", val pinyin: String = "Auto",
+    val sources: Map<String,Boolean> = emptyMap(),
+    /** This server's place (from 1) in each feature sorted by hand ([BackupContent.sortedFeatures]); older backups have none. */
+    val sourceOrder: Map<String,Int> = emptyMap(),
+)
 @Serializable
 data class BackupProvider(val key: String, val enabled: Boolean, val order: Int)
 
 @Serializable
-data class BackupContent(val servers: List<BackupServer>, val settings: JsonObject = JsonObject(emptyMap()), val options: BackupOptions = BackupOptions(), val providers: List<BackupProvider> = emptyList())
+data class BackupContent(
+    val servers: List<BackupServer>, val settings: JsonObject = JsonObject(emptyMap()), val options: BackupOptions = BackupOptions(), val providers: List<BackupProvider> = emptyList(),
+    /** Data source features whose servers were sorted by hand; the rest follow the server page's order (also for older backups). */
+    val sortedFeatures: List<String> = emptyList(),
+    /** 影片信息来源's catalogue members (TMDB, Bangumi): switch and place in its mixed order. */
+    val metadataCatalogs: List<BackupProvider> = emptyList(),
+)
 @Serializable
 data class BackupHeader(val format: String = "zmby-backup", val version: Int = 1, val createdAt: Long, val device: String, val serverCount: Int, val parts: BackupOptions)
 @Serializable

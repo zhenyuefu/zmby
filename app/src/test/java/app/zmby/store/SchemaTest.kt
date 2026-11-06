@@ -112,6 +112,30 @@ class SchemaTest {
         }
     }
 
+    @Test fun `version 7 upgrade adds progress reports and keeps sessions and lists`() {
+        helper.createDatabase("schema-v7-reports.db", 7).use { db ->
+            db.execSQL("INSERT INTO favorite (work_key, title, year, type, added_at, updated_at, removed_at, image_tag) VALUES ('series:tmdb:10', 'Keep', 2024, 'Series', 1, 1, NULL, NULL)")
+            db.execSQL("INSERT INTO play_session (server_id, item_id, type, work_key, genres, started_at, ended_at, watched_ms, spans, start_position_ms, completed, open) VALUES ('a', '1', 'Movie', 'movie:tmdb:1', '', 10, 70, 60, '0+60', 0, 0, 0)")
+        }
+        helper.runMigrationsAndValidate("schema-v7-reports.db", 8, true, ZmbyDatabase.MIGRATION_7_8).use { db ->
+            db.query("SELECT title FROM favorite").use { it.moveToFirst(); assertEquals("Keep", it.getString(0)) }
+            db.query("SELECT watched_ms FROM play_session").use { it.moveToFirst(); assertEquals(60L, it.getLong(0)) }
+            db.execSQL("INSERT INTO progress_report (server_id, item_id, position_ticks, played, played_at) VALUES ('a', '1', 600000000, 0, 99)")
+            db.query("SELECT position_ticks FROM progress_report").use { it.moveToFirst(); assertEquals(600000000L, it.getLong(0)) }
+        }
+    }
+
+    @Test fun `version 8 upgrade adds stored server answers and keeps progress reports`() {
+        helper.createDatabase("schema-v8-cache.db", 8).use { db ->
+            db.execSQL("INSERT INTO progress_report (server_id, item_id, position_ticks, played, played_at) VALUES ('a', '1', 5, 0, 9)")
+        }
+        helper.runMigrationsAndValidate("schema-v8-cache.db", 9, true, ZmbyDatabase.MIGRATION_8_9).use { db ->
+            db.query("SELECT played_at FROM progress_report").use { it.moveToFirst(); assertEquals(9L, it.getLong(0)) }
+            db.execSQL("INSERT INTO repo_cache (kind, cache_key, server_id, json, fetched_at) VALUES ('versions', 'k', 'a', '{}', 1)")
+            db.query("SELECT json FROM repo_cache").use { it.moveToFirst(); assertEquals("{}", it.getString(0)) }
+        }
+    }
+
     @Test fun `sessions record, checkpoint, finish and close what a crash left open`() {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), ZmbyDatabase::class.java).allowMainThreadQueries().build()
         runBlocking {

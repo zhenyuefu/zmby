@@ -24,6 +24,16 @@ class BackupCodecTest {
         assertFails { BackupCodec.decode(encoded.replace("310000","1"),password) }
     }
 
+    @Test fun `each feature's own server order survives a backup and older backups fall back to the server order`() {
+        val sorted = content.copy(servers = listOf(content.servers.single().copy(sourceOrder = mapOf("search" to 2))), sortedFeatures = listOf("search"))
+        val back = BackupCodec.decode(BackupCodec.encode(sorted, BackupOptions(), password, "TV"), password)
+        assertEquals(listOf("search"), back.sortedFeatures)
+        assertEquals(mapOf("search" to 2), back.servers.single().sourceOrder)
+        val older = BackupCodec.json.decodeFromString(BackupContent.serializer(), """{"servers":[{"config":${BackupCodec.json.encodeToString(ServerConfig.serializer(), server)}}]}""")
+        assertEquals(emptyList<String>(), older.sortedFeatures)
+        assertEquals(emptyMap<String, Int>(), older.servers.single().sourceOrder)
+    }
+
     @Test fun `tokens require eight characters and unencrypted export strips credentials`() {
         assertFails { BackupCodec.encode(content,BackupOptions(),"short","TV") }
         val encoded = BackupCodec.encode(content,BackupOptions(accounts = false,tokens = false,serverSettings = false),"","TV")

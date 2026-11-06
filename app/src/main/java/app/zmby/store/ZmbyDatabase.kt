@@ -19,9 +19,9 @@ import androidx.room.migration.Migration
         VersionSummary::class, ListCache::class, ListItem::class,
         FavoriteRow::class, FavoriteInstanceRow::class, FavoriteWriteRow::class, WatchlistRow::class,
         SegmentMarker::class, DataSourceRow::class, SyncState::class, PlayHistoryRow::class, app.zmby.catalog.CatalogCache::class,
-        EpisodeMappingRule::class, WatchingHiddenRow::class, PlaySessionRow::class,
+        EpisodeMappingRule::class, WatchingHiddenRow::class, PlaySessionRow::class, ProgressReportRow::class, RepoCacheRow::class,
     ],
-    version = 7,
+    version = 9,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -38,6 +38,8 @@ abstract class ZmbyDatabase : RoomDatabase() {
     abstract fun episodeMappings(): EpisodeMappingDao
     abstract fun watchingHidden(): WatchingHiddenDao
     abstract fun playSessions(): PlaySessionDao
+    abstract fun progressReports(): ProgressReportDao
+    abstract fun repoCache(): RepoCacheDao
 
     companion object {
         const val NAME = "zmby.db"
@@ -104,7 +106,24 @@ abstract class ZmbyDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+        /** 8: this box's progress reports survive a restart (统一数据层 · 观看进度). As in app/schemas/…/8.json. */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `progress_report` (`server_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, `position_ticks` INTEGER NOT NULL, `played` INTEGER NOT NULL, `played_at` INTEGER NOT NULL, PRIMARY KEY(`server_id`, `item_id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_progress_report_played_at` ON `progress_report` (`played_at`)")
+            }
+        }
+
+        /** 9: server answers under the in-memory request sharing (统一数据层 ①③). As in app/schemas/…/9.json. */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `repo_cache` (`kind` TEXT NOT NULL, `cache_key` TEXT NOT NULL, `server_id` TEXT NOT NULL, `json` TEXT NOT NULL, `fetched_at` INTEGER NOT NULL, PRIMARY KEY(`kind`, `cache_key`, `server_id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_repo_cache_fetched_at` ON `repo_cache` (`fetched_at`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_repo_cache_server_id` ON `repo_cache` (`server_id`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
 
         fun open(context: Context): ZmbyDatabase =
             Room.databaseBuilder(context, ZmbyDatabase::class.java, NAME)

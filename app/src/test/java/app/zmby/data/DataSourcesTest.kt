@@ -26,6 +26,36 @@ class DataSourcesTest {
         assertEquals(listOf("a", "b"), SourceRules.scope(rows, SourceFeature.Metadata, registry.all))
     }
 
+    @Test fun `a feature follows the server order until sorted, then keeps its own and puts new servers last`() {
+        val registry = ServerRegistry(MemoryRegistryStore(listOf(config("a"), config("b"), config("c"))))
+        var rows = emptyMap<String, DataSourceRow>()
+        assertEquals(listOf("a", "b", "c"), SourceRules.scope(rows, SourceFeature.Search, registry.all))
+        assertFalse(SourceRules.custom(rows, SourceFeature.Search))
+        rows = rows + SourceRules.moveServer(rows, SourceFeature.Search, registry.all, "c", -1).associateBy { SourceRules.rowKey(it.feature, it.source) }
+        rows = rows + SourceRules.moveServer(rows, SourceFeature.Search, registry.all, "c", -1).associateBy { SourceRules.rowKey(it.feature, it.source) }
+        assertTrue(SourceRules.custom(rows, SourceFeature.Search))
+        assertEquals(listOf("c", "a", "b"), SourceRules.scope(rows, SourceFeature.Search, registry.all))
+        assertEquals(mapOf("c" to 0, "a" to 1, "b" to 2), SourceRules.order(rows, SourceFeature.Search, registry.all))
+        // Other features are untouched.
+        assertEquals(listOf("a", "b", "c"), SourceRules.scope(rows, SourceFeature.Aggregate, registry.all))
+        // A server added later goes last; switching a server off keeps its place; 恢复为服务器顺序 follows the server page.
+        val more = ServerRegistry(MemoryRegistryStore(listOf(config("d"), config("a"), config("b"), config("c"))))
+        assertEquals(listOf("c", "a", "b", "d"), SourceRules.scope(rows, SourceFeature.Search, more.all))
+        rows = rows + listOf(DataSourceRow(SourceFeature.Search.key, "a", false, rows.getValue(SourceRules.rowKey("search", "a")).ord)).associateBy { SourceRules.rowKey(it.feature, it.source) }
+        assertEquals(listOf("c", "a", "b"), SourceRules.ordered(rows, SourceFeature.Search, registry.all).map { it.id })
+        assertEquals(listOf("c", "b"), SourceRules.scope(rows, SourceFeature.Search, registry.all))
+        rows = rows + listOf(DataSourceRow(SourceFeature.Search.key, SourceRules.ORDER_MARK, false)).associateBy { SourceRules.rowKey(it.feature, it.source) }
+        assertEquals(listOf("b", "c"), SourceRules.scope(rows, SourceFeature.Search, registry.all))
+    }
+
+    @Test fun `moving keeps each server's switch and ignores a move past either end`() {
+        val registry = ServerRegistry(MemoryRegistryStore(listOf(config("a"), config("b"))))
+        val rows = listOf(DataSourceRow(SourceFeature.Aggregate.key, "b", enabled = false)).associateBy { SourceRules.rowKey(it.feature, it.source) }
+        val moved = SourceRules.moveServer(rows, SourceFeature.Aggregate, registry.all, "a", -1)
+        assertEquals(listOf("a" to 1, "b" to 2), moved.filter { it.source != SourceRules.ORDER_MARK }.map { it.source to it.ord })
+        assertFalse(moved.first { it.source == "b" }.enabled)
+    }
+
     @Test fun `观看进度回写 is off for every server until switched on there`() {
         val registry = ServerRegistry(MemoryRegistryStore(listOf(config("a"), config("b"))))
         assertEquals(emptyList<String>(), SourceRules.scope(emptyMap(), SourceFeature.WatchSync, registry.all))
@@ -33,6 +63,14 @@ class DataSourcesTest {
         assertEquals(listOf("b"), SourceRules.scope(rows, SourceFeature.WatchSync, registry.all))
         assertFalse(SourceRules.enabled(rows, SourceFeature.WatchSync, "a"))
         assertTrue("other features stay on by default", SourceRules.enabled(rows, SourceFeature.WatchHistory, "a"))
+    }
+
+    @Test fun `a server hidden from 首页与影视 leaves home and browsing but stays in search`() {
+        val registry = ServerRegistry(MemoryRegistryStore(listOf(config("a"), config("tmdb"))))
+        assertEquals(listOf("a", "tmdb"), SourceRules.scope(emptyMap(), SourceFeature.Browse, registry.all))
+        val rows = listOf(DataSourceRow(SourceFeature.Browse.key, "tmdb", enabled = false)).associateBy { SourceRules.rowKey(it.feature, it.source) }
+        assertEquals(listOf("a"), SourceRules.scope(rows, SourceFeature.Browse, registry.all))
+        assertEquals(listOf("a", "tmdb"), SourceRules.scope(rows, SourceFeature.Search, registry.all))
     }
 
     @Test fun `the old 允许聚合 switch carries over to aggregation, search and watch history`() {

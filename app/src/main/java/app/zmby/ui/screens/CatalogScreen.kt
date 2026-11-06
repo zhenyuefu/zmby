@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -38,7 +39,7 @@ internal fun CatalogRelated(nav: Nav, entry: CatalogWork?, fallback: ServerItem?
     val app = LocalContext.current.zmby
     val scope = rememberCoroutineScope()
     if (work.ref.source == "tmdb") {
-        val aliases by app.settings.animeAliases.flow.collectAsState()
+        val aliases by app.settings.animeAliases.flow.collectAsStateWithLifecycle()
         val related by produceState<CatalogId?>(null, work.ref, aliases) {
             if (aliases && work.genres.any { it in setOf("动画", "動畫", "Animation", "アニメーション", "애니메이션") }) withContext(Dispatchers.IO) {
                 try {
@@ -95,7 +96,7 @@ internal fun CatalogCards(nav: Nav, works: List<CatalogWork>, title: String, fal
 @Composable
 fun CatalogPersonScreen(nav: Nav, source: String, id: String) {
     val app = LocalContext.current.zmby
-    val language by app.settings.metadataLanguage.flow.collectAsState()
+    val language by app.settings.metadataLanguage.flow.collectAsStateWithLifecycle()
     var retry by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     val data by produceState<CatalogBiography?>(null, source, id, language, retry) {
@@ -164,9 +165,9 @@ internal fun ServerCast(nav: Nav, ref: ServerItem) {
 @Composable
 private fun CatalogPoster(nav: Nav, brief: CatalogWork, fallback: ServerItem?, modifier: Modifier = Modifier) {
     val app = LocalContext.current.zmby
-    val text by app.settings.metadataLanguage.flow.collectAsState()
-    val poster by app.settings.posterLanguage.flow.collectAsState()
-    val logo by app.settings.logoLanguage.flow.collectAsState()
+    val text by app.settings.metadataLanguage.flow.collectAsStateWithLifecycle()
+    val poster by app.settings.posterLanguage.flow.collectAsStateWithLifecycle()
+    val logo by app.settings.logoLanguage.flow.collectAsStateWithLifecycle()
     val full by produceState(brief, brief.ref, listOf(text, poster, logo)) {
         withContext(Dispatchers.IO) {
             value = app.catalog.cached(brief.ref) ?: brief

@@ -1,5 +1,6 @@
 package app.zmby.ui.components
 
+import app.zmby.Diagnostics
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
@@ -80,6 +81,7 @@ fun Focusable(
                     memory.restored = true
                     memory.restorePending = false
                     ZLog.d("Focus", "restored $focusKey")
+                    Diagnostics.afterBack("focus", "restored")
                 }
             }
         }

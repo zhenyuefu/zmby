@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import app.zmby.TraceRecomposition
 import app.zmby.ui.userMessage
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,7 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -104,6 +105,7 @@ import app.zmby.ui.theme.defaultScrollSpec
 import app.zmby.zidoo.ZidooIntents
 import app.zmby.zidoo.ZidooTracks
 import app.zmby.zmby
+import app.zmby.ui.components.rememberTrailerPlayer
 import kotlinx.coroutines.launch
 import app.zmby.aggregate.Keys
 import app.zmby.aggregate.tmdb
@@ -116,85 +118,87 @@ import androidx.compose.ui.focus.onFocusChanged
 
 @Composable
 fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean = false, provider: app.zmby.catalog.CatalogId? = null) {
+    TraceRecomposition("Detail.root")
     val context = LocalContext.current
     val app = context.zmby
     val library = app.library
     val tick = rememberResumeTick()
     // Local first: the cached item shows at once; canonical metadata replaces its fields in place.
-    val vm = screenModel("detail:$server:$itemId") { DetailViewModel(app, server, itemId, provider, resourceOnly) }
-    val languages by app.settings.metadataLanguage.flow.collectAsState()
-    val posters by app.settings.posterLanguage.flow.collectAsState()
-    val logos by app.settings.logoLanguage.flow.collectAsState()
-    val token by app.settings.tmdbToken.flow.collectAsState()
-    LaunchedEffect(tick, languages, posters, logos, token) { vm.refresh(replace = true) }
-    val providerWork by vm.catalog.collectAsStateWithLifecycle()
-    val canonical = providerWork?.takeIf { vm.catalogLanguageKey == listOf(languages,posters,logos,token) }
+    val vm = screenModel("detail:$server:$itemId") { MovieDetailViewModel(app, server, itemId, provider, resourceOnly) }
+    val languages by app.settings.metadataLanguage.flow.collectAsStateWithLifecycle()
+    val posters by app.settings.posterLanguage.flow.collectAsStateWithLifecycle()
+    val logos by app.settings.logoLanguage.flow.collectAsStateWithLifecycle()
+    val token by app.settings.tmdbToken.flow.collectAsStateWithLifecycle()
+    LaunchedEffect(tick, languages, posters, logos, token) { vm.refresh(replace = true, force = tick > 0) }
+    LaunchedEffect(tick) { vm.tick.value = tick }
+    val canonical = vm.canonical.collectAsStateWithLifecycle().value
     val lookup by vm.lookup.collectAsStateWithLifecycle()
     val fallbackReady by vm.fallbackReady.collectAsStateWithLifecycle()
     val cached by vm.detail.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
-    val cachedVersions by vm.cachedVersions.collectAsStateWithLifecycle()
+    // Versions live in the ViewModel and only the sections showing them read them (R4); the page needs
+    // to know whether there is anything to show and the other servers' copies (for 为你推荐).
+    val versionsShown by vm.versionsShown.collectAsStateWithLifecycle()
+    val hasPlayable by vm.hasPlayable.collectAsStateWithLifecycle()
+    val instances by vm.instances.collectAsStateWithLifecycle()
     val metadataItem = cached?.ref?.item ?: canonical?.item()
     val lookupWork = canonical ?: lookup
-    // Resource lookup starts as soon as the external identity is known, while metadata is loading.
-    // The key DetailScreen saves a hand pick under (OK on a version card, below).
-    val manualPick = remember(server, metadataItem?.id) { metadataItem?.let { item -> app.library.pickedVersion(Keys.work(server, item)) } }
-    val versions = when {
-        lookupWork != null -> rememberCatalogVersions(lookupWork, null, emptyList(), tick, cached?.ref, manual = manualPick)
-        metadataItem != null && server != "catalog" -> rememberVersions(server, metadataItem, cached = cachedVersions, forKey = cached?.workKey,
-            onRefresh = { vm.refresh(replace = true) })
-        else -> VersionsState(emptyList(),0,null)
-    }
     val it = metadataItem
     if (it == null || canonical == null && !fallbackReady) {
         LoadState(error, onRetry = { if(server != "catalog") app.registry.retry(server); vm.refresh() }, onServers = { nav.go(Route.Servers) })
         return
     }
     val ref = cached?.ref ?: canonical?.cardRef() ?: ServerItem("catalog", it)
-    val display = canonical?.display() ?: app.display(ref)
+    // 影片信息来源 field by field (统一数据层 ④): the page's own copy and the other servers' copies.
+    // The other catalogue's entry fills fields too (TMDB 与 Bangumi 互补); 演职人员 come from the first
+    // source in that order that has people.
+    val sourceRows by app.sources.rows.collectAsStateWithLifecycle()
+    val companion by vm.companion.collectAsStateWithLifecycle()
+    val catalogs = remember(canonical, companion) { catalogsOf(canonical, companion) }
+    val copies = remember(ref, instances) { (listOf(ref) + instances).distinctBy { c -> c.key } }
+    val display = remember(catalogs, copies, sourceRows) { MetadataMerge.display(app.sources.metadata(), catalogs, copies) { app.display(it) } }
+    val castSource = remember(catalogs, copies, sourceRows) { MetadataMerge.cast(app.sources.metadata(), catalogs, copies) }
     // OK on a version selects it (the header's play button and the cards below use it); until then
     // the copy holding the merged 在看 resume point, the last successfully played version, then
     // VersionRanker's default, is selected. While focus is on the version cards, the focused one previews its tracks.
-    var picked by remember(it.id) { mutableStateOf<Version?>(null) }
-    val merged = rememberVersionProgress(versions, tick)
-    val selected = picked?.let { p -> merged.ordered.firstOrNull { v -> v.key == p.key } } ?: merged.default
-    var preview by remember(it.id) { mutableStateOf<Version?>(null) }
-    val shown = preview ?: selected
+    val selection = remember(it.id) { EpisodeSelection() }
     // Track picks per version (Emby stream indexes); a version without a pick uses the preferences or the server's defaults.
     var picks by rememberRetained("picks", it.id) { mutableStateOf<Map<String, TrackChoice>>(emptyMap()) }
-    fun pickKey(v: Version?) = v?.key
-    fun tracksFor(v: Version?) = picks[pickKey(v)] ?: v?.let { app.playbackMemory.tracksFor(it.ref, it.source) } ?: TrackChoice()
+    fun tracksFor(v: Version?) = v?.let { picks[it.key] } ?: v?.let { app.playbackMemory.tracksFor(it.ref, it.source) } ?: TrackChoice()
+    fun playVersion(v: Version, startMs: Long, versions: VersionsState) =
+        play(context, v.ref, startMs, v.source.id, tracksFor(v), versions.alternatesTo(v), versions.copies)
     val scroll = rememberScrollState()
     val heading = rememberDetailHeading(scroll, gap = 22f)
-    val scope = rememberCoroutineScope()
     val accordion = rememberAccordion(SECTION_VERSIONS, scroll)
 
     var marking by remember { mutableStateOf<ServerItem?>(null) }
     val danmu = rememberDanmuPanel()
-    val cast = remember(canonical?.cast, ref.key, ref.item.people) {
-        if (canonical != null) catalogCastCards(nav, canonical.cast) else serverCastCards(app, nav, ref)
-    }
-    val hasVersions = it.type in setOf("Movie", "Video", "Episode") || lookupWork != null || versions.all.isNotEmpty() || versions.searching > 0 || versions.unresponsive.isNotEmpty()
+    val cast = remember(castSource) { castCards(app, nav, castSource) }
+    val hasVersions = it.type in setOf("Movie", "Video", "Episode") || lookupWork != null || versionsShown
     // 为你推荐 (ui-spec §2.14): keyed by the work's external identity when it has one.
     val tmdbId = detailRecommendationId(it, lookupWork?.ref)
     val recKey = tmdbId?.let { r -> "movie:tmdb:${r.id}" } ?: Keys.work(ref.server, ref.item)
-    val recCopies = remember(cached?.ref?.key, versions.instances.map { c -> c.key }) { (listOfNotNull(cached?.ref) + versions.instances).distinctBy { c -> c.key } }
+    val recCopies = remember(cached?.ref?.key, instances) { (listOfNotNull(cached?.ref) + instances).distinctBy { c -> c.key } }
     val recs = rememberRecommendations(recKey, recCopies, tmdbId, tick).orEmpty()
+    // 合集 (2026-11-05): the collections this film is in on its own server, at the top like a series' 剧集.
+    val collections = rememberMovieCollections(cached?.ref, tick)
+    val hasCollections by remember(collections) { derivedStateOf { collections.value.isNotEmpty() } }
     // The blocks in page order; only those with something to show (ui-spec §2.14).
-    accordion.order = listOfNotNull(
+    accordion.arrange(listOfNotNull(
+        SECTION_COLLECTION.takeIf { hasCollections },
         SECTION_VERSIONS.takeIf { hasVersions },
-        SECTION_TRACKS.takeIf { shown != null },
+        SECTION_TRACKS.takeIf { hasPlayable },
         SECTION_CAST.takeIf { cast.isNotEmpty() },
         SECTION_RECS.takeIf { recs.isNotEmpty() },
-    )
-    if (accordion.active !in accordion.order && accordion.order.isNotEmpty()) accordion.active = accordion.order.first()
+    ))
     val headerPlay = remember { FocusRequester() }
     accordion.header = headerPlay
-    val playRef = selected?.ref
-    val resume = playRef?.item?.let { resumeMsOf(it) } ?: 0L
+    // The work's IMDb trailer behind the backdrop (trailer design); released when the page pauses or leaves.
+    val trailer = rememberTrailerPlayer()
+    DetailTrailerHost(vm, trailer, heading)
     BackdropProvider(display.backdrop, rememberDetailScrims(heading)) {
       ActionFeedbackHost(Modifier.fillMaxSize()) {
-        BackdropLayer(Modifier.fillMaxSize(), blurProgress = { heading.backdropProgress })
+        BackdropLayer(Modifier.fillMaxSize(), blurProgress = { heading.backdropProgress }, trailer = trailer)
         // Section changes align the context row; inner card focus must not move the whole page.
         @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
         androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides detailPageScrollSpec) {
@@ -203,62 +207,29 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
           androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides defaultScrollSpec) {
             Column(Modifier.fillMaxWidth()) {
                 // The version that plays: its own item (another server's copy has its own resume point).
-                DetailHeader(
-                    ref,
-                    display,
-                    heading = heading,
-                    playItem = playRef?.item,
-                    watchedRef = if (ref.server == "catalog") ref.copy(item = ref.item.copy(userData = playRef?.item?.userData)) else playRef ?: ref,
-                    instances = versions.instances,
-                    onPlay = { startMs -> playRef?.let { play(context, it, startMs, selected?.source?.id, tracksFor(selected), versions.alternatesTo(selected), versions.copies) } },
-                    // Back on the header: scroll all the way up so the title shows again, not just the buttons.
-                    onFocused = { accordion.showHeader() },
-                    onMarks = { marking = playRef },
-                    danmuRef = playRef, danmu = danmu,
-                    availability = if (versions.searching > 0) "正在查找资源…" else if (versions.unresponsive.isNotEmpty()) "资源状态待确认 · 重试" else "暂无资源",
-                    onRetry = versions.retry,
-                    playRequester = headerPlay,
-                    onDown = { accordion.order.firstOrNull()?.let(accordion::open) },
-                )
+                DetailHeaderHost(vm, selection, ref, display, heading, accordion, danmu, headerPlay, ::playVersion, onMarks = { marking = it })
                 Spacer(Modifier.height(44.dp))
-                if (hasVersions) {
-                    CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), summary = {
-                        selected?.let { VersionSummary(it, tracksFor(it)) }
-                            ?: SummaryText(if (versions.searching > 0) "正在查找资源…" else "暂无可播放的版本")
-                    }) {
-                        Box(Modifier.padding(vertical = 20.dp)) {
-                            VersionSection(versions, selected, onSelect = { v ->
-                                picked = v
-                                library.rememberVersion(Keys.work(server, it), v.server.id, v.source.id)
-                            }, onPreview = { v -> preview = v }, onPlay = { card ->
-                                val v = merged.of(card)
-                                play(context, v.ref, v.item.resumeMs, v.source.id, tracksFor(v), versions.alternatesTo(v), versions.copies)
-                            }, entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
-                        }
+                if (hasCollections) {
+                    // Like 剧集, it never collapses.
+                    DetailBlock(accordion, SECTION_COLLECTION) {
+                        MovieCollectionBlock(nav, collections.value, cached?.ref?.item?.id ?: itemId, accordion.entry(SECTION_COLLECTION))
                     }
+                }
+                if (hasVersions) {
+                    DetailVersionsHost(vm, selection, accordion, ::tracksFor, ::playVersion) { v -> library.rememberVersion(Keys.work(server, it), v.server.id, v.source.id) }
                 } else {
                     Text("暂无资源", fontSize = 21.sp, color = Z.textTertiary, modifier = Modifier.padding(horizontal = 80.dp))
                 }
-                shown?.let { v ->
-                    CollapsibleSection(accordion, SECTION_TRACKS, "音轨与字幕", "${v.source.subtitleStreams.size} 条字幕", barHeight = 112.dp, summary = {
-                        TrackSummary(v, tracksFor(v))
-                    }) {
-                        Box(Modifier.padding(vertical = 20.dp)) {
-                            TrackSection(v, chapters = v.item.chapters.size, runtimeTicks = v.item.runTimeTicks, choice = tracksFor(v), entry = accordion.entry(SECTION_TRACKS), hold = holdHint(accordion.order, SECTION_TRACKS)) { c ->
-                                picks = picks + (pickKey(v)!! to c)
-                            }
-                        }
-                    }
-                }
+                if (hasPlayable) DetailTracks(vm, selection, accordion, ::tracksFor) { v, c -> picks = picks + (v.key to c) }
                 // 演职人员 (ui-spec §2.2 4), then 为你推荐 (§2.14).
                 if (cast.isNotEmpty()) {
                     DetailBlock(accordion, SECTION_CAST) {
-                        CastBlock(cast, accordion.entry(SECTION_CAST))
+                        AfterFirstFrame { CastBlock(cast, accordion.entry(SECTION_CAST)) }
                     }
                 }
                 if (recs.isNotEmpty()) {
                     DetailBlock(accordion, SECTION_RECS) {
-                        RecommendationsBlock(nav, recs, accordion.entry(SECTION_RECS))
+                        AfterFirstFrame { RecommendationsBlock(nav, recs, accordion.entry(SECTION_RECS)) }
                     }
                 }
                 CatalogRelated(nav, canonical, cached?.ref)
@@ -267,16 +238,89 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
           }
         }
         }
-        CompactHeader(
-            heading,
-            display,
-            detailMeta(it, display),
-            if (playRef == null) null else if (resume > 0) "继续播放 · ${formatClock(resume)}" else "播放",
-        )
+        DetailCompactHeader(vm, selection, heading, display, detailMeta(it, display))
         marking?.let { m -> SegmentMarksPanel(m.server, m.item, onDismiss = { marking = null }) }
         DanmuPanelHost(danmu)
       }
     }
+}
+
+@Composable
+private fun DetailHeaderHost(vm: MovieDetailViewModel, selection: EpisodeSelection, ref: ServerItem, display: DetailDisplay, heading: DetailHeadingState,
+    accordion: Accordion, danmu: DanmuPanelState, headerPlay: FocusRequester, playVersion: (Version, Long, VersionsState) -> Unit, onMarks: (ServerItem?) -> Unit) {
+    TraceRecomposition("Detail.header")
+    val view by vm.view.collectAsStateWithLifecycle()
+    val versions = view.versions
+    val selected = selection.selected(view)
+    val playRef = selected?.ref
+    DetailHeader(
+        ref,
+        display,
+        heading = heading,
+        playItem = playRef?.item,
+        watchedRef = if (ref.server == "catalog") ref.copy(item = ref.item.copy(userData = playRef?.item?.userData)) else playRef ?: ref,
+        instances = versions.instances,
+        onPlay = { startMs -> selected?.let { playVersion(it, startMs, versions) } },
+        // Back on the header: scroll all the way up so the title shows again, not just the buttons.
+        onFocused = { accordion.showHeader() },
+        onMarks = { onMarks(playRef) },
+        danmuRef = playRef, danmu = danmu,
+        availability = if (versions.searching > 0) "正在查找资源…" else if (versions.unresponsive.isNotEmpty()) "资源状态待确认 · 重试" else "暂无资源",
+        onRetry = versions.retry,
+        playRequester = headerPlay,
+        onDown = { accordion.order.firstOrNull()?.let(accordion::open) },
+    )
+}
+
+@Composable
+private fun DetailVersionsHost(vm: MovieDetailViewModel, selection: EpisodeSelection, accordion: Accordion, tracksFor: (Version?) -> TrackChoice,
+    playVersion: (Version, Long, VersionsState) -> Unit, onPicked: (Version) -> Unit) {
+    TraceRecomposition("Detail.versions")
+    val view by vm.view.collectAsStateWithLifecycle()
+    val versions = view.versions
+    val selected = selection.selected(view)
+    // The hidden version cards catch up once the servers' answers settle (rememberSettled).
+    val full = rememberSettled(view, accordion.isExpanded(SECTION_VERSIONS))
+    CollapsibleSection(accordion, SECTION_VERSIONS, "版本", versionCount(versions, selected), summary = {
+        selected?.let { VersionSummary(it, tracksFor(it)) }
+            ?: SummaryText(if (versions.searching > 0) "正在查找资源…" else "暂无可播放的版本")
+    }) {
+        Box(Modifier.padding(vertical = 20.dp)) {
+            VersionSection(full.versions, selection.selected(full), onSelect = { v -> selection.pick(null, v); onPicked(v) },
+                onPreview = { v -> selection.preview(null, v) },
+                onPlay = { card -> val v = full.merged.of(card); playVersion(v, v.item.resumeMs, full.versions) },
+                entry = accordion.entry(SECTION_VERSIONS), hold = holdHint(accordion.order, SECTION_VERSIONS))
+        }
+    }
+}
+
+/** 音轨与字幕 of the previewed version, else the selected one. */
+@Composable
+private fun DetailTracks(vm: MovieDetailViewModel, selection: EpisodeSelection, accordion: Accordion, tracksFor: (Version?) -> TrackChoice, onChoice: (Version, TrackChoice) -> Unit) {
+    TraceRecomposition("Detail.tracks")
+    val view by vm.view.collectAsStateWithLifecycle()
+    val v = selection.trackVersion(view) ?: return
+    val full = rememberSettled(view, accordion.isExpanded(SECTION_TRACKS))
+    CollapsibleSection(accordion, SECTION_TRACKS, "音轨与字幕", "${v.source.subtitleStreams.size} 条字幕", barHeight = 112.dp, summary = {
+        TrackSummary(v, tracksFor(v))
+    }) {
+        val fv = selection.trackVersion(full) ?: v
+        Box(Modifier.padding(vertical = 20.dp)) {
+            TrackSection(fv, chapters = fv.item.chapters.size, runtimeTicks = fv.item.runTimeTicks, choice = tracksFor(fv), entry = accordion.entry(SECTION_TRACKS), hold = holdHint(accordion.order, SECTION_TRACKS)) { c ->
+                onChoice(fv, c)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailCompactHeader(vm: MovieDetailViewModel, selection: EpisodeSelection, heading: DetailHeadingState, display: DetailDisplay, meta: String) {
+    TraceRecomposition("Detail.compactHeader")
+    val view by vm.view.collectAsStateWithLifecycle()
+    val playRef = selection.selected(view)?.ref
+    val resume = playRef?.item?.let { resumeMsOf(it) } ?: 0L
+    val ratings by vm.ratings.collectAsStateWithLifecycle()
+    CompactHeader(heading, display, meta, if (playRef == null) null else if (resume > 0) "继续播放 · ${formatClock(resume)}" else "播放", ratings)
 }
 
 /** Episode provider IDs identify files, never a movie or series recommendation endpoint. */
@@ -288,6 +332,7 @@ internal fun detailRecommendationId(item: BaseItemDto, canonical: CatalogId? = n
 }
 
 internal const val SECTION_EPISODES = "episodes"
+internal const val SECTION_COLLECTION = "collection"
 internal const val SECTION_VERSIONS = "versions"
 internal const val SECTION_TRACKS = "tracks"
 internal const val SECTION_CAST = "cast"

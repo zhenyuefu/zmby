@@ -30,6 +30,27 @@ class RegistryTest {
         assertEquals(false, reg.isCooling("a"))
         assertEquals(Health.Warn, reg.get("a")!!.health)
     }
+    @Test fun `failures, recoveries and speed tests leave the lineup alone, edits and moves change it`() {
+        val reg = ServerRegistry(MemoryRegistryStore())
+        reg.add(config("a", "http://a"))
+        reg.add(config("b", "http://b"))
+        val lineup = reg.lineup.value
+        val servers = reg.servers.value
+        reg.recordLatency("a", "a-l", 40, "4.8")
+        reg.onFailure("b", java.io.IOException("reset"), timedOut = true)
+        reg.onFailure("b", java.io.IOException("reset"), timedOut = true)
+        reg.onSuccess("b")
+        reg.retry("b")
+        assertTrue("health changes reach servers", reg.servers.value !== servers)
+        assertTrue("the lineup is the same instance", reg.lineup.value === lineup)
+        assertEquals(Health.Warn, reg.lineup.value.first().health)
+        assertEquals(emptyMap<String, Long?>(), reg.lineup.value.first().lineLatency)
+        reg.move("b", -1)
+        assertEquals(listOf("b" to 0, "a" to 1), reg.lineup.value.map { it.id to it.order })
+        reg.update("a") { it.copy(name = "家") }
+        assertEquals("家", reg.lineup.value.last().name)
+    }
+
     private fun config(id: String, url: String, emby: String? = null, user: String = "u") =
         ServerConfig(id, id, listOf(ServerLine("$id-l", "主线路", url)), "$id-l", user, "tok-$id", embyServerId = emby)
 

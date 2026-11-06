@@ -1,5 +1,6 @@
 package app.zmby.ui.components
 
+import app.zmby.TraceRecomposition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -66,6 +67,7 @@ fun MediaCard16x9(
     dim: Float = 1f,
     caption: @Composable () -> Unit = {},
 ) {
+    TraceRecomposition("Card.media")
     CardFrame(onClick, width, width * 9 / 16, onFocus, caption, label = title ?: topStart, focusKey = focusKey, dim = dim, modifier = modifier) {
         Artwork(imageUrl, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))))
@@ -159,6 +161,7 @@ fun PosterCard2x3(
     captionShadow: Shadow = Shadow.None,
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
+    TraceRecomposition("Card.poster")
     CardFrame(onClick, width, width * 3 / 2, onFocus, label = title, focusKey = focusKey, dim = dim, modifier = modifier, restingShadow = restingShadow, caption = {
         Column {
             if (imageUrl != null) {

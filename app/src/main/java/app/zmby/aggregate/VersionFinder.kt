@@ -22,14 +22,20 @@ interface VersionSource {
 }
 
 /** What one other server has of the work on screen. */
+@kotlinx.serialization.Serializable
 sealed interface ServerVersions {
     val server: String
 
+    @kotlinx.serialization.Serializable @kotlinx.serialization.SerialName("Found")
     data class Found(override val server: String, val item: BaseItemDto, val sources: List<MediaSourceInfo>, val verdict: Verdict) : ServerVersions
     /** The series is there but not this episode: 「缺此集」. */
+    @kotlinx.serialization.Serializable @kotlinx.serialization.SerialName("Missing")
     data class Missing(override val server: String, val reason: String) : ServerVersions
+    @kotlinx.serialization.Serializable @kotlinx.serialization.SerialName("NotFound")
     data class NotFound(override val server: String, val reason: String) : ServerVersions
+    @kotlinx.serialization.Serializable @kotlinx.serialization.SerialName("Failed")
     data class Failed(override val server: String, val message: String, val timedOut: Boolean, val retryable: Boolean = true) : ServerVersions
+    @kotlinx.serialization.Serializable @kotlinx.serialization.SerialName("Skipped")
     data class Skipped(override val server: String) : ServerVersions
 }
 
@@ -43,13 +49,16 @@ class VersionFinder(private val source: VersionSource, private val fanOut: FanOu
     private fun identity(ref: BaseItemDto): Any = listOf(ref.id, ref.type, ref.name, ref.productionYear, ref.providerIds,
         ref.path, ref.parentIndexNumber, ref.indexNumber)
 
-    fun invalidate(servers: List<String>, ref: BaseItemDto, series: BaseItemDto? = null) = fanOut.invalidate(key(ref, series), servers)
+    fun invalidate(servers: List<String>, ref: BaseItemDto, series: BaseItemDto? = null) {
+        fanOut.invalidate(key(ref, series), servers, PERSIST)
+        fanOut.invalidateSteps(servers)
+    }
 
     fun movie(servers: List<String>, ref: BaseItemDto): Flow<ServerVersions> =
-        fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS, share = key(ref), cacheMs = FanOut.RESOURCE_CACHE_MS) { s -> findMovie(s, ref) }.map(::unwrap)
+        fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS, share = key(ref), cacheMs = FanOut.RESOURCE_CACHE_MS, persist = PERSIST) { s -> findMovie(s, ref) }.map(::unwrap)
 
     fun episode(servers: List<String>, ref: BaseItemDto, refSeries: BaseItemDto): Flow<ServerVersions> =
-        fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS, share = key(ref, refSeries), cacheMs = FanOut.RESOURCE_CACHE_MS) { s -> findEpisode(s, ref, refSeries) }.map(::unwrap)
+        fanOut.run(servers, FanOut.SEARCH_TIMEOUT_MS, share = key(ref, refSeries), cacheMs = FanOut.RESOURCE_CACHE_MS, persist = PERSIST) { s -> findEpisode(s, ref, refSeries) }.map(::unwrap)
 
     private fun unwrap(o: Outcome<ServerVersions>): ServerVersions = when (o) {
         is Outcome.Ok -> o.value
@@ -63,15 +72,18 @@ class VersionFinder(private val source: VersionSource, private val fanOut: FanOu
     }
 
     suspend fun findEpisode(server: String, ref: BaseItemDto, refSeries: BaseItemDto): ServerVersions {
-        val m = findWork(server, refSeries, "Series", SERIES_CANDIDATES)
+        // The series match, its seasons and pages are shared by every episode of it (RN ⑥).
+        val m = fanOut.step(server, listOf("series-match", identity(refSeries)), FanOut.RESOURCE_CACHE_MS, Persist(FanOut.KIND_SERIES_MATCH, WorkMatch.serializer())) {
+            findWork(server, refSeries, "Series", SERIES_CANDIDATES)
+        }
         val series = m.item ?: return ServerVersions.NotFound(server, "没有这部剧（${m.reason}）")
         val seriesVerdict = m.verdict ?: return ServerVersions.NotFound(server, m.reason)
-        val season = source.seasons(server, series.id).firstOrNull { it.indexNumber == ref.parentIndexNumber }
+        val season = fanOut.seasons(server, series.id) { source.seasons(server, series.id) }.firstOrNull { it.indexNumber == ref.parentIndexNumber }
             ?: return ServerVersions.Missing(server, "缺第 ${ref.parentIndexNumber} 季")
         // Page through the season: episode 200 of a long anime is not on the first page.
         var start = 0
         while (true) {
-            val page = source.episodePage(server, series.id, season.id, start, EPISODE_PAGE)
+            val page = fanOut.episodePage(server, series.id, season.id, start, EPISODE_PAGE) { source.episodePage(server, series.id, season.id, start, EPISODE_PAGE) }
             page.items.firstOrNull { it.indexNumber == ref.indexNumber && (it.parentIndexNumber == null || it.parentIndexNumber == ref.parentIndexNumber) }?.let { ep ->
                 val withSeason = if (ep.parentIndexNumber == null) ep.copy(parentIndexNumber = ref.parentIndexNumber) else ep
                 val j = Match.compareEpisode(ref, refSeries, withSeason, series)
@@ -84,6 +96,7 @@ class VersionFinder(private val source: VersionSource, private val fanOut: FanOu
         }
     }
 
+    @kotlinx.serialization.Serializable
     private data class WorkMatch(val item: BaseItemDto?, val verdict: Verdict?, val reason: String)
 
     /** Finds the same film or series on [server]: external IDs first, then the name. */
@@ -120,6 +133,8 @@ class VersionFinder(private val source: VersionSource, private val fanOut: FanOu
     catch (_: Exception) { null }
 
     companion object {
+        /** Version lookups are kept across restarts (统一数据层 ③), six hours like in memory. */
+        private val PERSIST = Persist(FanOut.KIND_VERSIONS, ServerVersions.serializer())
         const val NAME_CANDIDATES = 10
         const val SERIES_CANDIDATES = 3
         const val EPISODE_PAGE = 100

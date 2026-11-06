@@ -1,5 +1,6 @@
 package app.zmby.ui.components
 
+import kotlin.math.roundToInt
 import androidx.core.graphics.createBitmap
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -82,8 +83,15 @@ data class Scrims(
     val dim: () -> Float = { 0f },
 ) {
     fun DrawScope.draw(area: Size, alpha: Float = 1f) {
-        drawRect(Color.Black, size = area, alpha = dim() * alpha)
-        val directional = strength() * alpha
+        if ("scrim" in app.zmby.Diagnostics.drawOff) return
+        val d = dim() * alpha
+        if (d > 0f) drawRect(Color.Black, size = area, alpha = d)
+        drawDirectional(area, strength() * alpha)
+    }
+
+    /** The left-to-right and bottom gradients at [directional] strength (the dimming not included). */
+    fun DrawScope.drawDirectional(area: Size, directional: Float = 1f) {
+        if ("scrim" in app.zmby.Diagnostics.drawOff || directional <= 0f) return
         drawRect(
             Brush.horizontalGradient(*horizontal.map { (stop, a) -> stop to Z.bg.copy(alpha = a) }.toTypedArray(), endX = area.width),
             size = area,
@@ -115,6 +123,37 @@ class Backdrop(
     val luminance: BackdropLuminance? = null,
 ) {
     internal var coordinates: LayoutCoordinates? = null
+
+    private var source: SliceSource? = null
+
+    /**
+     * The blurred copy with the scrims already laid over it, at about [SLICE_WIDTH] pixels wide in
+     * [area]'s shape (performance plan R6): a detail panel then fills its shape from one small image
+     * instead of four full-area layers. Rebuilt only when the scrims' scroll-driven strength changes
+     * (in 1/32 steps, finer than a blurred image shows). Null without a blurred copy.
+     */
+    internal fun sliceSource(area: androidx.compose.ui.geometry.Size, density: androidx.compose.ui.unit.Density): ImageBitmap? {
+        val image = blurred ?: return null
+        if (area.width <= 0f || area.height <= 0f) return null
+        val dim = (scrims.dim() * 32).roundToInt()
+        val strength = (scrims.strength() * 32).roundToInt()
+        source?.takeIf { it.area == area && it.dim == dim && it.strength == strength }?.let { return it.bitmap }
+        val k = SLICE_WIDTH / area.width
+        val w = SLICE_WIDTH.roundToInt()
+        val h = (area.height * k).roundToInt().coerceAtLeast(1)
+        val bitmap = ImageBitmap(w, h)
+        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(density, androidx.compose.ui.unit.LayoutDirection.Ltr,
+            androidx.compose.ui.graphics.Canvas(bitmap), androidx.compose.ui.geometry.Size(w.toFloat(), h.toFloat())) {
+            drawCover(image, size)
+            with(scrims) { draw(size) }
+        }
+        source = SliceSource(area, dim, strength, bitmap)
+        return bitmap
+    }
+
+    private class SliceSource(val area: androidx.compose.ui.geometry.Size, val dim: Int, val strength: Int, val bitmap: ImageBitmap)
+
+    private companion object { const val SLICE_WIDTH = 256f }
 }
 
 /** A blurred page at the same horizontal position (in screen widths) as its sharp backdrop. */
@@ -156,24 +195,33 @@ fun BackdropProvider(
  * [layer] replaces the single image (the home hero's sliding pages); it draws its own scrims.
  */
 @Composable
-fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.() -> Unit)? = null, blurProgress: (() -> Float)? = null) {
+fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.() -> Unit)? = null, blurProgress: (() -> Float)? = null, trailer: TrailerPlayer? = null) {
     val backdrop = LocalBackdrop.current ?: return
     if (layer != null) {
         Box(modifier.onGloballyPositioned { backdrop.coordinates = it }, content = layer)
         return
     }
+    // Only over an image: without one there are no scrims either, and text would sit on bare video.
+    val video = trailer?.takeIf { it.key != null && backdrop.url != null }
     Box(
         modifier
             .onGloballyPositioned { backdrop.coordinates = it }
             // The backdrop and its two full-screen scrims change only with the image: rendered once
             // into an offscreen layer, each frame then draws one textured quad. The Z9X 8K redraws the
             // whole screen every frame (it reports full-screen damage), and these three passes cost
-            // about 5 ms of its GPU time per frame while rows scrolled.
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
+            // about 5 ms of its GPU time per frame while rows scrolled. A playing trailer redraws the
+            // layer every video frame anyway: then it is drawn straight to the screen, and the still
+            // image under the video is skipped once the video covers it (trailer design).
+            .graphicsLayer {
+                compositingStrategy = if ("bdlayer" in app.zmby.Diagnostics.drawOff || video?.showing == true) CompositingStrategy.Auto else CompositingStrategy.Offscreen
+            },
     ) {
-        if (backdrop.url != null) {
-            Artwork(backdrop.url, Modifier.fillMaxSize())
-            if (blurProgress != null && backdrop.blurred != null) {
+        if (backdrop.url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) {
+            Artwork(backdrop.url, Modifier.fillMaxSize().then(if (video != null) Modifier.graphicsLayer { alpha = if (video.covering) 0f else 1f } else Modifier))
+        }
+        if (video != null) TrailerSurface(video, Modifier.fillMaxSize())
+        if (backdrop.url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) {
+            if (blurProgress != null && backdrop.blurred != null && "blurcover" !in app.zmby.Diagnostics.drawOff) {
                 Box(Modifier.fillMaxSize().drawWithCache {
                     onDrawBehind { drawCover(backdrop.blurred, size, blurProgress()) }
                 })

@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -56,13 +57,13 @@ fun ImportScreen(onDone: () -> Unit, onBackup: () -> Unit = {}, backupTab: Boole
     } }
     DisposableEffect(session) { onDispose { session.close() } }
     DisposableEffect(Unit) { onDispose { if (!app.settings.lanLog.value) app.appScope.launch(Dispatchers.IO) { app.lanServer.stop() } } }
-    val results by session.results.collectAsState()
-    val devices by session.devices.collectAsState()
-    val progress by session.progress.collectAsState()
-    val expires by session.expiresAt.collectAsState()
-    val pending by session.pending.collectAsState()
-    val locked by session.locked.collectAsState()
-    val activity by session.activity.collectAsState()
+    val results by session.results.collectAsStateWithLifecycle()
+    val devices by session.devices.collectAsStateWithLifecycle()
+    val progress by session.progress.collectAsStateWithLifecycle()
+    val expires by session.expiresAt.collectAsStateWithLifecycle()
+    val pending by session.pending.collectAsStateWithLifecycle()
+    val locked by session.locked.collectAsStateWithLifecycle()
+    val activity by session.activity.collectAsStateWithLifecycle()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(session) { while (true) { delay(1000); now = System.currentTimeMillis(); if (port != null && !locked && now >= expires) { generation++; break } } }
     val url = if (port != null && ip != null && !locked) "http://$ip:$port/import/${session.code}" + if (backupTab) "#backup" else "" else null

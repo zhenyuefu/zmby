@@ -50,8 +50,10 @@ import app.zmby.zmby
 import kotlinx.coroutines.launch
 
 /**
- * 设置 › 数据来源 › one feature (ui-spec §2.6): a switch per server, or for 片段标记来源 the ordered
- * provider list (menu key or a long OK picks a row up, up and down move it, OK puts it down).
+ * 设置 › 数据来源 › one feature (ui-spec §2.6): the servers, or for 片段标记来源 the providers, as an
+ * ordered list with a switch each (menu key or a long OK picks a row up, up and down move it, OK
+ * puts it down). A server list follows the server page's order until sorted here (统一数据层 ·
+ * 每项来源的优先级); then 恢复为服务器顺序 ties it to the server page again.
  */
 @Composable
 fun DataSourceScreen(nav: Nav, feature: SourceFeature) {
@@ -63,7 +65,11 @@ fun DataSourceScreen(nav: Nav, feature: SourceFeature) {
     ) {
         Text(feature.label, fontSize = 48.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp)
         Column(Modifier.width(1100.dp)) {
-            if (feature.ordered) Providers(rows) else Servers(feature, rows)
+            when {
+                feature.ordered -> Providers(rows)
+                feature == SourceFeature.Metadata -> MetadataSources(rows)
+                else -> Servers(feature, rows)
+            }
         }
     }
 }
@@ -75,6 +81,10 @@ private fun Servers(feature: SourceFeature, rows: Map<String, DataSourceRow>) {
     val scope = rememberCoroutineScope()
     val initial = rememberInitialFocus(servers.firstOrNull()?.id)
     val label = remember(rows, servers) { app.sources.label(feature) }
+    val ordered = remember(rows, servers) { SourceRules.ordered(rows, feature, servers) }
+    val custom = SourceRules.custom(rows, feature)
+    var moving by remember { mutableStateOf<String?>(null) }
+    var swallowClick by remember { mutableStateOf(false) }
     // 观看进度回写: why a server was switched off by a refused write.
     val refusals by androidx.compose.runtime.produceState(emptyMap<String, String>(), feature, rows) {
         if (feature == SourceFeature.WatchSync) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -82,7 +92,8 @@ private fun Servers(feature: SourceFeature, rows: Map<String, DataSourceRow>) {
         }
     }
     SettingsGroup(label) {
-        servers.forEachIndexed { i, s ->
+      Column(Modifier.focusGroup()) {
+        ordered.forEachIndexed { i, s -> androidx.compose.runtime.key(s.id) {
             // Why a server cannot serve this feature now; it can still be switched for later.
             val reason = when {
                 !s.enabled -> "已停用"
@@ -92,14 +103,154 @@ private fun Servers(feature: SourceFeature, rows: Map<String, DataSourceRow>) {
                 else -> null
             }
             val on = SourceRules.enabled(rows, feature, s.id)
-            ToggleSetting(
-                s.name,
-                on,
-                { scope.launch { app.sources.set(feature, s.id, !on) } },
-                sub = reason,
-                dimmed = reason != null,
-                modifier = if (i == 0) Modifier.focusRequester(initial) else Modifier,
-            )
+            val isMoving = moving == s.id
+            SelectableRow(
+                onClick = {
+                    when {
+                        swallowClick -> swallowClick = false
+                        moving != null -> moving = null
+                        else -> scope.launch { app.sources.set(feature, s.id, !on) }
+                    }
+                },
+                modifier = Modifier
+                    .defaultMinSize(minHeight = 70.dp)
+                    .then(if (i == 0) Modifier.focusRequester(initial) else Modifier)
+                    .onPreviewKeyEvent { e ->
+                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when {
+                            e.key == Key.Menu || (e.key in OK_KEYS && e.nativeKeyEvent.repeatCount > 0 && moving == null) -> {
+                                moving = s.id
+                                swallowClick = e.key != Key.Menu
+                                true
+                            }
+                            isMoving && e.key == Key.DirectionUp -> { scope.launch { app.sources.moveServer(feature, s.id, -1) }; true }
+                            isMoving && e.key == Key.DirectionDown -> { scope.launch { app.sources.moveServer(feature, s.id, 1) }; true }
+                            isMoving && e.key == Key.Back -> { moving = null; true }
+                            else -> false
+                        }
+                    },
+                selected = isMoving,
+                showCheck = false,
+                dimmed = reason != null && !isMoving,
+                radius = 20.dp,
+                label = "${s.name} ${if (on) "开" else "关"}",
+                focusKey = "source:${s.id}",
+            ) {
+                Text("${i + 1}", fontSize = 20.sp, color = secondaryText(), modifier = Modifier.width(36.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(s.name, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    val sub = if (isMoving) "上下移动，确认放下" else reason
+                    if (sub != null) Text(sub, fontSize = 18.sp, color = secondaryText())
+                }
+                GlassToggle(on)
+                Icon(Glyph.Grip, size = 26.dp, strokeWidth = 2.4f)
+            }
+        } }
+      }
+    }
+    if (custom) {
+        SettingsGroup("顺序") {
+            SelectableRow(
+                onClick = { scope.launch { app.sources.followServerOrder(feature) } },
+                modifier = Modifier.defaultMinSize(minHeight = 70.dp),
+                showCheck = false,
+                radius = 20.dp,
+                label = "恢复为服务器顺序",
+                focusKey = "source:followServerOrder",
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("恢复为服务器顺序", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    Text("这一项改回跟随服务器页的顺序", fontSize = 18.sp, color = secondaryText())
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 影片信息来源 (统一数据层 ④): TMDB, Bangumi and the servers in one sortable list; each field of a
+ * detail page comes from the first member switched on here that has it.
+ */
+@Composable
+private fun MetadataSources(rows: Map<String, DataSourceRow>) {
+    val app = LocalContext.current.zmby
+    val servers by app.registry.servers.collectAsStateWithLifecycle()
+    val token by app.settings.tmdbToken.flow.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val members = remember(rows, servers) { SourceRules.metadata(rows, servers) }
+    var moving by remember { mutableStateOf<String?>(null) }
+    var swallowClick by remember { mutableStateOf(false) }
+    val initial = rememberInitialFocus(Unit)
+    SettingsGroup(SourceRules.label(members.count { it.enabled }, members.size, providers = true)) {
+        Column(Modifier.focusGroup()) {
+            members.forEachIndexed { i, m -> androidx.compose.runtime.key(m.key) {
+                val reason = when {
+                    m.key == "tmdb" && token.isBlank() -> "未设置 TMDB 令牌，暂不参与"
+                    m.key == "bangumi" -> "只用于能确定 Bangumi 条目的作品"
+                    m.server?.enabled == false -> "已停用"
+                    m.server?.health == Health.Off -> "暂时连不上"
+                    else -> null
+                }
+                val isMoving = moving == m.key
+                SelectableRow(
+                    onClick = {
+                        when {
+                            swallowClick -> swallowClick = false
+                            moving != null -> moving = null
+                            else -> scope.launch { app.sources.set(SourceFeature.Metadata, m.key, !m.enabled) }
+                        }
+                    },
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = 70.dp)
+                        .then(if (i == 0) Modifier.focusRequester(initial) else Modifier)
+                        .onPreviewKeyEvent { e ->
+                            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when {
+                                e.key == Key.Menu || (e.key in OK_KEYS && e.nativeKeyEvent.repeatCount > 0 && moving == null) -> {
+                                    moving = m.key
+                                    swallowClick = e.key != Key.Menu
+                                    true
+                                }
+                                isMoving && e.key == Key.DirectionUp -> { scope.launch { app.sources.moveMetadata(m.key, -1) }; true }
+                                isMoving && e.key == Key.DirectionDown -> { scope.launch { app.sources.moveMetadata(m.key, 1) }; true }
+                                isMoving && e.key == Key.Back -> { moving = null; true }
+                                else -> false
+                            }
+                        },
+                    selected = isMoving,
+                    showCheck = false,
+                    dimmed = reason != null && m.key != "bangumi" && !isMoving,
+                    radius = 20.dp,
+                    label = "${m.label} ${if (m.enabled) "开" else "关"}",
+                    focusKey = "metadata:${m.key}",
+                ) {
+                    Text("${i + 1}", fontSize = 20.sp, color = secondaryText(), modifier = Modifier.width(36.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(m.label, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                        val sub = if (isMoving) "上下移动，确认放下" else reason
+                        if (sub != null) Text(sub, fontSize = 18.sp, color = secondaryText())
+                    }
+                    GlassToggle(m.enabled)
+                    Icon(Glyph.Grip, size = 26.dp, strokeWidth = 2.4f)
+                }
+            } }
+        }
+    }
+    if (SourceRules.custom(rows, SourceFeature.Metadata)) {
+        SettingsGroup("顺序") {
+            SelectableRow(
+                onClick = { scope.launch { app.sources.followServerOrder(SourceFeature.Metadata) } },
+                modifier = Modifier.defaultMinSize(minHeight = 70.dp),
+                showCheck = false,
+                radius = 20.dp,
+                label = "恢复默认顺序",
+                focusKey = "metadata:default",
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("恢复默认顺序", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    Text("TMDB、Bangumi，然后按服务器页的顺序", fontSize = 18.sp, color = secondaryText())
+                }
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,7 +80,7 @@ private val CardShape = RoundedCornerShape(28.dp)
 fun ServersScreen(nav: Nav) {
     val app = LocalContext.current.zmby
     val library = app.library
-    val servers by library.servers.collectAsState()
+    val servers by library.servers.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var currentId by rememberSaveable { mutableStateOf<String?>(null) }
     val current = servers.firstOrNull { it.id == currentId } ?: servers.firstOrNull()

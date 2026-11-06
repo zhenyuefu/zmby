@@ -22,7 +22,8 @@ translated titles, upper-case ProviderIds keys, a pinyin plugin, only episodes 1
 230-episode anime), 公益服 A (ignores AnyProviderIdEquals and returns its whole library, refuses
 favourite and user-data writes with 403, 1.2 s per request, lower-case keys, one film twice with the same TMDB),
 公益服 B (logs in, then hangs 25 s on every library request) and 无 ID 服 (no ProviderIds; one title
-that matches on title + year, one with the wrong year) and, on --port+6, 严格服 (the main catalogue,
+that matches on title + year, one with the wrong year; ignores SortBy and the browse filters like a
+proxy serving TMDB listings) and, on --port+6, 严格服 (the main catalogue,
 but only for official Emby clients: anything else, zmby and the Zidoo player's okhttp included, gets
 an nginx-style 403 page). Log in to each as its own server. --official-only makes the main server strict.
 
@@ -116,6 +117,20 @@ ITEMS = {}
 # Items reachable by id only (another cut's own item), never listed.
 HIDDEN = {}
 VIDEO = None
+# --trailer: one MP4 served as every mock IMDb trailer (generate one, e.g. with ffmpeg's testsrc; never a real trailer).
+TRAILER = None
+# --trailer-hls: a directory with index.m3u8 and its segments, served as the mock Rotten Tomatoes trailer.
+TRAILER_HLS = None
+# Rotten Tomatoes paths with a mock trailer (their IMDb answer has none, so it is the fallback).
+MOCK_RT_TRAILERS = {"m/mock_blade_runner_2049": "rtmock01", "m/mock_arrival": "rtmock02"}
+# Items with a trailer stored on the server (the last fallback: no IMDb ID, so IMDb and Rotten Tomatoes are skipped).
+MOCK_SERVER_TRAILERS = {"oppen": "oppen-trailer"}
+# IMDb IDs the mock GraphQL endpoint has a trailer for; any other ID has none.
+MOCK_TRAILERS = {"tt15239678": "vi0000001", "tt0816692": "vi0000002"}
+# Made-up ratings for the mock IMDb, Wikidata and Rotten Tomatoes endpoints (one rotten title for its glyphs):
+# IMDb ID -> (IMDb rating, Rotten Tomatoes path, Tomatometer, certified, Popcornmeter).
+MOCK_RATINGS = {"tt15239678": (8.4, "m/mock_dune_part_two", 92, True, 95), "tt0816692": (8.7, "m/mock_interstellar", 73, False, 86),
+                "tt1856101": (8.0, "m/mock_blade_runner_2049", 31, False, 48), "tt2543164": (7.9, "m/mock_arrival", 94, True, 82)}
 OPTS = {"direct_stream_url": True, "range_only_under_emby": False, "pinyin": False,
         "redirect": False, "signed_port": 8097, "sign_ttl": 60, "require_ua": None, "throttle_kbps": 0,
         "logo_delay": 0.0, "broken_logos": False, "dark_logo": False}
@@ -164,7 +179,7 @@ for n, (name, year, color) in enumerate([("星际穿越", 2014, (46, 58, 74)), (
 
 # Real TMDB / IMDb ids, one per work (the multi-server mode merges on them).
 for _iid, _ids in {"testclip": {"Tmdb": "990001"}, "dune2": {"Tmdb": "693134", "Imdb": "tt15239678"}, "oppen": {"Tmdb": "872585"},
-                   "m0": {"Tmdb": "157336", "Imdb": "tt0816692"}, "m1": {"Tmdb": "335984", "Imdb": "tt1856101"}, "m2": {"Tmdb": "329865"},
+                   "m0": {"Tmdb": "157336", "Imdb": "tt0816692"}, "m1": {"Tmdb": "335984", "Imdb": "tt1856101"}, "m2": {"Tmdb": "329865", "Imdb": "tt2543164"},
                    "m3": {"Tmdb": "339964"}, "m4": {"Tmdb": "286217"}, "m5": {"Tmdb": "545611"}}.items():
     ITEMS[_iid]["ProviderIds"] = _ids
 
@@ -215,6 +230,12 @@ for e in range(1, 231):
                                        [video(1920, 1080, codec="h264", primaries="bt709", transfer="bt709"), audio(1, "jpn", "aac", None, 2, default=True)])]))
     if e <= 204:
         ep["UserData"].update({"Played": True, "PlayedPercentage": 100})
+
+# Collections (BoxSet), as Emby groups films: 电影 › 合集 lists them, the collection page their films.
+# _children are the linked films; a ParentId of a collection answers them, oldest first.
+for _bid, _name, _kids, _text in [("box-scifi", "科幻经典合集", ["m0", "m1", "m2", "dune2"], "几部重新定义了银幕科幻的电影。"),
+                                  ("box-nolan", "诺兰作品集", ["m0", "oppen"], "克里斯托弗·诺兰执导的电影。")]:
+    add(item(_bid, _name, "BoxSet", None, None, _text, (), (70, 60, 40), ChildCount=len(_kids), _children=_kids, _lib="lib-boxsets", ProviderIds={}))
 
 # Series carry their unwatched count, as Emby does (the browse page's 「n 集未看」 corner).
 ITEMS["longseason"]["UserData"]["UnplayedItemCount"] = 6
@@ -383,8 +404,11 @@ CATALOGS = []
 class Catalog:
     """One fake server: its items and how it misbehaves (multi-server mode)."""
 
-    def __init__(self, name, sid, items, views, pinyin=False, ignore_ids=False, refuse_favorites=False, delay=0.0, hang=0, official_only=False, persons=None, image_scale=1):
+    def __init__(self, name, sid, items, views, pinyin=False, ignore_ids=False, refuse_favorites=False, delay=0.0, hang=0, official_only=False, persons=None, image_scale=1, plain=False):
         self.name, self.sid, self.items, self.views = name, sid, items, views
+        # plain: like a proxy that lists TMDB titles, SortBy, Filters, Genres, Years and Is4K are ignored
+        # and /Items/Filters is missing (the browse page then offers no sort or filter for it).
+        self.plain = plain
         self.persons = persons or {}
         # Image sizes /Items/{id}/Images reports (the app keeps the sharpest copy across servers).
         self.image_scale = image_scale
@@ -628,7 +652,8 @@ def tmdb_rows():
         rows.append({"id": int(tid), "media_type": "movie" if movie else "tv", ("title" if movie else "name"): d["Name"],
                      ("original_title" if movie else "original_name"): d["Name"], "overview": d.get("Overview", ""),
                      ("release_date" if movie else "first_air_date"): f"{d.get('ProductionYear') or 2000}-01-01",
-                     "vote_average": d.get("CommunityRating") or 7.0, "genres": d.get("Genres") or []})
+                     "vote_average": d.get("CommunityRating") or 7.0, "genres": d.get("Genres") or [],
+                     "_imdb": (d.get("ProviderIds") or {}).get("Imdb")})
     return rows + TMDB_ONLY
 
 
@@ -667,11 +692,11 @@ def mock_tmdb(rest, q, headers):
                         "air_date": dates[e].isoformat() if e in dates else "2023-04-22"} for e in range(1, 15)]
                 return ({"episodes": eps},)
             return ({"episodes": []},)
-        body = dict(row)
+        body = {k: v for k, v in row.items() if k != "_imdb"}
         body["genres"] = [{"id": i, "name": g} for i, g in enumerate(row["genres"])]
         body["original_language"] = "zh"
         body["translations"] = {"translations": []}
-        body["external_ids"] = {}
+        body["external_ids"] = {"imdb_id": row["_imdb"]} if row.get("_imdb") else {}
         body["credits" if kind == "movie" else "aggregate_credits"] = {"cast": [], "crew": []}
         if kind == "tv":
             body["seasons"] = [{"season_number": 1, "name": "第 1 季", "episode_count": 14, "air_date": "2023-04-22"}]
@@ -829,6 +854,8 @@ class Emby(BaseHTTPRequestHandler):
                         for i in range(860)]
             return self.send_json({"count": len(comments), "comments": comments})
 
+        if path == "/_mock/mark":  # scenario boundary for tools/request_count.py: /_mock/mark?name=<scenario>
+            return self.send_json({"ok": True})
         if path == "/_mock/stats":
             return self.send_json({"searches": cat.searches, "requests": cat.requests, "userdata_writes": cat.userdata_writes})
         if path == "/_mock/allstats":  # every server's request counts by kind, by server name
@@ -852,6 +879,80 @@ class Emby(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         if path.startswith("/_mock/bgm/v0/"):
             return self.send_json(*mock_bangumi(path[len("/_mock/bgm/v0/"):], q))
+        # IMDb's GraphQL endpoint for trailers (debug.zmby.imdb_base http://10.0.2.2:8096/_mock/imdb) and the
+        # trailer file itself; the links carry a made-up Expires and Signature like CloudFront's.
+        if path.startswith("/_mock/imdb") and method == "POST":
+            imdb_id = ((self.body().get("variables") or {}).get("id") or "")
+            vid = MOCK_TRAILERS.get(imdb_id) if TRAILER else None
+            print(f"  IMDB trailer {imdb_id}: {vid or 'none'}", flush=True)
+            host = self.headers.get("Host") or f"127.0.0.1:{self.server.server_address[1]}"
+            video = None if not vid else {
+                "id": vid, "contentType": {"id": "amzn1.imdb.video.contenttype.trailer"}, "runtime": {"value": 30},
+                "playbackURLs": [{"url": f"http://{host}/_mock/trailer/{vid}.mp4?Expires={int(time.time()) + 86400}&Signature=mock&Key-Pair-Id=MOCK",
+                                  "videoMimeType": "MP4", "videoDefinition": "DEF_1080p"}]}
+            rating = MOCK_RATINGS.get(imdb_id)
+            summary = {"aggregateRating": rating[0], "voteCount": 123456} if rating else {"aggregateRating": None, "voteCount": 0}
+            return self.send_json({"data": {"title": {"ratingsSummary": summary, "latestTrailer": video, "primaryVideos": {"edges": []}}}})
+        # Wikidata's SPARQL endpoint (debug.zmby.wikidata_base http://10.0.2.2:8096/_mock/wikidata): IMDb ID -> RT path.
+        if path.startswith("/_mock/wikidata"):
+            m = re.search(r'P345 "(tt\d+)"', q.get("query", ""))
+            rating = MOCK_RATINGS.get(m.group(1)) if m else None
+            print(f"  WIKIDATA {m.group(1) if m else '?'}: {rating[1] if rating else 'none'}", flush=True)
+            rows = [{"rt": {"type": "literal", "value": rating[1]}}] if rating else []
+            return self.send_json({"head": {"vars": ["rt"]}, "results": {"bindings": rows}})
+        # A Rotten Tomatoes title page with only its scorecard (debug.zmby.rt_base http://10.0.2.2:8096/_mock/rt/).
+        if path.startswith("/_mock/rt/") and not path.endswith("/videos"):
+            rt_path = path[len("/_mock/rt/"):]
+            rating = next((r for r in MOCK_RATINGS.values() if r[1] == rt_path), None)
+            print(f"  ROTTEN TOMATOES {rt_path}: {'found' if rating else '404'}", flush=True)
+            if not rating:
+                return self.send_json({"error": "not found"}, 404)
+            def meter(pct, certified):
+                return {"scorePercent": f"{pct}%", "sentiment": "POSITIVE" if pct >= 60 else "NEGATIVE", "certified": certified}
+            card = {"criticsScore": meter(rating[2], rating[3]), "audienceScore": meter(rating[4], False), "hideAudienceScore": False}
+            body = ('<html><body><script id="media-scorecard-json" data-json="mediaScorecard" type="application/json">'
+                    + json.dumps(card) + '</script></body></html>').encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
+        # Rotten Tomatoes videos page, thePlatform's SMIL and the HLS rendition (debug.zmby.rt_base).
+        if path.startswith("/_mock/rt/") and path.endswith("/videos"):
+            rt_path = path[len("/_mock/rt/"):-len("/videos")]
+            vid = MOCK_RT_TRAILERS.get(rt_path) if TRAILER_HLS else None
+            print(f"  ROTTEN TOMATOES videos {rt_path}: {vid or 'none'}", flush=True)
+            host = self.headers.get("Host") or f"127.0.0.1:{self.server.server_address[1]}"
+            videos = [{"file": f"http://{host}/_mock/theplatform/clip01?formats=M3U+none,MPEG4", "publicId": "clip01", "videoType": "CLIP", "isRedBand": False, "title": "Clip"}]
+            if vid:
+                videos.append({"file": f"http://{host}/_mock/theplatform/{vid}?formats=M3U+none,MPEG4", "publicId": vid, "videoType": "TRAILER",
+                               "isRedBand": False, "title": "Trailer", "durationInSeconds": "20.0"})
+            body = ('<html><body><script id="videos" type="application/json">' + json.dumps(videos) + '</script></body></html>').encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
+        if path.startswith("/_mock/theplatform/"):
+            host = self.headers.get("Host") or f"127.0.0.1:{self.server.server_address[1]}"
+            print(f"  THEPLATFORM {path.rsplit('/', 1)[-1]} format={q.get('format')} formats={q.get('formats')}", flush=True)
+            body = (f'<smil><body><seq><ref src="http://ads.example.com/" tags="preroll"></ref><par><switch>'
+                    f'<video src="http://{host}/_mock/hls/index.m3u8" system-bitrate="4000000" height="1080" width="1920"/>'
+                    f'</switch></par></seq></body></smil>').encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/smil+xml")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
+        if path.startswith("/_mock/hls/") and TRAILER_HLS:
+            name = os.path.basename(path)
+            file = os.path.join(TRAILER_HLS, name)
+            if not os.path.isfile(file):
+                return self.send_json({"error": "not found"}, 404)
+            print(f"  HLS {name}", flush=True)
+            return self.stream_file(file, log=False)
+        if path.startswith("/_mock/trailer/") and TRAILER:
+            return self.stream_file(TRAILER)
         # Any /_mock/tmdb<suffix>/3/ base works, so a fresh suffix bypasses what the app cached.
         if path.startswith("/_mock/tmdb") and "/3/" in path:
             rest = path.split("/3/", 1)[1]
@@ -940,6 +1041,15 @@ class Emby(BaseHTTPRequestHandler):
                 res = [d for d in res if d.get("_lib") == q["ParentId"]]
             names = sorted({g for d in res for g in d.get("Genres") or []})
             return self.send_json({"Items": [{"Id": f"g-{n}", "Name": n, "Type": "Genre"} for n in names], "TotalRecordCount": len(names)})
+        if path == "/Items/Filters":
+            if cat.plain:
+                return self.send_json({"error": "not found"}, 404)
+            res = [d for d in cat.items.values() if d["Type"] in (q.get("IncludeItemTypes") or "Movie,Series").split(",")]
+            if q.get("ParentId"):
+                res = [d for d in res if d.get("_lib") == q["ParentId"]]
+            return self.send_json({"Genres": sorted({g for d in res for g in d.get("Genres") or []}),
+                                   "Years": sorted({d["ProductionYear"] for d in res if d.get("ProductionYear")}),
+                                   "Tags": [], "OfficialRatings": []})
         if path == f"/Users/{USER}/Views":
             return self.send_json({"Items": cat.views, "TotalRecordCount": len(cat.views)})
         # 为你推荐 and the home hero's 建议 · 推荐 (read-only; --no-suggestions or a server's own setting
@@ -982,7 +1092,14 @@ class Emby(BaseHTTPRequestHandler):
             res = [d for d in pool if d["Type"] in types]
             if q.get("Ids"):
                 res = [d for d in res if d["Id"] in q["Ids"].split(",")]
-            if q.get("ParentId"):
+            if q.get("ListItemIds") and not cat.plain:
+                # Emby's reverse lookup (its web client's 「合集」): collections holding any of these items.
+                wanted = set(q["ListItemIds"].split(","))
+                res = [d for d in res if wanted & set(d.get("_children", []))]
+            box = cat.items.get(q.get("ParentId") or "")
+            if box and box["Type"] == "BoxSet":
+                res = sorted((cat.items[k] for k in box.get("_children", []) if k in cat.items), key=lambda d: d.get("ProductionYear") or 0)
+            elif q.get("ParentId"):
                 res = [d for d in res if d.get("_lib") == q["ParentId"]]
             any_ids = q.get("AnyProviderIdEquals")
             if any_ids:
@@ -993,7 +1110,10 @@ class Emby(BaseHTTPRequestHandler):
                     wanted = {tuple(x.split(".", 1)) for x in any_ids.split(",") if "." in x}
                     res = [d for d in res if any((k.lower(), str(v)) in {(a.lower(), b) for a, b in wanted} for k, v in d.get("ProviderIds", {}).items())]
                     print(f"  IDS {any_ids} -> {len(res)} hits", flush=True)
-            res = sort_items(filter_items(res, q), q)
+            if cat.plain:
+                print(f"  [{cat.name}] ignores SortBy / Filters", flush=True)
+            elif not (box and box["Type"] == "BoxSet"):
+                res = sort_items(filter_items(res, q), q)
             term = q.get("SearchTerm")
             if term:
                 t = term.lower().replace(" ", "")
@@ -1030,6 +1150,13 @@ class Emby(BaseHTTPRequestHandler):
                     if nxt:
                         out.append(brief(nxt))
             return self.send_json({"Items": out, "TotalRecordCount": len(out)})
+        # A trailer stored with the item (the last trailer fallback), and its file.
+        if len(parts) == 5 and parts[0] == "Users" and parts[2] == "Items" and parts[4] == "LocalTrailers":
+            tid = MOCK_SERVER_TRAILERS.get(parts[3]) if TRAILER else None
+            print(f"  [{cat.name}] LOCAL TRAILERS {parts[3]}: {tid or 'none'}", flush=True)
+            return self.send_json([{"Id": tid, "Name": "预告片", "Type": "Trailer", "RunTimeTicks": 20 * 1000 * TICKS}] if tid else [])
+        if TRAILER and len(parts) >= 3 and parts[0].lower() == "videos" and parts[1] in MOCK_SERVER_TRAILERS.values():
+            return self.stream_file(TRAILER)
         if len(parts) == 4 and parts[0] == "Users" and parts[2] in ("PlayedItems", "FavoriteItems"):
             d = cat.items.get(parts[3])
             if not d:
@@ -1214,6 +1341,8 @@ def main():
     ap.add_argument("--port", type=int, default=8096)
     ap.add_argument("--zidoo-port", type=int, default=9529)
     ap.add_argument("--video", help="file served for every /Videos/{id}/stream request")
+    ap.add_argument("--trailer-hls", help="directory with index.m3u8 and segments: the mock Rotten Tomatoes trailer of 银翼杀手 2049")
+    ap.add_argument("--trailer", help="MP4 served as the mock IMDb trailer of 沙丘：第二部 and 星际穿越 (POST /_mock/imdb)")
     ap.add_argument("--no-direct-stream-url", action="store_true", help="leave DirectStreamUrl out of PlaybackInfo")
     ap.add_argument("--range-only-under-emby", action="store_true", help="ignore Range unless the path starts with /emby")
     ap.add_argument("--pinyin", action="store_true", help="SearchTerm also matches pinyin (like a server with a pinyin plugin)")
@@ -1238,8 +1367,13 @@ def main():
     if a.many_tracks:
         DUNE_STREAMS.extend(audio(100 + i, ("eng", "chi", "jpn", "fra")[i % 4], "aac", ch=2, title=f"测试音轨 {i + 6}") for i in range(20))
         DUNE_STREAMS.extend(sub(200 + i, ("chi", "eng", "jpn", "fra")[i % 4], "subrip", f"测试字幕 {i + 9}") for i in range(52))
-    global VIDEO
+    global VIDEO, TRAILER, TRAILER_HLS
     VIDEO = a.video
+    TRAILER = a.trailer
+    TRAILER_HLS = a.trailer_hls
+    if TRAILER:
+        for iid in MOCK_SERVER_TRAILERS:
+            ITEMS[iid]["LocalTrailerCount"] = 1
     OPTS["direct_stream_url"] = not a.no_direct_stream_url
     OPTS["range_only_under_emby"] = a.range_only_under_emby
     OPTS["pinyin"] = a.pinyin
@@ -1288,7 +1422,7 @@ def main():
         for offset, cat in ((2, Catalog("朋友的服", "mock-friend", build_friend(), TWO_LIBS, pinyin=True, persons=friend_persons(), image_scale=2)),
                             (3, Catalog("公益服 A", "mock-pub-a", build_public_a(), TWO_LIBS[:1], ignore_ids=True, refuse_favorites=True, delay=1.2)),
                             (4, Catalog("公益服 B", "mock-pub-b", build_public_b(), TWO_LIBS[:1], hang=25)),
-                            (5, Catalog("无 ID 服", "mock-noid", build_noid(), TWO_LIBS[:1])),
+                            (5, Catalog("无 ID 服", "mock-noid", build_noid(), TWO_LIBS[:1], plain=True)),
                             (6, Catalog("严格服", "mock-strict", ITEMS, VIEWS, official_only=True))):
             # 公益服 A is a fork without Suggestions and Movies/Recommendations; 无 ID 服 has nothing to suggest.
             cat.suggestions = {"公益服 A": "404", "无 ID 服": "empty"}.get(cat.name, "on")

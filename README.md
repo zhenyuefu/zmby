@@ -7,7 +7,7 @@
 <p align="center"><strong>聚合 Emby 片库，用芝杜系统播放器播放。</strong></p>
 
 <p align="center">Android TV · 多服务器聚合 · Zidoo 原生播放</p>
-<p align="center"><a href="https://github.com/zhenyuefu/zmby/releases/tag/v0.5.3">下载 0.5.3</a> · <a href="#快速开始">快速开始</a> · <a href="docs/USAGE.md">使用指南</a> · <a href="docs/DEVELOPMENT.md">开发指南</a></p>
+<p align="center"><a href="https://github.com/zhenyuefu/zmby/releases/tag/v1.0.0">下载 1.0.0</a> · <a href="#快速开始">快速开始</a> · <a href="docs/USAGE.md">使用指南</a> · <a href="docs/DEVELOPMENT.md">开发指南</a></p>
 
 ![zmby 首页：真实媒体库与 TMDB 影视资料](docs/images/home.jpg)
 
@@ -20,6 +20,8 @@ zmby 是面向芝杜（Zidoo）的 Android TV Emby 客户端。把多台服务�
 - **连续追剧**：继续观看、自动连播，下一集延续版本与语言选择。
 - **弹幕与跳过**：浮层弹幕或 ASS 第二路字幕、片头片尾标记、下集预取。
 - **影视资料**：TMDB / Bangumi 简介、演员、季集目录与榜单。
+- **预告片**：主推区与详情页在背景自动播放预告片，依次取 IMDb、烂番茄与媒体服务器上存放的预告片（默认静音，可在设置 › 首页关闭或开启声音）。
+- **多方评分**：详情页显示 IMDb、烂番茄与爆米花评分（经 Wikidata 定位，可在设置 › 影视资料关闭）。
 - **电视操作**：遥控器焦点、快速选集，手机扫码添加服务器和填写 API 配置。
 
 ## 界面
@@ -76,6 +78,6 @@ zmby 是面向芝杜（Zidoo）的 Android TV Emby 客户端。把多台服务�
 
 项目自有源码与界面采用 [GPL-3.0-or-later](LICENSE)。第三方组件的许可与归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。截图中的影视海报、剧照与标志归各自权利人所有。
 
-影视资料来自 [TMDB](https://www.themoviedb.org)、[Bangumi](https://bgm.tv)，番剧别名来自 [bangumi-data](https://github.com/bangumi-data/bangumi-data)。This product uses the TMDB API but is not endorsed or certified by TMDB.
+影视资料来自 [TMDB](https://www.themoviedb.org)、[Bangumi](https://bgm.tv)，预告片与 IMDb 评分来自 [IMDb](https://www.imdb.com)，烂番茄与爆米花评分来自 [Rotten Tomatoes](https://www.rottentomatoes.com)（经 [Wikidata](https://www.wikidata.org) 定位），番剧别名来自 [bangumi-data](https://github.com/bangumi-data/bangumi-data)。This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 Emby 与 Zidoo 为各自权利人的产品与商标，本项目为独立客户端。应用不提供任何明示或暗示的担保。

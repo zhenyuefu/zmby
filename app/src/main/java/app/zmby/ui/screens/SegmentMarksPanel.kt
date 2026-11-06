@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.zmby.media.visibleText
 import app.zmby.media.titleOf
 import androidx.activity.compose.BackHandler
@@ -37,7 +38,6 @@ import app.zmby.ui.components.onFill
 import app.zmby.ui.components.panelSurface
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -89,7 +89,7 @@ internal fun segmentTip(state: SegmentStatus): String = when {
 @Composable
 internal fun rememberSegmentStatus(ref: ServerItem?): SegmentStatus {
     val app = LocalContext.current.zmby
-    val revision by app.segments.changes.collectAsState()
+    val revision by app.segments.changes.collectAsStateWithLifecycle()
     var status by remember(ref?.key, revision) { mutableStateOf(SegmentStatus(loading = ref != null)) }
     LaunchedEffect(ref?.key, revision) {
         if (ref == null) return@LaunchedEffect

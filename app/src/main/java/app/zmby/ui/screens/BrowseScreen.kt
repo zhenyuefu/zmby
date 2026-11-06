@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import app.zmby.TraceRecomposition
 import app.zmby.media.titleOf
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
@@ -78,6 +79,8 @@ import app.zmby.ui.components.panelSurface
 import app.zmby.data.BrowseQuery
 import app.zmby.data.BrowseSort
 import app.zmby.data.LetterRail
+import app.zmby.data.SourceFeature
+import app.zmby.data.SourceRules
 import app.zmby.data.WatchFilter
 import app.zmby.ui.Nav
 import app.zmby.ui.Route
@@ -118,12 +121,19 @@ private val GRID_WIDTH = 80.dp + POSTER * COLUMNS + 52.dp * (COLUMNS - 1) + 30.d
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, search: FocusRequester, entry: FocusRequester, onTargetUsed: () -> Unit) {
+    TraceRecomposition("Browse.root")
     val app = LocalContext.current.zmby
     val vm = screenModel("browse:$types") { BrowseViewModel(app, types) }
     val st by vm.state.collectAsStateWithLifecycle()
     val pages by vm.pages.collectAsStateWithLifecycle()
-    val servers by app.registry.servers.collectAsStateWithLifecycle()
-    val enabled = servers.filter { it.enabled }
+    // 列表卡片按影片信息来源取值: read by the cards, so a newly loaded work only recomposes them.
+    val faces = app.cardFaces.version.collectAsStateWithLifecycle()
+    // Configuration only: health and latency change with every request; the toolbar reads them itself.
+    val servers by app.registry.lineup.collectAsStateWithLifecycle()
+    // 首页与影视来源: a server hidden from home is not browsed either.
+    val sourceRows by app.sources.rows.collectAsStateWithLifecycle()
+    val enabled = remember(servers, sourceRows) { servers.filter { it.enabled && SourceRules.enabled(sourceRows, SourceFeature.Browse, it.id) } }
+    LaunchedEffect(enabled) { vm.keepWithin(enabled.map { it.id }) }
     val tick = rememberResumeTick()
     LaunchedEffect(tick) { if (tick > 0) vm.refresh() }
     LaunchedEffect(target) {
@@ -149,15 +159,16 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, search
         panel = null
         scope.launch { back.requestWhenReady() }
     }
-    // The slot the remote is on, and where a jump wants focus to land.
-    var focused by remember { mutableIntStateOf(0) }
+    // The slot the remote is on, and where a jump wants focus to land. [focused] and [lastMove] change
+    // with every move: only the scrollbar and the letter rail read them, not the page (R5).
+    val focused = remember { mutableIntStateOf(0) }
     var focusTarget by remember { mutableStateOf<Int?>(null) }
-    var lastMove by remember { mutableLongStateOf(0L) }
+    val lastMove = remember { mutableLongStateOf(0L) }
     var held by remember { mutableStateOf(false) }
 
     LaunchedEffect(st.generation) {
         if (grid.firstVisibleItemIndex > 0) grid.scrollToItem(0)
-        focused = 0
+        focused.intValue = 0
     }
     // Pages for the slots in view (and the next page), not every slot passed while scrolling fast.
     LaunchedEffect(grid, st.generation) {
@@ -166,12 +177,12 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, search
             .debounce(120)
             .collect { (a, b) -> vm.ensure(a, b) }
     }
-    LaunchedEffect(grid) { snapshotFlow { grid.firstVisibleItemIndex }.collect { lastMove = System.currentTimeMillis() } }
+    LaunchedEffect(grid) { snapshotFlow { grid.firstVisibleItemIndex }.collect { lastMove.longValue = System.currentTimeMillis() } }
 
     fun jump(delta: Int) {
         if (st.total == 0) return
         val visibleRows = (grid.layoutInfo.visibleItemsInfo.size / COLUMNS).coerceAtLeast(1)
-        val to = (focused + delta * visibleRows * COLUMNS).coerceIn(0, st.total - 1)
+        val to = (focused.intValue + delta * visibleRows * COLUMNS).coerceIn(0, st.total - 1)
         scope.launch {
             grid.scrollToItem((to / COLUMNS) * COLUMNS)
             focusTarget = to
@@ -183,15 +194,29 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, search
         focusTarget = index
     }
 
-    val focusedRef = pages[focused / BrowseViewModel.PAGE]?.getOrNull(focused % BrowseViewModel.PAGE)
+    val sortable = st.filters.sorts.isNotEmpty()
+    val filterable = st.filters.anyFilter(st.genres)
     Column(Modifier.fillMaxSize()) {
-        PageHeader(if (types == "Series") "剧集" else "电影", st.libraryTotal?.let { "$it 部" }, search, down = if (enabled.size > 1 || st.libraries.size > 1) firstRow else sortButton) { nav.go(Route.Search) }
+        val count = st.libraryTotal?.let { if (st.collections) "$it 个合集" else "$it 部" }
+        val down = when {
+            enabled.isEmpty() -> null
+            enabled.size > 1 || st.libraries.size > 1 || st.hasCollections -> firstRow
+            sortable -> sortButton
+            filterable -> filterButton
+            else -> entry
+        }
+        PageHeader(if (types == "Series") "剧集" else "电影", count.takeIf { enabled.isNotEmpty() }, search, down = down) { nav.go(Route.Search) }
+        if (enabled.isEmpty()) {
+            Text("所有服务器都已在首页与影视中隐藏。在首页来源或 设置 › 数据来源 › 首页与影视来源 中重新打开。", fontSize = 24.sp, color = Z.textSecondary,
+                modifier = Modifier.padding(start = 80.dp, top = 40.dp).widthIn(max = 1400.dp))
+            return@Column
+        }
         Toolbar(
             st = st,
             servers = enabled,
             onServer = { id -> vm.select(id, null) },
             onMore = { panel = "servers" },
-            onLibrary = { i -> vm.select(st.server, st.libraries.getOrNull(i - 1)?.id) },
+            onLibrary = { i -> vm.select(st.server, if (i > st.libraries.size) BrowseViewModel.COLLECTIONS else st.libraries.getOrNull(i - 1)?.id) },
             onQuery = vm::setQuery,
             onPanel = { panel = it },
             sortButton = sortButton,
@@ -205,7 +230,7 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, search
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.width(GRID_WIDTH).fillMaxHeight()) {
                 if (st.loaded && st.total == 0) {
-                    Text(if (st.query.filtered) "没有符合筛选的内容" else "没有内容", fontSize = 26.sp, color = Z.textSecondary, modifier = Modifier.padding(start = 80.dp, top = 40.dp))
+                    Text(if (st.query.filtered) "没有符合筛选的内容" else if (st.collections) "没有合集" else "没有内容", fontSize = 26.sp, color = Z.textSecondary, modifier = Modifier.padding(start = 80.dp, top = 40.dp))
                 }
                 st.error?.let { message ->
                     // Offline and never browsed here: the reason and a retry, not an empty grid.
@@ -251,15 +276,16 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, search
                         }
                         Box(Modifier.focusRequester(requester).then(if (i == 0) Modifier.focusRequester(entry) else Modifier)) {
                             val item = ref?.item
+                            val face = remember(faces.value, ref?.key) { ref?.let(app.cardFaces::face) }
                             PosterCard2x3(
-                                imageUrl = ref?.let { app.library.primaryImage(it) },
-                                title = item?.let(::titleOf).orEmpty(),
+                                imageUrl = face?.poster ?: ref?.let { app.library.primaryImage(it) },
+                                title = face?.title ?: item?.let(::titleOf).orEmpty(),
                                 onClick = { if (ref != null) nav.open(ref) },
                                 width = POSTER,
                                 topEnd = item?.let(::unwatchedBadge),
                                 subtitle = item?.let(::browseCaption) ?: " ",
                                 focusKey = ref?.let { "grid:${it.key}" } ?: "slot:$i",
-                                onFocus = { focused = i; lastMove = System.currentTimeMillis() },
+                                onFocus = { focused.intValue = i; lastMove.longValue = System.currentTimeMillis() },
                                 modifier = Modifier.onMenuKey { if (ref != null) app.toggleWatchlist(scope, ref) },
                             )
                         }
@@ -268,25 +294,22 @@ internal fun BrowseScreen(nav: Nav, types: String, target: BrowseTarget?, search
             }
             Box(Modifier.fillMaxHeight().weight(1f)) {
                 if (st.query.sort == BrowseSort.Title && st.total > 0) {
-                    LetterRailColumn(current = focusedRef?.item?.let(::letterOf), onLetter = { letter -> scope.launch { vm.indexOf(letter)?.let { jumpTo(it) } } })
+                    BrowseLetterRail(pages, focused, onLetter = { letter -> scope.launch { vm.indexOf(letter)?.let { jumpTo(it) } } })
                 } else {
-                    val viewport by remember(grid) {
-                        derivedStateOf { grid.firstVisibleItemIndex to grid.layoutInfo.visibleItemsInfo.size }
-                    }
-                    Scrollbar(position = focused, first = viewport.first, visible = viewport.second, total = st.total, lastMove = lastMove)
+                    BrowseScrollbar(grid, focused, lastMove, st.total)
                 }
             }
         }
     }
     when (panel) {
-        "sort" -> SortPanel(st.query, onPick = { vm.setQuery(st.query.sortedBy(it)); closePanel() }, onDismiss = ::closePanel)
-        "filter" -> FilterPanel(st.query, st.genres, st.total, onChange = vm::setQuery, onDismiss = ::closePanel)
+        "sort" -> SortPanel(st.query, st.filters.sorts, onPick = { vm.setQuery(st.query.sortedBy(it)); closePanel() }, onDismiss = ::closePanel)
+        "filter" -> FilterPanel(st.query, st.filters, st.genres, st.total, onChange = vm::setQuery, onDismiss = ::closePanel)
         "servers" -> ServerPanel(enabled, st.server, onPick = { id -> vm.select(id, null); closePanel() }, onDismiss = ::closePanel)
     }
 }
 
-/** 「2024 · 8.1」 for a film, 「2014 · 6 季」 for a series. */
-internal fun browseCaption(item: BaseItemDto): String = listOfNotNull(
+/** 「2024 · 8.1」 for a film, 「2014 · 6 季」 for a series, 「4 部」 for a collection. */
+internal fun browseCaption(item: BaseItemDto): String = if (item.type == "BoxSet") item.childCount?.takeIf { it > 0 }?.let { "$it 部" } ?: " " else listOfNotNull(
     item.productionYear?.toString(),
     if (item.type == "Series") item.childCount?.takeIf { it > 0 }?.let { "$it 季" } else item.communityRating?.takeIf { it > 0 }?.let { "%.1f".format(java.util.Locale.ROOT, it) },
 ).joinToString(" · ").ifEmpty { " " }
@@ -325,6 +348,13 @@ internal fun visibleServers(servers: List<ServerStatus>, chosen: String?, max: I
 
 private val Pill = RoundedCornerShape(percent = 50)
 
+/** [lineup] (configuration) with this run's health and latency; only the parts showing health read it. */
+@Composable
+private fun withHealth(lineup: List<ServerStatus>): List<ServerStatus> {
+    val live by LocalContext.current.zmby.registry.servers.collectAsStateWithLifecycle()
+    return remember(lineup, live) { lineup.map { s -> live.firstOrNull { it.id == s.id } ?: s } }
+}
+
 @Composable
 private fun Toolbar(
     st: BrowseState,
@@ -342,6 +372,8 @@ private fun Toolbar(
     firstRow: FocusRequester,
     entry: FocusRequester?,
 ) {
+    TraceRecomposition("Browse.toolbar")
+    val servers = withHealth(servers)
     Column(Modifier.fillMaxWidth().padding(start = 80.dp, end = 80.dp, top = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.upToSearch(search).focusRequester(firstRow).focusGroup(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (servers.size > 1) {
@@ -356,10 +388,11 @@ private fun Toolbar(
                     modifier = Modifier.focusRequester(moreButton),
                 )
             }
-            if (st.libraries.size > 1) {
+            if (st.libraries.size > 1 || st.hasCollections) {
+                // 合集 last (电影 only): the server's collections instead of its films.
                 SegmentedWell(
-                    items = listOf(Segment("全部")) + st.libraries.map { Segment(it.name) },
-                    selected = st.libraries.indexOfFirst { it.id == st.libraryId } + 1,
+                    items = listOf(Segment("全部")) + st.libraries.map { Segment(it.name) } + listOfNotNull(if (st.hasCollections) Segment("合集") else null),
+                    selected = if (st.collections) st.libraries.size + 1 else st.libraries.indexOfFirst { it.id == st.libraryId } + 1,
                     onSelect = onLibrary,
                     selectOnFocus = false,
                     fontSize = 19,
@@ -369,34 +402,50 @@ private fun Toolbar(
                 )
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ToolbarPill(
-                "排序 · ${st.query.sort.label}",
-                { onPanel("sort") },
-                Modifier.focusRequester(sortButton).then(if (entry != null) Modifier.focusRequester(entry) else Modifier),
-                trailing = { Icon(Glyph.Down, size = 20.dp, strokeWidth = 2.4f) },
-            )
-            SegmentedWell(
-                items = listOf(Segment("降序"), Segment("升序")),
-                selected = if (st.query.descending) 0 else 1,
-                onSelect = { onQuery(st.query.copy(descending = it == 0)) },
-                selectOnFocus = false,
-                fontSize = 19,
-                horizontalPadding = 22.dp,
-                labelPrefix = "顺序",
-                segHeight = 50.dp,
-            )
-            val count = st.query.chips().size
-            ToolbarPill("筛选", { onPanel("filter") }, Modifier.focusRequester(filterButton), on = filterOpen, label = "筛选", trailing = {
-                if (count > 0) CountBadge(count, inverted = filterOpen)
-                if (filterOpen) Icon(Glyph.Up, size = 20.dp, strokeWidth = 2.4f)
-            })
-            // Each chip removes its filter; 清除 removes them all.
-            st.query.chips().forEach { (label, without) -> ConditionChip(label, onClick = { onQuery(without) }) }
-            if (st.query.filtered) ConditionChip("清除", plain = true, onClick = { onQuery(st.query.cleared()) })
+        // Only what this server honours (BrowseFilters): no sort controls when it ignores sorting, no 筛选 when nothing narrows.
+        val sortable = st.filters.sorts.isNotEmpty()
+        val filterable = st.filters.anyFilter(st.genres)
+        Row(Modifier.heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            val entryHere = if (entry != null) Modifier.focusRequester(entry) else Modifier
+            if (sortable) {
+                ToolbarPill(
+                    "排序 · ${st.query.sort.label}",
+                    { onPanel("sort") },
+                    Modifier.focusRequester(sortButton).then(entryHere),
+                    trailing = { Icon(Glyph.Down, size = 20.dp, strokeWidth = 2.4f) },
+                )
+                SegmentedWell(
+                    items = listOf(Segment("降序"), Segment("升序")),
+                    selected = if (st.query.descending) 0 else 1,
+                    onSelect = { onQuery(st.query.copy(descending = it == 0)) },
+                    selectOnFocus = false,
+                    fontSize = 19,
+                    horizontalPadding = 22.dp,
+                    labelPrefix = "顺序",
+                    segHeight = 50.dp,
+                )
+            }
+            if (filterable) {
+                val count = st.query.chips().size
+                ToolbarPill("筛选", { onPanel("filter") }, Modifier.focusRequester(filterButton).then(if (sortable) Modifier else entryHere), on = filterOpen, label = "筛选", trailing = {
+                    if (count > 0) CountBadge(count, inverted = filterOpen)
+                    if (filterOpen) Icon(Glyph.Up, size = 20.dp, strokeWidth = 2.4f)
+                })
+                // Each chip removes its filter; 清除 removes them all.
+                st.query.chips().forEach { (label, without) -> ConditionChip(label, onClick = { onQuery(without) }) }
+                if (st.query.filtered) ConditionChip("清除", plain = true, onClick = { onQuery(st.query.cleared()) })
+            }
             Spacer(Modifier.weight(1f))
-            if (st.sortUnsupported) Text("这台服务器不支持该排序", fontSize = 19.sp, color = Z.warn, maxLines = 1)
-            if (st.loaded) Text("符合 ${st.total} 部", fontSize = 19.sp, color = Z.textSecondary, maxLines = 1)
+            val note = when {
+                st.sortUnsupported -> "这台服务器不支持该排序"
+                st.collections -> null
+                !sortable && !filterable -> "这台服务器不支持排序和筛选"
+                !sortable -> "这台服务器不支持排序"
+                !filterable && st.filters.known -> "这台服务器不支持筛选"
+                else -> null
+            }
+            if (note != null) Text(note, fontSize = 19.sp, color = if (st.sortUnsupported) Z.warn else Z.textSecondary, maxLines = 1)
+            if (st.loaded) Text(if (st.collections) "共 ${st.total} 个合集" else "符合 ${st.total} 部", fontSize = 19.sp, color = Z.textSecondary, maxLines = 1)
         }
     }
 }
@@ -479,6 +528,24 @@ private fun Scrollbar(position: Int, first: Int, visible: Int, total: Int, lastM
 
 /** 字母轨 (# A–Z, x 1832) in place of the scrollbar when sorted by title; the focused title's letter is a white pill. */
 @Composable
+private fun BrowseLetterRail(pages: Map<Int, List<app.zmby.data.ServerItem>>, focused: androidx.compose.runtime.IntState, onLetter: (String) -> Unit) {
+    TraceRecomposition("Browse.rail")
+    val index = focused.intValue
+    val ref = pages[index / BrowseViewModel.PAGE]?.getOrNull(index % BrowseViewModel.PAGE)
+    LetterRailColumn(current = ref?.item?.let(::letterOf), onLetter = onLetter)
+}
+
+/** The grid's position: the only part of the page that follows each move. */
+@Composable
+private fun BrowseScrollbar(grid: androidx.compose.foundation.lazy.grid.LazyGridState, focused: androidx.compose.runtime.IntState, lastMove: androidx.compose.runtime.LongState, total: Int) {
+    TraceRecomposition("Browse.scrollbar")
+    val viewport by remember(grid) {
+        derivedStateOf { grid.firstVisibleItemIndex to grid.layoutInfo.visibleItemsInfo.size }
+    }
+    Scrollbar(position = focused.intValue, first = viewport.first, visible = viewport.second, total = total, lastMove = lastMove.longValue)
+}
+
+@Composable
 private fun LetterRailColumn(current: String?, onLetter: (String) -> Unit) {
     Column(
         Modifier.padding(start = 22.dp, top = 24.dp).width(40.dp).focusGroup(),
@@ -498,12 +565,13 @@ private fun LetterRailColumn(current: String?, onLetter: (String) -> Unit) {
 
 /** 排序: the sort fields as a single-choice list. */
 @Composable
-private fun SortPanel(query: BrowseQuery, onPick: (BrowseSort) -> Unit, onDismiss: () -> Unit) {
+private fun SortPanel(query: BrowseQuery, sorts: List<BrowseSort>, onPick: (BrowseSort) -> Unit, onDismiss: () -> Unit) {
     OverlayPanel(onDismiss, width = 460.dp) { first ->
-        BrowseSort.entries.forEach { s ->
+        val current = query.sort.takeIf { it in sorts } ?: sorts.first()
+        sorts.forEach { s ->
             SelectableRow(
                 onClick = { onPick(s) },
-                modifier = if (s == query.sort) Modifier.focusRequester(first) else Modifier,
+                modifier = if (s == current) Modifier.focusRequester(first) else Modifier,
                 selected = s == query.sort,
                 radius = 20.dp,
                 label = "排序 ${s.label}",
@@ -514,7 +582,8 @@ private fun SortPanel(query: BrowseQuery, onPick: (BrowseSort) -> Unit, onDismis
 
 /** 更多 n 台: every enabled server, in priority order, with its health. */
 @Composable
-private fun ServerPanel(servers: List<ServerStatus>, current: String?, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+private fun ServerPanel(lineup: List<ServerStatus>, current: String?, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    val servers = withHealth(lineup)
     OverlayPanel(onDismiss, width = 600.dp) { first ->
         servers.forEach { s ->
             SelectableRow(
@@ -536,11 +605,12 @@ private fun ServerPanel(servers: List<ServerStatus>, current: String?, onPick: (
 /**
  * 筛选 (BrowseSeries.dc.html): a 820-wide panel under the button over the dimmed grid: 观看状态,
  * 只看收藏 and 4K switches, 年代 and 类型 chips (chosen = bright with an outline), then 清除 and
- * 「完成 · 符合 n 部」, which follows every change. Back is 完成.
+ * 「完成 · 符合 n 部」, which follows every change. Back is 完成. Only the parts [filters] says this
+ * server honours; 年代 lists the decades it has titles in.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FilterPanel(query: BrowseQuery, genres: List<String>, total: Int, onChange: (BrowseQuery) -> Unit, onDismiss: () -> Unit) {
+private fun FilterPanel(query: BrowseQuery, filters: app.zmby.data.BrowseFilters, genres: List<String>, total: Int, onChange: (BrowseQuery) -> Unit, onDismiss: () -> Unit) {
     BackHandler(onBack = onDismiss)
     BlockSideNav()
     val first = remember { FocusRequester() }
@@ -560,7 +630,18 @@ private fun FilterPanel(query: BrowseQuery, genres: List<String>, total: Int, on
         ) {
             @Composable
             fun Title(text: String) = Text(text, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Z.textTertiary)
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            val showGenres = filters.genres && genres.isNotEmpty()
+            // Initial focus on the first part shown.
+            val firstPart = when {
+                filters.watched -> 0
+                filters.favorite -> 1
+                filters.uhd -> 2
+                filters.decades.isNotEmpty() -> 3
+                showGenres -> 4
+                else -> 5
+            }
+            fun at(part: Int) = if (part == firstPart) Modifier.focusRequester(first) else Modifier
+            if (filters.watched) Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { Title("观看状态") }
                 SegmentedWell(
                     items = WatchFilter.entries.map { Segment(it.label) },
@@ -569,25 +650,27 @@ private fun FilterPanel(query: BrowseQuery, genres: List<String>, total: Int, on
                     selectOnFocus = false,
                     fontSize = 19,
                     labelPrefix = "观看状态",
-                    modifier = Modifier.focusRequester(first),
+                    modifier = at(0),
                 )
             }
-            SwitchRow("只看收藏", query.favorite) { onChange(query.copy(favorite = !query.favorite)) }
-            SwitchRow("4K", query.uhd) { onChange(query.copy(uhd = !query.uhd)) }
-            Title("年代")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                BrowseQuery.DECADES.forEach { d ->
-                    FilterChip("$d 年代", d in query.decades) { onChange(query.copy(decades = if (d in query.decades) query.decades - d else query.decades + d)) }
+            if (filters.favorite) SwitchRow("只看收藏", query.favorite, at(1)) { onChange(query.copy(favorite = !query.favorite)) }
+            if (filters.uhd) SwitchRow("4K", query.uhd, at(2)) { onChange(query.copy(uhd = !query.uhd)) }
+            if (filters.decades.isNotEmpty()) {
+                Title("年代")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    filters.decades.forEachIndexed { i, d ->
+                        FilterChip("$d 年代", d in query.decades, if (i == 0) at(3) else Modifier) { onChange(query.copy(decades = if (d in query.decades) query.decades - d else query.decades + d)) }
+                    }
                 }
             }
-            if (genres.isNotEmpty()) {
+            if (showGenres) {
                 Title("类型")
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    genres.forEach { g -> FilterChip(g, g in query.genres) { onChange(query.copy(genres = if (g in query.genres) query.genres - g else query.genres + g)) } }
+                    genres.forEachIndexed { i, g -> FilterChip(g, g in query.genres, if (i == 0) at(4) else Modifier) { onChange(query.copy(genres = if (g in query.genres) query.genres - g else query.genres + g)) } }
                 }
             }
             Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                ToolbarPill("清除", { onChange(query.cleared()) })
+                ToolbarPill("清除", { onChange(query.cleared()) }, at(5))
                 ToolbarPill("完成 · 符合 $total 部", onDismiss, label = "完成")
             }
         }
@@ -596,8 +679,8 @@ private fun FilterPanel(query: BrowseQuery, genres: List<String>, total: Int, on
 
 /** `.trow`: a 60-high row with its label and a switch; OK toggles it. */
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onToggle: () -> Unit) {
-    SelectableRow(onToggle, showCheck = false, radius = 18.dp, padding = PaddingValues(horizontal = 14.dp, vertical = 7.dp), label = "$label ${if (checked) "开" else "关"}") {
+private fun SwitchRow(label: String, checked: Boolean, modifier: Modifier = Modifier, onToggle: () -> Unit) {
+    SelectableRow(onToggle, modifier, showCheck = false, radius = 18.dp, padding = PaddingValues(horizontal = 14.dp, vertical = 7.dp), label = "$label ${if (checked) "开" else "关"}") {
         Text(label, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
         GlassToggle(checked)
     }
@@ -605,8 +688,8 @@ private fun SwitchRow(label: String, checked: Boolean, onToggle: () -> Unit) {
 
 /** `.chip` in the filter panel: chosen = 22 % white with an outline; focus = white and 1.06. */
 @Composable
-private fun FilterChip(label: String, on: Boolean, onToggle: () -> Unit) {
-    Focusable(onToggle, shape = Pill, focusedScale = 1.06f, outline = 0.dp, shadow = 0.dp, label = "$label ${if (on) "已选" else "未选"}") { f ->
+private fun FilterChip(label: String, on: Boolean, modifier: Modifier = Modifier, onToggle: () -> Unit) {
+    Focusable(onToggle, modifier, shape = Pill, focusedScale = 1.06f, outline = 0.dp, shadow = 0.dp, label = "$label ${if (on) "已选" else "未选"}") { f ->
         Box(
             Modifier.height(50.dp)
                 .then(

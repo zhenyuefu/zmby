@@ -13,6 +13,7 @@ GPL-3.0-or-later 覆盖本项目自有代码和自制配图，不替代以下组
 | Coil | 图片加载 | Apache-2.0；[Coil](https://github.com/coil-kt/coil) |
 | pinyin4j 2.5.1（com.belerweb） | 拼音匹配 | 按 [PinyinHelper 源码](https://github.com/belerweb/pinyin4j/blob/master/src/main/java/net/sourceforge/pinyin4j/PinyinHelper.java) 的 **GPL-2.0-or-later** 声明处理；内含 [Sparta](https://github.com/belerweb/pinyin4j/blob/master/src/main/java/com/hp/hpl/sparta/Parser.java) 为 **LGPL-2.1-or-later**，Copyright © 2002 Hewlett-Packard Company。[POM](https://github.com/belerweb/pinyin4j/blob/master/pom.xml) 虽写 BSD，本项目不以此覆盖源码的许可声明。 |
 | danmu2ass 1.0.2（gwy15，提交 3b8046d） | `app/src/main/java/app/zmby/danmu/DanmuAss.kt` 将其弹幕分道、避让与 ASS 写出逐行移植为 Kotlin（不含其 Rust 代码或二进制） | MIT，Copyright (c) 2022 gwy15；全文见 [LICENSES/MIT-danmu2ass.txt](LICENSES/MIT-danmu2ass.txt)。[danmu2ass](https://github.com/gwy15/danmu2ass) |
+| AndroidX Media3（ExoPlayer、HLS、Datasource、Database 等，1.11.1） | 主推区与详情页的预告片播放与缓存 | Apache-2.0；[Media3](https://github.com/androidx/media) |
 | ZXing core | 二维码 | Apache-2.0；[ZXing](https://github.com/zxing/zxing) |
 | JUnit 4 | 单元测试 | EPL-1.0；[原始许可](https://github.com/junit-team/junit4/blob/main/LICENSE-junit.txt) |
 | Robolectric | Android JVM 测试 | MIT，部分文件为 Apache-2.0；[原始许可](https://github.com/robolectric/robolectric/blob/master/LICENSE) |
@@ -38,5 +39,11 @@ Emby 与 Zidoo 的名称用于说明兼容目标，商标与产品归各自权�
 TMDB API 与图片：https://www.themoviedb.org 。`tmdb_logo.xml` 将其官方 blue_short SVG 转为 Android VectorDrawable，保留图形、配色和宽高比，仅用于关于页归属标识；不按本项目 GPL 重新许可 TMDB 商标。This product uses the TMDB API but is not endorsed or certified by TMDB. 用户自行提供 Read Access Token；影视数据和图片的权利属于相应权利人，不随本项目源码许可证重新授权。
 
 Bangumi API：https://bgm.tv （API 文档：https://github.com/bangumi/api）。资料由运行时直连获取，不随源码打包。
+
+IMDb：https://www.imdb.com 。预告片的地址由 IMDb 网站使用的 GraphQL 接口（`caching.graphql.imdb.com`）在运行时按作品的 IMDb ID 查询，视频从 IMDb 的 CDN 直接播放并缓存在设备上，不随源码打包。该接口不是公开 API，其应答声明 IMDb 数据仅限有限的非商业个人使用；预告片与 IMDb 商标归各自权利人所有，不随本项目源码许可证重新授权。用户可在设置 › 首页关闭预告片。IMDb 用户评分取自同一接口。
+
+Rotten Tomatoes：https://www.rottentomatoes.com 。Tomatometer 与 Popcornmeter（爆米花指数）在运行时从作品的公开页面读取，仅显示分数；IMDb 没有预告片时，从作品的视频页取预告片，经 Fandango 的视频平台（thePlatform、Akamai）以 HLS 播放并缓存在设备上，不随源码打包；页面不是公开 API，其使用条款限制自动访问；分数与 Rotten Tomatoes、Tomatometer、Popcornmeter 商标归各自权利人所有。界面中的番茄、爆裂与爆米花图形为本项目自绘的单色图形，不是其商标图形。用户可在设置 › 影视资料关闭外部评分。
+
+Wikidata：https://www.wikidata.org ，数据为 CC0。运行时按 IMDb ID 查询作品的 Rotten Tomatoes ID（P1258），不随源码打包。
 
 bangumi-data/bangumi-data：https://github.com/bangumi-data/bangumi-data ，数据许可证 CC BY 4.0（https://creativecommons.org/licenses/by/4.0/）。运行时通过 jsDelivr / unpkg 获取，仅用于原名 / 译名 / Bangumi 入口识别；未捆绑数据副本，也不将其当作逐集映射表。

@@ -131,6 +131,8 @@ class PlaybackPreparer(
         /** Language preference for tracks the user did not pick ([TrackPreference]). */
         audioLanguage: String = TrackPreference.SERVER,
         subtitleLanguage: String = TrackPreference.SERVER,
+        /** 特效字幕优先 ([TrackPreference.choose]). */
+        preferStyledSubtitles: Boolean = false,
         /** 弹幕 baked into the subtitle the player shows; only with [SubtitleDelivery.LocalStrm]. */
         danmu: DanmuSubtitle? = null,
         preferredVersion: MediaSourceInfo? = null,
@@ -146,7 +148,7 @@ class PlaybackPreparer(
         val images = try { artwork(session, item) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: Exception) { ZLog.w(TAG, "cached playback artwork unavailable", e); PlaybackImages() }
-        val tracks = TrackPreference.choose(source, picked, audioLanguage, subtitleLanguage, item.originalLanguage ?: images.originalLanguage)
+        val tracks = TrackPreference.choose(source, picked, audioLanguage, subtitleLanguage, item.originalLanguage ?: images.originalLanguage, preferStyledSubtitles)
         val direct = StreamUrls.direct(session.baseUrl, source, session.accessToken)
         val directUrl = checkedUrl(session, direct ?: client.streamUrl(session, item.id, source, info.playSessionId))
         val transport = caps.get(session.capsKey).relay

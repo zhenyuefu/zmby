@@ -1,5 +1,7 @@
 package app.zmby.ui.screens
 
+import app.zmby.zmby
+
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
@@ -76,7 +78,7 @@ internal fun DetailHeadingSlots(heading: DetailHeadingState) {
 
 /** One Logo and metadata row travel from the hero to the glass bar; neither is swapped or reloaded. */
 @Composable
-internal fun CompactHeader(heading: DetailHeadingState, display: DetailDisplay, meta: String, playLabel: String?) {
+internal fun CompactHeader(heading: DetailHeadingState, display: DetailDisplay, meta: String, playLabel: String?, ratings: app.zmby.ratings.ExternalRatings? = null) {
     val density = heading.density
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxWidth().height(140.dp)
@@ -101,9 +103,7 @@ internal fun CompactHeader(heading: DetailHeadingState, display: DetailDisplay, 
                 scaleY = frame.metaScale
             }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(meta, fontSize = 22.sp, color = Z.textPrimary.copy(alpha = 0.78f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                display.rating?.let { rating ->
-                    Badge("${if (display.ratingTmdb) "TMDB" else "评分"} %.1f".format(rating), fill = true)
-                }
+                RatingBadges(display, ratings)
             }
         }
         Row(Modifier.align(Alignment.TopEnd).padding(end = 80.dp, top = 56.dp)
@@ -114,5 +114,59 @@ internal fun CompactHeader(heading: DetailHeadingState, display: DetailDisplay, 
                 Text(playLabel, fontSize = 19.sp, color = Z.textSecondary, maxLines = 1)
             }
         }
+    }
+}
+
+/**
+ * Plays the page's IMDb trailer behind the fixed backdrop once [DetailViewModel.trailer] finds it
+ * (trailer design; ui-spec §2.2), once per visit: back from the player it does not start again. It
+ * pauses while the scrolled page has blurred the backdrop away and goes on when it shows again.
+ */
+@Composable
+internal fun DetailTrailerHost(vm: DetailViewModel, trailer: app.zmby.ui.components.TrailerPlayer, heading: DetailHeadingState) {
+    val app = androidx.compose.ui.platform.LocalContext.current.zmby
+    val key = "${vm.server}:${vm.itemId}"
+    androidx.compose.runtime.LaunchedEffect(vm, trailer) {
+        kotlinx.coroutines.flow.combine(vm.trailer, app.settings.trailerSound.flow) { t, sound -> t to sound }.collect { (t, sound) ->
+            if (t == null) trailer.stop() else trailer.load("$key:${t.source}:${t.videoId}", t, sound)
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(trailer, heading) {
+        androidx.compose.runtime.snapshotFlow { heading.backdropProgress >= TRAILER_HOLD_AT }.collect { trailer.hold(it) }
+    }
+}
+
+/** The blurred cover over the backdrop is this far in when the trailer under it pauses. */
+private const val TRAILER_HOLD_AT = 0.95f
+
+/**
+ * The header's ratings (ratings design; ui-spec §2.2): IMDb, Tomatometer, Popcornmeter, then the
+ * catalogue's own (TMDB, or the server's 「评分」). Each only when known; the external ones arrive
+ * after the page, so they appear without moving what is already there.
+ */
+@Composable
+internal fun RatingBadges(display: DetailDisplay, ratings: app.zmby.ratings.ExternalRatings?) {
+    ratingBadges(display.rating, display.ratingTmdb, ratings).forEach { b ->
+        app.zmby.ui.components.RatingBadge(b.value, label = b.label, glyph = b.glyph, spoken = b.spoken)
+    }
+}
+
+/** One badge of [RatingBadges]. */
+internal data class RatingBadgeModel(val value: String, val label: String? = null, val glyph: app.zmby.ui.components.Glyph? = null, val spoken: String)
+
+/** The badges in order; percentages as Rotten Tomatoes shows them, ratings to one decimal. */
+internal fun ratingBadges(own: Double?, ownTmdb: Boolean, ratings: app.zmby.ratings.ExternalRatings?): List<RatingBadgeModel> = buildList {
+    ratings?.imdb?.let { add(RatingBadgeModel("%.1f".format(java.util.Locale.ROOT, it), label = "IMDb", spoken = "IMDb 评分 %.1f".format(java.util.Locale.ROOT, it))) }
+    ratings?.tomatometer?.let { t ->
+        add(RatingBadgeModel("${t.percent}%", glyph = if (t.fresh) app.zmby.ui.components.Glyph.Tomato else app.zmby.ui.components.Glyph.Splat,
+            spoken = "烂番茄新鲜度 ${t.percent}%${if (t.certified) "，认证新鲜" else if (t.fresh) "，新鲜" else "，腐烂"}"))
+    }
+    ratings?.popcornmeter?.let { p ->
+        add(RatingBadgeModel("${p.percent}%", glyph = if (p.fresh) app.zmby.ui.components.Glyph.Popcorn else app.zmby.ui.components.Glyph.PopcornSpilled,
+            spoken = "爆米花指数 ${p.percent}%"))
+    }
+    own?.takeIf { it > 0 }?.let {
+        val label = if (ownTmdb) "TMDB" else "评分"
+        add(RatingBadgeModel("%.1f".format(java.util.Locale.ROOT, it), label = label, spoken = "$label %.1f".format(java.util.Locale.ROOT, it)))
     }
 }

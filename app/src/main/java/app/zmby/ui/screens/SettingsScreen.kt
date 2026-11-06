@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.zmby.data.SourceFeature
 import android.os.Build
 import androidx.compose.foundation.focusGroup
@@ -87,7 +88,7 @@ private enum class Category(val label: String, val glyph: Glyph, val value: Stri
 @Composable
 fun SettingsScreen(nav: Nav) {
     var category by rememberSaveable { mutableStateOf(Category.Playback) }
-    // 画质偏好 (ui-spec §2.22) opens inside 播放: the left column keeps 播放 selected.
+    // 版本偏好 (ui-spec §2.22) opens inside 播放: the left column keeps 播放 selected.
     var qualityOpen by rememberSaveable { mutableStateOf(false) }
     val qualityRow = remember { FocusRequester() }
     var qualityClosed by remember { androidx.compose.runtime.mutableIntStateOf(0) }
@@ -168,7 +169,7 @@ private fun appVersion(): String {
 @Composable
 private fun General(nav: Nav) {
     val settings = LocalContext.current.zmby.settings
-    val percent by settings.watchedPercent.collectAsState()
+    val percent by settings.watchedPercent.collectAsStateWithLifecycle()
     val steps = remember(percent) { (listOf(70, 80, 85, 90, 95) + percent).distinct().sorted() }
     SettingsGroup("播放进度") {
         ChoiceSetting("看完阈值", steps.map { "$it%" }, steps.indexOf(percent), { settings.setWatchedPercent(steps[it]) })
@@ -180,9 +181,9 @@ private fun General(nav: Nav) {
 private fun Playback(nav: Nav, qualityRow: FocusRequester, onQuality: () -> Unit) {
     val app = LocalContext.current.zmby
     val settings = app.settings
-    val offerNext by settings.offerNextEpisode.flow.collectAsState()
-    val countdown by settings.upNextCountdown.flow.collectAsState()
-    val failover by settings.autoFailover.flow.collectAsState()
+    val offerNext by settings.offerNextEpisode.flow.collectAsStateWithLifecycle()
+    val countdown by settings.upNextCountdown.flow.collectAsStateWithLifecycle()
+    val failover by settings.autoFailover.flow.collectAsStateWithLifecycle()
     SettingsGroup("播放器") {
         ToggleSetting("看完后提示下一集", offerNext, { settings.offerNextEpisode.set(!offerNext) })
         if (offerNext) ToggleSetting("自动播放下一集", countdown, { settings.upNextCountdown.set(!countdown) })
@@ -191,11 +192,11 @@ private fun Playback(nav: Nav, qualityRow: FocusRequester, onQuality: () -> Unit
     val overlay = overlaySetting()
     Danmu(overlay)
     DanmuServer()
-    val skipIntro by settings.skipIntro.flow.collectAsState()
-    val skipRecap by settings.skipRecap.flow.collectAsState()
-    val skipCredits by settings.skipCredits.flow.collectAsState()
-    val creditsMode by settings.skipCreditsMode.flow.collectAsState()
-    val rows by app.sources.rows.collectAsState()
+    val skipIntro by settings.skipIntro.flow.collectAsStateWithLifecycle()
+    val skipRecap by settings.skipRecap.flow.collectAsStateWithLifecycle()
+    val skipCredits by settings.skipCredits.flow.collectAsStateWithLifecycle()
+    val creditsMode by settings.skipCreditsMode.flow.collectAsStateWithLifecycle()
+    val rows by app.sources.rows.collectAsStateWithLifecycle()
     // 显示按钮 needs the overlay; without it the skip happens by itself (ui-spec §2.16).
     val buttonNote = if (overlay) null else "需要打开播放浮层"
     val modes = SkipMode.entries.map { it.label }
@@ -212,13 +213,9 @@ private fun Playback(nav: Nav, qualityRow: FocusRequester, onQuality: () -> Unit
         ValueSetting(SourceFeature.Segments.label, app.sources.label(SourceFeature.Segments), onClick = { nav.go(Route.DataSource(SourceFeature.Segments)) })
     }
     val prefs = rememberVersionPrefs()
-    val pattern by settings.versionPattern.flow.collectAsState()
+    // One row for every default-version rule: the name pattern lives in the sub-page too (§2.22).
     SettingsGroup("版本选择") {
-        ValueSetting("画质偏好", qualitySummary(prefs), onClick = onQuality, focusRequester = qualityRow)
-        // 版本偏好: marks the preferred version (e.g. 2160p.*REMUX); never hides others.
-        TextSetting("版本偏好", pattern, InputField.VersionPattern, save = { v ->
-            versionPatternError(v) ?: run { settings.versionPattern.set(v); null }
-        }, mono = true, placeholder = "2160p.*REMUX")
+        ValueSetting("版本偏好", versionSummary(prefs), onClick = onQuality, focusRequester = qualityRow)
     }
 }
 
@@ -231,7 +228,7 @@ private fun Playback(nav: Nav, qualityRow: FocusRequester, onQuality: () -> Unit
 private fun overlaySetting(): Boolean {
     val context = LocalContext.current
     val settings = context.zmby.settings
-    val on by settings.playbackOverlay.flow.collectAsState()
+    val on by settings.playbackOverlay.flow.collectAsStateWithLifecycle()
     var granted by remember { mutableStateOf(OverlayPermission.granted(context)) }
     LifecycleResumeEffect(Unit) {
         granted = OverlayPermission.granted(context)
@@ -259,14 +256,14 @@ private fun overlaySetting(): Boolean {
 private fun Danmu(overlay: Boolean) {
     val context = LocalContext.current
     val settings = context.zmby.settings
-    val on by settings.danmu.flow.collectAsState()
-    val mode by settings.danmuMode.flow.collectAsState()
-    val rows by settings.danmuRows.flow.collectAsState()
-    val opacity by settings.danmuOpacity.flow.collectAsState()
-    val fontSize by settings.danmuFontSize.flow.collectAsState()
-    val lineGap by settings.danmuLineGap.flow.collectAsState()
-    val topMargin by settings.danmuTopMargin.flow.collectAsState()
-    val base by settings.danmuApiBase.flow.collectAsState()
+    val on by settings.danmu.flow.collectAsStateWithLifecycle()
+    val mode by settings.danmuMode.flow.collectAsStateWithLifecycle()
+    val rows by settings.danmuRows.flow.collectAsStateWithLifecycle()
+    val opacity by settings.danmuOpacity.flow.collectAsStateWithLifecycle()
+    val fontSize by settings.danmuFontSize.flow.collectAsStateWithLifecycle()
+    val lineGap by settings.danmuLineGap.flow.collectAsStateWithLifecycle()
+    val topMargin by settings.danmuTopMargin.flow.collectAsStateWithLifecycle()
+    val base by settings.danmuApiBase.flow.collectAsStateWithLifecycle()
     val zidoo = remember { app.zmby.zidoo.ZidooIntents.installedPlayer(context)?.subtitles == app.zmby.zidoo.ZidooPlayer.SubtitleDelivery.LocalStrm }
     val note = danmuNote(mode, overlay, base.isNotBlank(), zidoo)
     SettingsGroup("弹幕") {
@@ -292,9 +289,9 @@ private fun Danmu(overlay: Boolean) {
 @Composable
 private fun DanmuServer() {
     val settings = LocalContext.current.zmby.settings
-    val base by settings.danmuApiBase.flow.collectAsState()
-    val appId by settings.danmuAppId.flow.collectAsState()
-    val secret by settings.danmuAppSecret.flow.collectAsState()
+    val base by settings.danmuApiBase.flow.collectAsStateWithLifecycle()
+    val appId by settings.danmuAppId.flow.collectAsStateWithLifecycle()
+    val secret by settings.danmuAppSecret.flow.collectAsStateWithLifecycle()
     SettingsGroup("弹幕服务器") {
         TextSetting("服务器地址", base, InputField.DanmuApiBase, save = { v ->
             if (v.isEmpty()) { settings.danmuApiBase.set(""); null }
@@ -319,7 +316,7 @@ private fun SettingsSubtitle(text: String) {
 
 @Composable
 private fun DanmuPixels(label: String, pref: app.zmby.data.Pref<Int>, choices: List<Int>) {
-    val current by pref.flow.collectAsState()
+    val current by pref.flow.collectAsStateWithLifecycle()
     val options = (choices + current).distinct().sorted()
     ChoiceSetting(label, options.map { "$it px" }, options.indexOf(current), { pref.set(options[it]) })
 }
@@ -335,8 +332,9 @@ internal fun danmuNote(mode: app.zmby.data.DanmuMode, overlay: Boolean, address:
 @Composable
 private fun Tracks() {
     val settings = LocalContext.current.zmby.settings
-    val audio by settings.audioLanguage.flow.collectAsState()
-    val subtitle by settings.subtitleLanguage.flow.collectAsState()
+    val audio by settings.audioLanguage.flow.collectAsStateWithLifecycle()
+    val subtitle by settings.subtitleLanguage.flow.collectAsStateWithLifecycle()
+    val styled by settings.preferStyledSubtitles.flow.collectAsStateWithLifecycle()
     val audioCodes = listOf(TrackPreference.SERVER, TrackPreference.ORIGINAL) + TrackPreference.LANGUAGES.map { it.first }
     val subtitleCodes = listOf(TrackPreference.SERVER, TrackPreference.ORIGINAL) + TrackPreference.LANGUAGES.map { it.first } + TrackPreference.OFF
     fun label(code: String) = when (code) {
@@ -348,22 +346,26 @@ private fun Tracks() {
     SettingsGroup("默认轨道") {
         ChoiceSetting("音轨语言", audioCodes.map(::label), audioCodes.indexOf(audio).coerceAtLeast(0), { settings.audioLanguage.set(audioCodes[it]) })
         ChoiceSetting("字幕", subtitleCodes.map(::label), subtitleCodes.indexOf(subtitle).coerceAtLeast(0), { settings.subtitleLanguage.set(subtitleCodes[it]) })
+        // Only meaningful once a language is chosen: 跟随服务器 keeps the server's track, 关闭 has none.
+        if (subtitle != TrackPreference.SERVER && subtitle != TrackPreference.OFF) {
+            ToggleSetting("特效字幕优先", styled, { settings.preferStyledSubtitles.set(!styled) })
+        }
     }
 }
 
 @Composable
 private fun HomeRows(nav: Nav) {
     val settings = LocalContext.current.zmby.settings
-    val nextUp by settings.watchingIncludesNextUp.flow.collectAsState()
-    val latest by settings.showLatestRow.flow.collectAsState()
-    val watchlist by settings.showWatchlistRow.flow.collectAsState()
+    val nextUp by settings.watchingIncludesNextUp.flow.collectAsStateWithLifecycle()
+    val latest by settings.showLatestRow.flow.collectAsStateWithLifecycle()
+    val watchlist by settings.showWatchlistRow.flow.collectAsStateWithLifecycle()
     SettingsGroup("首页") {
         // 继续观看 and 下一集 are one 在看 row now (ui-spec §2.18): one switch, for whether it includes 下一集.
         ToggleSetting("「在看」包含下一集", nextUp, { settings.watchingIncludesNextUp.set(!nextUp) })
         ToggleSetting("「最新添加」行", latest, { settings.showLatestRow.set(!latest) })
         ToggleSetting("「待看」行", watchlist, { settings.showWatchlistRow.set(!watchlist) })
     }
-    val chart by settings.tmdbChart.flow.collectAsState()
+    val chart by settings.tmdbChart.flow.collectAsStateWithLifecycle()
     SettingsGroup("主推内容") {
         val charts = CatalogChart.entries
         ChoiceSetting("TMDB 榜单", charts.map { it.label }, charts.indexOf(CatalogChart.of(chart)), { settings.tmdbChart.set(charts[it].name) })
@@ -376,7 +378,7 @@ private fun HomeRows(nav: Nav) {
 @Composable
 private fun ServersSummary(nav: Nav) {
     val library = LocalContext.current.zmby.library
-    val servers by library.servers.collectAsState()
+    val servers by library.servers.collectAsStateWithLifecycle()
     SettingsGroup("服务器") {
         servers.take(6).forEach { s ->
             val state = when {
@@ -395,12 +397,12 @@ private fun ServersSummary(nav: Nav) {
 @Composable
 private fun Sources(nav: Nav) {
     val app = LocalContext.current.zmby
-    val rows by app.sources.rows.collectAsState()
-    val servers by app.registry.servers.collectAsState()
+    val rows by app.sources.rows.collectAsStateWithLifecycle()
+    val servers by app.registry.servers.collectAsStateWithLifecycle()
     SettingsGroup("数据来源") {
         // Recompose on changes to the choices or the servers.
         rows.size; servers.size
-        SourceFeature.entries.filter { it != SourceFeature.Metadata }.forEach { f ->
+        SourceFeature.entries.forEach { f ->
             ValueSetting(f.label, app.sources.label(f), onClick = { nav.go(Route.DataSource(f)) }, glyph = sourceGlyph(f))
         }
     }
@@ -410,6 +412,7 @@ private fun sourceGlyph(f: app.zmby.data.SourceFeature): Glyph = when (f) {
     app.zmby.data.SourceFeature.Aggregate -> Glyph.Stack
     app.zmby.data.SourceFeature.Search -> Glyph.Search
     app.zmby.data.SourceFeature.WatchHistory -> Glyph.Clock
+    app.zmby.data.SourceFeature.Browse -> Glyph.Home
     app.zmby.data.SourceFeature.Metadata -> Glyph.Info
     app.zmby.data.SourceFeature.Segments -> Glyph.Skip
     app.zmby.data.SourceFeature.Favorites -> Glyph.Heart
@@ -420,17 +423,24 @@ private fun sourceGlyph(f: app.zmby.data.SourceFeature): Glyph = when (f) {
 @Composable
 private fun Appearance() {
     val settings = LocalContext.current.zmby.settings
-    val rotates by settings.heroRotates.flow.collectAsState()
+    val rotates by settings.heroRotates.flow.collectAsStateWithLifecycle()
+    val trailers by settings.trailerAutoplay.flow.collectAsStateWithLifecycle()
+    val sound by settings.trailerSound.flow.collectAsStateWithLifecycle()
     SettingsGroup("主推区") {
         ToggleSetting("自动轮播", rotates, { settings.heroRotates.set(!rotates) })
+    }
+    // IMDb trailers behind the hero and the detail pages (ui-spec §2.1, §2.2).
+    SettingsGroup("预告片") {
+        ToggleSetting("自动播放预告片", trailers, { settings.trailerAutoplay.set(!trailers) })
+        if (trailers) ToggleSetting("预告片声音", sound, { settings.trailerSound.set(!sound) })
     }
 }
 
 @Composable
 private fun About() {
     val app = LocalContext.current.zmby
-    val lanLog by app.settings.lanLog.collectAsState()
-    val address by app.lanAddress.collectAsState()
+    val lanLog by app.settings.lanLog.collectAsStateWithLifecycle()
+    val address by app.lanAddress.collectAsStateWithLifecycle()
     LaunchedEffect(lanLog) { withContext(Dispatchers.IO) { app.refreshLanAddress() } }
     SettingsGroup("zmby") {
         ValueSetting("版本", appVersion())
@@ -438,7 +448,7 @@ private fun About() {
     }
     SettingsGroup("数据来源与致谢") {
         androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.tmdb_logo), contentDescription = "TMDB", modifier = Modifier.padding(24.dp).width(180.dp).height(24.dp))
-        Text("TMDB · https://www.themoviedb.org\nThis product uses the TMDB API but is not endorsed or certified by TMDB.\nBangumi · https://bgm.tv\nbangumi-data/bangumi-data · CC BY 4.0", fontSize = 18.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
+        Text("TMDB · https://www.themoviedb.org\nThis product uses the TMDB API but is not endorsed or certified by TMDB.\nBangumi · https://bgm.tv\nbangumi-data/bangumi-data · CC BY 4.0\nIMDb · 预告片与评分 · https://www.imdb.com\nRotten Tomatoes · 烂番茄与爆米花评分 · https://www.rottentomatoes.com\nWikidata · CC0 · https://www.wikidata.org", fontSize = 18.sp, color = Z.textSecondary, modifier = Modifier.padding(24.dp))
     }
     SettingsGroup("日志") {
         ToggleSetting(
@@ -466,13 +476,14 @@ internal fun PhoneInputRow(title: String, value: String, onPhone: () -> Unit) {
 private fun MetadataSettings() {
     val app = LocalContext.current.zmby
     val settings = app.settings
-    val token by settings.tmdbToken.flow.collectAsState()
-    val apiBase by settings.tmdbApiBase.flow.collectAsState()
-    val text by settings.metadataLanguage.flow.collectAsState()
-    val poster by settings.posterLanguage.flow.collectAsState()
-    val logo by settings.logoLanguage.flow.collectAsState()
-    val search by settings.tmdbSearch.flow.collectAsState()
-    val anime by settings.animeAliases.flow.collectAsState()
+    val token by settings.tmdbToken.flow.collectAsStateWithLifecycle()
+    val apiBase by settings.tmdbApiBase.flow.collectAsStateWithLifecycle()
+    val text by settings.metadataLanguage.flow.collectAsStateWithLifecycle()
+    val poster by settings.posterLanguage.flow.collectAsStateWithLifecycle()
+    val logo by settings.logoLanguage.flow.collectAsStateWithLifecycle()
+    val search by settings.tmdbSearch.flow.collectAsStateWithLifecycle()
+    val anime by settings.animeAliases.flow.collectAsStateWithLifecycle()
+    val external by settings.externalRatings.flow.collectAsStateWithLifecycle()
     val languages = listOf("zh-CN" to "简体中文", "zh-TW" to "繁體中文（台灣）", "zh-HK" to "繁體中文（香港）", "en-US" to "English", "ja-JP" to "日本語", "ko-KR" to "한국어")
     SettingsGroup("TMDB 连接") {
         TextSetting("API 地址", apiBase, InputField.TmdbApiBase, save = { v ->
@@ -496,6 +507,10 @@ private fun MetadataSettings() {
         ToggleSetting("TMDB 搜索", search, { settings.tmdbSearch.set(!search) })
         ToggleSetting("番剧别名匹配", anime, { settings.animeAliases.set(!anime) })
     }
+    // Detail pages (ui-spec §2.2): IMDb and Rotten Tomatoes beside TMDB's rating.
+    SettingsGroup("评分") {
+        ToggleSetting("IMDb 与烂番茄评分", external, { settings.externalRatings.set(!external) })
+    }
 }
 
 @OptIn(coil.annotation.ExperimentalCoilApi::class)
@@ -503,8 +518,8 @@ private fun MetadataSettings() {
 private fun CacheSettings() {
     val context = LocalContext.current
     val app = context.zmby
-    val metadataLimit by app.settings.metadataCacheMb.flow.collectAsState()
-    val imageLimit by app.settings.imageCacheMb.flow.collectAsState()
+    val metadataLimit by app.settings.metadataCacheMb.flow.collectAsStateWithLifecycle()
+    val imageLimit by app.settings.imageCacheMb.flow.collectAsStateWithLifecycle()
     val metadataSize by app.catalogCache.size.collectAsState(0L)
     val imageSize by androidx.compose.runtime.produceState<Long?>(null, imageLimit) {
         value = withContext(Dispatchers.IO) { context.imageLoader.diskCache?.size }

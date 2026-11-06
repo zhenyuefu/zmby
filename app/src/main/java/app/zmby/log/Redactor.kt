@@ -37,6 +37,8 @@ class Redactor {
             "auth_key", "authkey", "auth", "sign", "signature", "sig", "x-amz-signature", "x-amz-credential",
             "x-amz-security-token", "ossaccesskeyid", "googleaccessid", "x-oss-signature", "x-oss-credential",
             "password", "passwd", "pwd", "pw", "secret", "key",
+            // CloudFront signed links (IMDb trailers): the signature, its key pair and a custom policy.
+            "key-pair-id", "policy",
         )
 
         private val QUERY = Regex(

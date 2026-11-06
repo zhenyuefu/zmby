@@ -1,5 +1,6 @@
 package app.zmby.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableIntStateOf
 import app.zmby.data.SourceFeature
 import app.zmby.ui.userMessage
@@ -31,6 +32,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.SideEffect
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -218,63 +223,15 @@ internal fun rememberVersions(
     onRefresh: (() -> Unit)? = null,
 ): VersionsState {
     val app = LocalContext.current.zmby
-    val servers by app.registry.servers.collectAsState()
-    var found by remember(server, item.id) { mutableStateOf<Map<String, ServerVersions>>(emptyMap()) }
-    var retry by remember(server, item.id) { mutableIntStateOf(0) }
-    val self = servers.firstOrNull { it.id == server }
-    // 设置 › 数据来源 › 资源聚合: the servers asked for other versions (the open one is its own card).
-    val sourceRows by app.sources.rows.collectAsState()
-    val others = remember(servers, server, sourceRows) { app.sources.servers(SourceFeature.Aggregate).filter { it != server } }
-    LaunchedEffect(found, servers, lookUp) {
-        if (!lookUp) return@LaunchedEffect
-        val paused = found.values.filter { it is ServerVersions.Skipped || it is ServerVersions.Failed && it.retryable }
-        if (paused.isEmpty()) return@LaunchedEffect
-        val now = System.currentTimeMillis()
-        val deadline = paused.minOf { app.registry.get(it.server)?.coolingUntil?.takeIf { until -> until > now } ?: (now + FailureTracker.COOL_MS) }
-        kotlinx.coroutines.delay((deadline - System.currentTimeMillis()).coerceAtLeast(0) + 50)
-        val ready = paused.filter { !app.registry.isCooling(it.server) }.map { it.server }.toSet()
-        if (ready.isNotEmpty()) {
-            found = found.filterKeys { it !in ready }
-            retry++
-        }
-    }
-    LaunchedEffect(server, item.id, series?.id, others, lookUp, retry) {
-        if (others.isEmpty() || !lookUp) return@LaunchedEffect
-        val todo = others.filter { it !in found }
-        if (todo.isEmpty()) return@LaunchedEffect
-        val flow = when {
-            item.type == "Episode" && series != null -> app.versions.episode(todo, item, series)
-            item.type == "Movie" || item.type == "Video" -> app.versions.movie(todo, item)
-            else -> return@LaunchedEffect
-        }
-        flow.collect { r ->
-            if (r !is ServerVersions.Found) ZLog.d("Versions", "${app.registry.get(r.server)?.name}: $r")
-            found = found + (r.server to r)
-            if (forKey != null) DetailViewModel.rememberVersions(app, forKey, r)
-        }
-    }
-    val rankPrefs = rememberVersionPrefs()
-    return remember(servers, found, cached, item, rankPrefs, lookUp, onRefresh) {
-        val (groups, unresponsive) = versionCards(self, item, servers.filter { it.id in others }, found, cached)
-        val prefs = rankPrefs.copy(
-            manual = app.library.pickedVersion(Keys.work(server, if (item.type == "Episode" && series != null) series else item) + episodeSuffix(item)),
-        )
-        val all = groups.flatMap { it.versions }
-        val ordered = VersionRanker.rank(all, prefs, ::versionFacts)
-        val default = ordered.firstOrNull()
-        VersionsState(groups, if (lookUp) others.count { it !in found } else 0, default, unresponsive, ordered = ordered, marks = versionMarks(all, prefs), retry = {
-            // 「n 台未响应」 pressed: lift their cool-downs and ask those servers again.
-            unresponsive.forEach { app.registry.retry(it) }
-            found = found.filterKeys { it !in unresponsive }
-            retry++
-        }, refresh = {
-            others.forEach(app.registry::retry)
-            app.versions.invalidate(others, item, series)
-            found = emptyMap()
-            onRefresh?.invoke()
-            retry++
-        })
-    }
+    val scope = rememberCoroutineScope()
+    // The lookup, retries and ranking live in a holder off the main thread (performance plan R2).
+    val lookup = remember(app, scope) { ServerVersionLookup(app, scope) }
+    lookup.onRefresh = onRefresh
+    val input = ServerVersionLookup.Input(server, item, series, lookUp, cached, forKey)
+    SideEffect { lookup.update(input) }
+    val tagged by lookup.state.collectAsStateWithLifecycle()
+    // Until the holder has caught up with another item, its versions are worked out here once.
+    return tagged?.takeIf { it.identity == input.identity }?.value ?: remember(input.identity) { lookup.computeNow(input) }
 }
 
 /**
@@ -594,11 +551,12 @@ internal fun rememberEffectiveTracks(v: Version, choice: TrackChoice): Effective
         v.source.subtitleStreams.filter { it.isExternal && player?.supportsExternal(it.codec) == false }.map { it.index }.toSet()
     }
     val settings = context.zmby.settings
-    val audioLanguage by settings.audioLanguage.flow.collectAsState()
-    val subtitleLanguage by settings.subtitleLanguage.flow.collectAsState()
+    val audioLanguage by settings.audioLanguage.flow.collectAsStateWithLifecycle()
+    val subtitleLanguage by settings.subtitleLanguage.flow.collectAsStateWithLifecycle()
+    val styled by settings.preferStyledSubtitles.flow.collectAsStateWithLifecycle()
     val audio = remember(v.source) { audioRows(v.source) }
-    val effective = remember(v.source, choice, audioLanguage, subtitleLanguage, v.item.originalLanguage) {
-        TrackPreference.choose(v.source, choice, audioLanguage, subtitleLanguage, v.item.originalLanguage)
+    val effective = remember(v.source, choice, audioLanguage, subtitleLanguage, v.item.originalLanguage, styled) {
+        TrackPreference.choose(v.source, choice, audioLanguage, subtitleLanguage, v.item.originalLanguage, styled)
     }
     val audioOn = effective.audio ?: v.source.defaultAudioStreamIndex ?: audio.firstOrNull { it.tag == "默认" }?.embyIndex ?: audio.firstOrNull()?.embyIndex
     val subOn = (effective.subtitle ?: v.source.defaultSubtitleStreamIndex?.takeIf { it >= 0 } ?: ZidooTracks.SUBTITLE_OFF)

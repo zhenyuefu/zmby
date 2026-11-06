@@ -1,5 +1,11 @@
 package app.zmby.ui.screens
 
+import app.zmby.ui.screenModel
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.zmby.TraceRecomposition
 import app.zmby.media.titleOf
 import app.zmby.data.SourceFeature
 import androidx.compose.foundation.background
@@ -17,12 +23,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -97,196 +103,146 @@ import app.zmby.search.PinyinCandidates
 
 private val KEYS = "abcdefghijklmnopqrstuvwxyz1234567890".map { it.toString() }
 
-/** Both modes search as typed; pinyin also offers candidates below the keyboard. */
-private enum class KeyMode { Pinyin, Abc }
-
 @Composable
 fun SearchScreen(nav: Nav) {
+    TraceRecomposition("Search.root")
     val app = LocalContext.current.zmby
-    val library = app.library
-    val servers by library.servers.collectAsState()
-    var query by rememberSaveable { mutableStateOf("") }
-    var mode by rememberSaveable { mutableStateOf(KeyMode.Pinyin) }
-    var snapshot by rememberRetained("snapshot") { mutableStateOf<SearchSnapshot?>(null) }
+    // Query, candidates, live results and merging live in the ViewModel; the keyboard side and the
+    // results side each read their part, so a key press does not recompose the whole page (R5).
+    val vm = screenModel("search") { SearchViewModel(app) }
     val scope = rememberCoroutineScope()
-    val candidates = remember { PinyinCandidates(scope, library::candidateServers, library::localTitles) }
-    val live = remember { LiveSearch(scope, { term, reuse ->
-        app.search.search(app.sources.servers(SourceFeature.Search).mapNotNull { id -> app.registry.get(id)?.let { id to it.order } }, term, reuse)
-    }, library::rememberSearch) }
-    val liveState by live.state.collectAsState()
-    val localCandidates by candidates.candidates.collectAsState()
-    var rawHits by rememberRetained("pinyinHits", query) { mutableStateOf<List<Hit>>(emptyList()) }
-    var pendingResultFocus by remember { mutableStateOf<String?>(null) }
+    val pendingResultFocus = remember { mutableStateOf<String?>(null) }
     val keyA = remember { FocusRequester() }
     val candidateEntry = remember { FocusRequester() }
     val resultEntry = remember { FocusRequester() }
     val resultGrid = rememberLazyGridState()
-    DisposableEffect(Unit) { onDispose { candidates.clear(); live.close() } }
-
-    LaunchedEffect(query, mode) {
-        // Full live results provide remote candidates, avoiding a second set of candidate requests.
-        // Matching local titles converts up to 2000 of them to pinyin: off the main thread.
-        withContext(Dispatchers.Default) { candidates.onInput(if (mode == KeyMode.Pinyin) query else "", fetchRemote = false) }
-    }
-    LaunchedEffect(query, mode) {
-        live.submit(query)
-    }
-    LaunchedEffect(liveState) {
-        snapshot = liveState.snapshot
-        if (liveState.term == query.trim() && mode == KeyMode.Pinyin && !Pinyin.hasHan(query)) {
-            rawHits = liveState.snapshot?.hits.orEmpty()
-        }
-    }
-    // A paused result is retryable after its deadline (or the server page's 立即重试).
-    LaunchedEffect(liveState, servers) {
-        val snap = liveState.snapshot ?: return@LaunchedEffect
-        if (!snap.done) return@LaunchedEffect
-        val deadlines = snap.states.filterValues { it == SearchState.Skipped }.keys.mapNotNull { id ->
-            app.registry.get(id)?.coolingUntil
-        }
-        if (deadlines.isNotEmpty()) {
-            delay((deadlines.min() - System.currentTimeMillis()).coerceAtLeast(0) + 50)
-            live.refresh()
-        }
-    }
-    // Ranking converts every candidate title to pinyin: on Dispatchers.Default, not in composition.
-    val shownCandidates by produceState(emptyList<Candidate>(), query, mode, localCandidates, rawHits) {
-        value = if (mode == KeyMode.Pinyin && query.isNotBlank() && !Pinyin.hasHan(query)) withContext(Dispatchers.Default) {
-            PinyinCandidates.rank(query, localCandidates + rawHits.filter { Pinyin.hasHan(it.item.name.orEmpty()) }.map { h ->
-                Candidate(h.item.name.orEmpty(), h.item.productionYear, h.item, h.server, h.order)
-            })
-        } else emptyList()
-    }
 
     fun changeQuery(text: String) {
-        pendingResultFocus = null
-        query = text
-        rawHits = emptyList()
-        live.submit("") // Cancel the previous HTTP work immediately, before the debounce.
+        pendingResultFocus.value = null
+        vm.changeQuery(text)
     }
     fun pick(c: Candidate) {
-        ZLog.i("Search", "picked candidate '${c.title}' from ${c.serverKey ?: "local titles"}")
-        changeQuery(c.title)
-        pendingResultFocus = c.title.trim()
+        vm.pick(c)
+        pendingResultFocus.value = c.title.trim()
         // Keep a usable focus target while the candidate disappears and new results arrive.
         scope.launch {
             awaitFrame()
-            if (pendingResultFocus != null) keyA.requestFocus()
+            if (pendingResultFocus.value != null) keyA.requestFocus()
         }
-        val reuse = c.item?.let { item -> c.serverKey?.let { id -> Hit(ServerItem(id, item), app.registry.get(id)?.order ?: 0) } }
-        live.submit(c.title, reuse, immediate = true, saveHistory = true)
     }
-
-    val tmdbSearch by app.settings.tmdbSearch.flow.collectAsState()
-    val tmdbLanguage by app.settings.metadataLanguage.flow.collectAsState()
-    val tmdbToken by app.settings.tmdbToken.flow.collectAsState()
-    var tmdbError by remember(query) { mutableStateOf<String?>(null) }
-    val tmdbWorks by produceState<List<CatalogWork>>(emptyList(), query, tmdbSearch, tmdbLanguage, tmdbToken) {
-        value = emptyList()
-        if (query.isNotBlank() && tmdbSearch && app.catalog.configured) {
-            delay(350)
-            withContext(Dispatchers.IO) {
-                try { value = app.catalog.search(query); tmdbError = null }
-                catch (e: CancellationException) { throw e } catch (e: Exception) { tmdbError = e.message }
+    // After a candidate: focus goes to the first result once the search for it has merged its answers.
+    LaunchedEffect(vm) {
+        combine(snapshotFlow { pendingResultFocus.value }, vm.liveState, vm.merged) { term, live, merged -> Triple(term, live, merged) }.collectLatest { (term, live, mergedInput) ->
+            term ?: return@collectLatest
+            if (live.term != term || mergedInput.first != live.snapshot?.hits) return@collectLatest
+            val results = mergedInput.second ?: return@collectLatest
+            if (results.works.isNotEmpty() || results.unmerged.isNotEmpty()) {
+                resultGrid.scrollToItem(0)
+                awaitFrame()
+                if (resultEntry.requestFocus()) pendingResultFocus.value = null
+            } else if (live.snapshot?.done == true) {
+                awaitFrame()
+                keyA.requestFocus()
+                pendingResultFocus.value = null
             }
         }
     }
-    val resultHits = snapshot?.hits
-    // Keep cards mounted while merging incremental hits, and tag their source to reject stale focus.
-    val mergedInput by produceState<Pair<List<Hit>?, MergeResult?>>(null to null, resultHits) {
-        value = resultHits to resultHits?.let { withContext(Dispatchers.Default) { Merger.merge(it) } }
-    }
-    val merged = mergedInput.second
-    LaunchedEffect(pendingResultFocus, liveState, snapshot, mergedInput) {
-        val term = pendingResultFocus ?: return@LaunchedEffect
-        if (liveState.term != term || snapshot != liveState.snapshot) return@LaunchedEffect
-        if (mergedInput.first != resultHits) return@LaunchedEffect
-        val results = merged ?: return@LaunchedEffect
-        if (results.works.isNotEmpty() || results.unmerged.isNotEmpty()) {
-            resultGrid.scrollToItem(0)
-            awaitFrame()
-            if (resultEntry.requestFocus()) pendingResultFocus = null
-        } else if (liveState.snapshot?.done == true) {
-            awaitFrame()
-            keyA.requestFocus()
-            pendingResultFocus = null
-        }
-    }
-    val showCandidates = mode == KeyMode.Pinyin && query.isNotBlank() && !Pinyin.hasHan(query)
     Row(Modifier.fillMaxSize().onPreviewKeyEvent {
         // A later remote press takes control; delayed results must not steal that focus.
-        if (it.type == KeyEventType.KeyDown) pendingResultFocus = null
+        if (it.type == KeyEventType.KeyDown) pendingResultFocus.value = null
         false
     }) {
-        SearchAside(
-            query = query,
-            mode = mode,
-            onKey = { changeQuery(query + it) },
-            onSpace = { if (query.isNotEmpty() && !query.endsWith(' ')) changeQuery(query + " ") },
-            onDelete = { changeQuery(query.dropLast(1)) },
-            onClear = { changeQuery("") },
-            onMode = { pendingResultFocus = null; mode = if (mode == KeyMode.Pinyin) KeyMode.Abc else KeyMode.Pinyin },
-            onSearch = { if (query.isNotBlank()) live.submit(query, immediate = true, saveHistory = true) },
-            keyA = keyA,
-            candidates = if (showCandidates) shownCandidates else emptyList(),
-            candidateEntry = candidateEntry,
-            onPick = ::pick,
-        )
-        Column(
-            Modifier.weight(1f).fillMaxHeight().padding(start = 40.dp, end = 60.dp, top = 64.dp),
-            verticalArrangement = Arrangement.spacedBy(30.dp),
-        ) {
-            if (tmdbWorks.isNotEmpty()) CatalogCards(nav, tmdbWorks, "TMDB · 影视目录")
-            tmdbError?.let { Text(it, color = Z.warn, fontSize = 18.sp) }
-            val snap = snapshot
-            if (snap != null) StatusRow(snap, servers)
-            val works = merged?.works.orEmpty()
-            val loose = merged?.unmerged.orEmpty()
-            if (works.isNotEmpty() || loose.isNotEmpty()) {
-                LazyVerticalGrid(
-                    columns = GridCells.FixedSize(196.dp),
-                    state = resultGrid,
-                    horizontalArrangement = Arrangement.spacedBy(28.dp),
-                    verticalArrangement = Arrangement.spacedBy(32.dp),
-                    contentPadding = PaddingValues(bottom = 60.dp, end = 30.dp),
-                ) {
-                    if (works.isNotEmpty()) item(key = "works", span = { GridItemSpan(maxLineSpan) }, contentType = "title") { RowTitle("影片与剧集") }
-                    items(works, key = { it.key + ":" + it.lead.ref.key }, contentType = { "poster" }) { work ->
-                        val lead = work.lead
-                        val item = lead.item
-                        PosterCard2x3(
-                            imageUrl = library.primaryImage(lead.ref),
-                            title = titleOf(item),
-                            onClick = { nav.open(lead.ref) },
-                            topEnd = "${work.entries.size} 个版本",
-                            subtitle = listOfNotNull(if (item.type == "Series") "剧集" else "电影", item.productionYear?.toString()).joinToString(" · "),
-                            focusKey = "result:${lead.ref.key}",
-                            modifier = if (work == works.first()) Modifier.focusRequester(resultEntry) else Modifier,
-                        )
-                    }
-                    if (loose.isNotEmpty()) {
-                        item(key = "loose", span = { GridItemSpan(maxLineSpan) }, contentType = "title") {
-                            Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Text("未能合并", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                    loose.forEachIndexed { i, h ->
-                                        LooseChip(h, library.status(h.server)?.name.orEmpty(),
-                                            modifier = if (works.isEmpty() && i == 0) Modifier.focusRequester(resultEntry) else Modifier,
-                                        ) { nav.open(h.ref) }
-                                    }
+        SearchAsideHost(vm, keyA, candidateEntry, ::changeQuery, onMode = { pendingResultFocus.value = null; vm.toggleMode() }, onPick = ::pick)
+        SearchResults(nav, vm, resultGrid, resultEntry, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun SearchAsideHost(vm: SearchViewModel, keyA: FocusRequester, candidateEntry: FocusRequester, changeQuery: (String) -> Unit, onMode: () -> Unit, onPick: (Candidate) -> Unit) {
+    TraceRecomposition("Search.aside")
+    val query by vm.query.collectAsStateWithLifecycle()
+    val mode by vm.mode.collectAsStateWithLifecycle()
+    val shownCandidates by vm.shownCandidates.collectAsStateWithLifecycle()
+    val showCandidates = mode == KeyMode.Pinyin && query.isNotBlank() && !Pinyin.hasHan(query)
+    SearchAside(
+        query = query,
+        mode = mode,
+        onKey = { changeQuery(vm.query.value + it) },
+        onSpace = { val q = vm.query.value; if (q.isNotEmpty() && !q.endsWith(' ')) changeQuery("$q ") },
+        onDelete = { changeQuery(vm.query.value.dropLast(1)) },
+        onClear = { changeQuery("") },
+        onMode = onMode,
+        onSearch = vm::search,
+        keyA = keyA,
+        candidates = if (showCandidates) shownCandidates else emptyList(),
+        candidateEntry = candidateEntry,
+        onPick = onPick,
+    )
+}
+
+@Composable
+private fun SearchResults(nav: Nav, vm: SearchViewModel, resultGrid: androidx.compose.foundation.lazy.grid.LazyGridState, resultEntry: FocusRequester, modifier: Modifier) {
+    TraceRecomposition("Search.results")
+    val app = LocalContext.current.zmby
+    val library = app.library
+    val servers by app.registry.lineup.collectAsStateWithLifecycle()
+    val liveState by vm.liveState.collectAsStateWithLifecycle()
+    val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val mergedInput by vm.merged.collectAsStateWithLifecycle()
+    val merged = mergedInput.second
+    val cards by vm.cards.collectAsStateWithLifecycle()
+    Column(
+        modifier.fillMaxHeight().padding(start = 40.dp, end = 60.dp, top = 64.dp),
+        verticalArrangement = Arrangement.spacedBy(30.dp),
+    ) {
+        if (catalog.works.isNotEmpty()) CatalogCards(nav, catalog.works, "TMDB · 影视目录")
+        catalog.error?.let { Text(it, color = Z.warn, fontSize = 18.sp) }
+        val snap = liveState.snapshot
+        if (snap != null) StatusRow(snap, servers)
+        val works = cards
+        val loose = merged?.unmerged.orEmpty()
+        if (works.isNotEmpty() || loose.isNotEmpty()) {
+            LazyVerticalGrid(
+                columns = GridCells.FixedSize(196.dp),
+                state = resultGrid,
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                verticalArrangement = Arrangement.spacedBy(32.dp),
+                contentPadding = PaddingValues(bottom = 60.dp, end = 30.dp),
+            ) {
+                if (works.isNotEmpty()) item(key = "works", span = { GridItemSpan(maxLineSpan) }, contentType = "title") { RowTitle("影片与剧集") }
+                itemsIndexed(works, key = { _, card -> card.key }, contentType = { _, _ -> "poster" }) { i, card ->
+                    PosterCard2x3(
+                        imageUrl = card.image,
+                        title = card.title,
+                        onClick = { nav.open(card.ref) },
+                        topEnd = "${card.copies} 个版本",
+                        subtitle = card.subtitle,
+                        focusKey = "result:${card.key}",
+                        modifier = if (i == 0) Modifier.focusRequester(resultEntry) else Modifier,
+                    )
+                }
+                if (loose.isNotEmpty()) {
+                    item(key = "loose", span = { GridItemSpan(maxLineSpan) }, contentType = "title") {
+                        Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text("未能合并", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                loose.forEachIndexed { i, h ->
+                                    LooseChip(h, library.status(h.server)?.name.orEmpty(),
+                                        modifier = if (works.isEmpty() && i == 0) Modifier.focusRequester(resultEntry) else Modifier,
+                                    ) { nav.open(h.ref) }
                                 }
                             }
                         }
                     }
                 }
-            } else if (snap?.done == true) {
-                val failed = snap.states.values.count { it != SearchState.Done }
-                Text(
-                    if (failed == 0) "所选服务器暂无「${liveState.term}」资源" else "已响应的服务器暂无「${liveState.term}」资源，其余待确认",
-                    fontSize = 24.sp,
-                    color = Z.textSecondary,
-                )
             }
+        } else if (snap?.done == true) {
+            val failed = snap.states.values.count { it != SearchState.Done }
+            Text(
+                if (failed == 0) "所选服务器暂无「${liveState.term}」资源" else "已响应的服务器暂无「${liveState.term}」资源，其余待确认",
+                fontSize = 24.sp,
+                color = Z.textSecondary,
+            )
         }
     }
 }

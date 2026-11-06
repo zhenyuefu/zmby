@@ -163,6 +163,39 @@ class EmbyClient(
             addQueryParameter("EnableImages", "false")
         }
 
+    /** The years (and genres) used in one library (`/Items/Filters`, Emby and Jellyfin): the browse page's 年代. */
+    suspend fun queryFilters(s: ServerSession, parentId: String?, types: String): QueryFilters =
+        get(s.baseUrl, s, "Items/Filters") {
+            addQueryParameter("UserId", s.userId)
+            if (parentId != null) addQueryParameter("ParentId", parentId)
+            addQueryParameter("IncludeItemTypes", types)
+            addQueryParameter("Recursive", "true")
+        }
+
+    /**
+     * The collections holding [itemId]: `ListItemIds` as Emby's own web client asks (not in the API
+     * docs; a server that ignores it lists every collection, so callers check the contents).
+     */
+    suspend fun collectionsOf(s: ServerSession, itemId: String, limit: Int = 10): ItemsResult =
+        get(s.baseUrl, s, "Users/${s.userId}/Items") {
+            addQueryParameter("IncludeItemTypes", "BoxSet")
+            addQueryParameter("Recursive", "true")
+            addQueryParameter("ListItemIds", itemId)
+            addQueryParameter("SortBy", "SortName")
+            addQueryParameter("Limit", limit.toString())
+            addQueryParameter("Fields", LIST_FIELDS)
+        }
+
+    /** What a collection (BoxSet) holds, oldest first as Emby lists a collection. */
+    suspend fun collectionItems(s: ServerSession, collectionId: String, limit: Int = 300): ItemsResult =
+        get(s.baseUrl, s, "Users/${s.userId}/Items") {
+            addQueryParameter("ParentId", collectionId)
+            addQueryParameter("SortBy", "ProductionYear,PremiereDate,SortName")
+            addQueryParameter("SortOrder", "Ascending")
+            addQueryParameter("Limit", limit.toString())
+            addQueryParameter("Fields", LIST_FIELDS)
+        }
+
     suspend fun search(s: ServerSession, term: String, parentId: String? = null, limit: Int = 50): ItemsResult =
         get(s.baseUrl, s, "Users/${s.userId}/Items") {
             addQueryParameter("SearchTerm", term)
@@ -213,6 +246,10 @@ class EmbyClient(
         get(s.baseUrl, s, "Users/${s.userId}/Items/$itemId") {
             addQueryParameter("Fields", "$LIST_FIELDS,People,OriginalTitle,PremiereDate,ProductionLocations,MediaSources,MediaStreams,Chapters")
         }
+
+    /** The trailers stored with [itemId] on the server (trailer design: the last fallback source). */
+    suspend fun localTrailers(s: ServerSession, itemId: String): List<BaseItemDto> =
+        get(s.baseUrl, s, "Users/${s.userId}/Items/$itemId/LocalTrailers")
 
     /** Playback facts only; provider-backed detail pages do not ask for server descriptions or cast. */
     suspend fun resourceItem(s: ServerSession, itemId: String): BaseItemDto =
@@ -367,8 +404,7 @@ class EmbyClient(
 
     /**
      * Round-trip time of the unauthenticated info endpoint (null when unreachable) and the server
-     * version it reports. The best of two tries, so connection and TLS setup on the first one don't
-     * count as line latency.
+     * version it reports, from one request (a second only after a failure).
      */
     suspend fun ping(baseUrl: String, ua: UaSetting = UaSetting(), serverId: String = ""): Pair<Long?, String?> {
         var version: String? = null
@@ -382,11 +418,13 @@ class EmbyClient(
             (System.nanoTime() - started) / 1_000_000
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { null }
+        // One request per line (performance plan RN ②): the time includes connecting, as every
+        // line's first request does, so lines still compare fairly. A failure is tried once more.
         val first = once() ?: run {
             kotlinx.coroutines.delay(350)
             return once() to version
         }
-        return minOf(first, once() ?: first) to version
+        return first to version
     }
 
     /** Asks the server for a direct-play source; [startPositionMs] only informs the server. */
@@ -433,6 +471,19 @@ class EmbyClient(
             .build()
             .toString()
     }
+
+    /**
+     * A server trailer's file as stored ([itemId] is the trailer's own item): the player sniffs the
+     * container. The token travels as `api_key`, so the URL is never logged or stored.
+     */
+    fun trailerStreamUrl(s: ServerSession, itemId: String): String =
+        s.baseUrl.toHttpUrl().newBuilder()
+            .addPathSegments("Videos/$itemId/stream")
+            .addQueryParameter("Static", "true")
+            .addQueryParameter("DeviceId", clientInfo.deviceId)
+            .addQueryParameter("api_key", s.accessToken)
+            .build()
+            .toString()
 
     fun imageUrl(s: ServerSession, itemId: String, type: String, tag: String?, maxHeight: Int): String =
         s.baseUrl.toHttpUrl().newBuilder()

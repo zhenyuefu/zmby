@@ -346,6 +346,9 @@ class PlaybackActivity : ComponentActivity() {
                     subtitles = target?.subtitles ?: ZidooPlayer.SubtitleDelivery.IntentExtras,
                     audioLanguage = languages?.audio ?: app.settings.audioLanguage.value,
                     subtitleLanguage = languages?.subtitle ?: app.settings.subtitleLanguage.value,
+                    // Hidden (and so off) while 字幕 is 跟随服务器 or 关闭, also for languages carried over.
+                    preferStyledSubtitles = app.settings.preferStyledSubtitles.value &&
+                        app.settings.subtitleLanguage.value.let { it != TrackPreference.SERVER && it != TrackPreference.OFF },
                     danmu = if (danmuAsSubtitle && danmu != null) DanmuSubtitle(
                         comments = { danmu.await() },
                         config = danmuLayout,

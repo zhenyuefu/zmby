@@ -127,7 +127,17 @@ class ServerRegistry(
     private val versions = HashMap<String, String>()
 
     private val _servers = MutableStateFlow(build())
+    /** Configuration plus this run's health; republished on every failure, recovery and speed test. */
     val servers: StateFlow<List<ServerStatus>> = _servers.asStateFlow()
+
+    private val _lineup = MutableStateFlow(lineupOf(configs))
+    /**
+     * The servers' configuration in priority order, without this run's health (performance plan R1):
+     * changes only when a server is added, removed, moved or edited, so a timeout or a speed test does
+     * not recompose screens or restart effects keyed on it. Its entries carry no health, latency or
+     * errors (health [Health.Warn], nothing measured); read those from [servers].
+     */
+    val lineup: StateFlow<List<ServerStatus>> = _lineup.asStateFlow()
 
     val all: List<ServerStatus> get() = _servers.value
     fun get(id: String): ServerStatus? = _servers.value.firstOrNull { it.id == id }
@@ -155,11 +165,14 @@ class ServerRegistry(
 
     private fun publish() { _servers.value = build() }
 
+    private fun lineupOf(list: List<ServerConfig>) = list.mapIndexed { i, c -> ServerStatus(c, i) }
+
     @Synchronized
     private fun change(update: (List<ServerConfig>) -> List<ServerConfig>) {
         configs = update(configs)
         val snapshot = configs
         persist { store.save(snapshot) }
+        _lineup.value = lineupOf(snapshot)
         publish()
     }
 
@@ -217,24 +230,33 @@ class ServerRegistry(
 
     fun addLine(id: String, name: String, url: String) = update(id) { it.copy(lines = it.lines + ServerLine(newId(), name, url)) }
 
+    /** One line's speed test: [ms] null = unreachable. */
+    data class Ping(val serverId: String, val lineId: String, val ms: Long?, val version: String?)
+
     /** Records a speed test of one line; with auto-fastest, switches to the fastest reachable line once all are measured. */
-    fun recordLatency(id: String, lineId: String, ms: Long?, version: String?) {
+    fun recordLatency(id: String, lineId: String, ms: Long?, version: String?) = recordLatencies(listOf(Ping(id, lineId, ms, version)))
+
+    /** Records several speed tests as one update of [servers] (performance plan RH ①). */
+    fun recordLatencies(pings: List<Ping>) {
+        if (pings.isEmpty()) return
         synchronized(this) {
-            latency[id] = latency[id].orEmpty() + (lineId to ms)
-            if (version != null) versions[id] = version
-        }
-        // A ping only shows the server is reachable; a cool-down from failed library requests stays.
-        val c = configs.firstOrNull { it.id == id }
-        val measured = latency[id].orEmpty()
-        if (c != null && c.autoFastest && c.lines.all { it.id in measured }) {
-            val best = c.lines.filter { measured[it.id] != null }.minByOrNull { measured[it.id]!! }
-            if (best != null && best.id != c.lineId) {
-                ZLog.i("Servers", "${c.name}: fastest line is ${best.name}")
-                update(id) { it.copy(lineId = best.id) }
-                return
+            pings.forEach { p ->
+                latency[p.serverId] = latency[p.serverId].orEmpty() + (p.lineId to p.ms)
+                if (p.version != null) versions[p.serverId] = p.version
             }
         }
-        publish()
+        // A ping only shows the server is reachable; a cool-down from failed library requests stays.
+        val switches = pings.map { it.serverId }.distinct().mapNotNull { id ->
+            val c = configs.firstOrNull { it.id == id } ?: return@mapNotNull null
+            val measured = latency[id].orEmpty()
+            if (!c.autoFastest || !c.lines.all { it.id in measured }) return@mapNotNull null
+            val best = c.lines.filter { measured[it.id] != null }.minByOrNull { measured[it.id]!! }
+            if (best == null || best.id == c.lineId) return@mapNotNull null
+            ZLog.i("Servers", "${c.name}: fastest line is ${best.name}")
+            id to best.id
+        }.toMap()
+        // change() publishes; otherwise publish once for the whole batch.
+        if (switches.isNotEmpty()) change { list -> list.map { c -> switches[c.id]?.let { c.copy(lineId = it) } ?: c } } else publish()
     }
 
     override fun isCooling(serverId: String): Boolean = failures.isCooling(serverId)
