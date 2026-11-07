@@ -221,6 +221,18 @@ class Settings(context: Context) {
     /** 主推区 source: "Tmdb" (the chart, when a token is set) or "Server" (Emby suggestions, recommendations, latest). */
     val heroSource = string("hero_source", "Tmdb")
 
+    /**
+     * 网络 › 代理服务器: the proxy, and which outside APIs use it. Server lines carry their own switch
+     * ([ServerLine.proxy]); nothing goes through the proxy until something is chosen.
+     */
+    val proxyKind = enumPref("proxy_kind", app.zmby.net.ProxyKind.Off)
+    val proxyAddress = registered(Pref(prefs, "proxy_address", "", { k, d -> getString(k, d) ?: d }, { k, v -> putString(k, v) },
+        normalize = { raw -> app.zmby.net.ProxyAddress.parse(raw)?.toString() ?: "" }))
+    val proxyUser = string("proxy_user", "")
+    val proxyPassword = string("proxy_password", "")
+    val proxyApis = registered(Pref(prefs, "proxy_apis", "", { k, d -> getString(k, d) ?: d }, { k, v -> putString(k, v) },
+        normalize = { app.zmby.net.ProxyApi.store(app.zmby.net.ProxyApi.parse(it)) }))
+
     private fun cacheLimit(key: String, default: Int, choices: List<Int>) = registered(Pref(prefs, key, default,
         { k, d -> getInt(k, d).takeIf { it in choices } ?: d },
         { k, v -> putInt(k, v) }, normalize = { it.takeIf { value -> value in choices } ?: default }))

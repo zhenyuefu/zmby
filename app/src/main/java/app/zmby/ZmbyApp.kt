@@ -84,6 +84,13 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         private set
     /** The one HTTP client; it puts each server's User-Agent on requests that have none. */
     private lateinit var http: OkHttpClient
+    /** TMDB and Bangumi have their own client (own timeouts); its pool is evicted with [http]'s. */
+    private lateinit var catalogClient: OkHttpClient
+    /**
+     * 设置 › 网络: which requests go through the proxy. Every client asks it, and so does the platform's
+     * HttpURLConnection (trailers) as the process default; the system's own choice stays the fallback.
+     */
+    val proxyRoutes = app.zmby.net.ProxyRoutes(java.net.ProxySelector.getDefault())
     lateinit var emby: EmbyClient
         private set
     lateinit var preparer: PlaybackPreparer
@@ -260,8 +267,12 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             officialAgent = System.getProperty("http.agent")?.takeIf { it.startsWith("Dalvik/") }
                 ?: OfficialEmby.dalvikAgent(Build.VERSION.RELEASE, Build.MODEL, Build.ID),
         )
+        java.net.ProxySelector.setDefault(proxyRoutes)
+        java.net.Authenticator.setDefault(proxyRoutes.platformAuthenticator)
         // Requests that set no User-Agent themselves (images through Coil) get their server's.
         http = OkHttpClient.Builder()
+            .proxySelector(proxyRoutes)
+            .proxyAuthenticator(proxyRoutes.okHttpAuthenticator)
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .addInterceptor(UserAgentInterceptor(info.userAgent) { url -> if (::library.isInitialized) library.agentFor(url) else null })
@@ -282,6 +293,10 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             .build()
         zidooStatus = ZidooStatusApi(local)
         registry = ServerRegistry(PrefsRegistryStore(this), persist = Disk::write)
+        // Before the first request; later changes are applied as they come.
+        proxyRoutes.update(proxyPlan(registry.lineup.value))
+        ZLog.secret(settings.proxyPassword.value.takeIf { it.isNotEmpty() })
+        appScope.launch(Dispatchers.IO) { watchProxy() }
         store = LocalStore(ZmbyDatabase.open(this), emby.json)
         // Reports from before the restart, under any made since (a stop report can arrive first).
         appScope.launch(Dispatchers.IO) {
@@ -290,7 +305,9 @@ class ZmbyApp : Application(), ImageLoaderFactory {
             }
         }
         catalogCache = app.zmby.catalog.LimitedCatalogCache(store.db, { settings.metadataCacheMb.value * app.zmby.data.CacheLimits.MIB })
-        val catalogHttp = app.zmby.catalog.CatalogHttp(OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build(),
+        catalogClient = OkHttpClient.Builder().proxySelector(proxyRoutes).proxyAuthenticator(proxyRoutes.okHttpAuthenticator)
+            .connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
+        val catalogHttp = app.zmby.catalog.CatalogHttp(catalogClient,
             catalogCache, { settings.tmdbToken.value },
             tmdbBaseProvider = { debugUrl("debug.zmby.tmdb_base") ?: settings.tmdbApiBase.value },
             bgmBase = debugUrl("debug.zmby.bgm_base") ?: "https://api.bgm.tv/v0/",
@@ -328,7 +345,7 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         playbackArtwork = app.zmby.playback.PlaybackArtworkResolver(catalog::cached,
             { server, id -> store.detail(server, id)?.item }, { library.backdrop(it) }, { library.logo(it) }, artworkServer::cached)
         preparer = PlaybackPreparer(emby, StreamProbe(http, emby.clientInfo.userAgent), capsStore, relay, localStrm,
-            artwork = { session, item -> playbackArtwork.resolve(session.id, item) })
+            artwork = { session, item -> playbackArtwork.resolve(session.id, item) }, proxied = proxyRoutes::proxies)
         // Server answers also kept in Room for their freshness (统一数据层 ①③), per server login.
         val results = app.zmby.store.RoomResultStore(store.db.repoCache())
         fanOut = FanOut(registry, cacheContext = { registry.session(it) }, results = results,
@@ -398,6 +415,29 @@ class ZmbyApp : Application(), ImageLoaderFactory {
         // No playback survives a new process: what the last run left open ends at its last checkpoint.
         appScope.launch(Dispatchers.IO) { playSessions.closeAbandoned() }
         appScope.launch(Dispatchers.IO) { runCatching { store.trim() }.onFailure { ZLog.w(TAG, "trim failed", it) } }
+    }
+
+    private fun proxyPlan(lineup: List<app.zmby.data.ServerStatus>) = app.zmby.net.ProxyPlan.build(
+        settings.proxyKind.value, settings.proxyAddress.value, settings.proxyUser.value, settings.proxyPassword.value,
+        lines = lineup.flatMap { s -> s.config.lines.filter { it.proxy }.map { it.url } },
+        apis = app.zmby.net.ProxyApi.parse(settings.proxyApis.value),
+        tmdbBase = settings.tmdbApiBase.value, danmuBase = settings.danmuApiBase.value.trim(),
+    )
+
+    /**
+     * Rebuilds the proxy plan when the proxy, its APIs or a server line changes. Idle pooled connections
+     * are closed so the next request takes the new route; one in use finishes the way it started.
+     */
+    private suspend fun watchProxy() {
+        val inputs = listOf(settings.proxyKind.flow, settings.proxyAddress.flow, settings.proxyUser.flow, settings.proxyPassword.flow,
+            settings.proxyApis.flow, settings.tmdbApiBase.flow, settings.danmuApiBase.flow, registry.lineup)
+        kotlinx.coroutines.flow.combine(inputs) { proxyPlan(registry.lineup.value) }.collect { plan ->
+            ZLog.secret(plan.credentials?.password?.takeIf { it.isNotEmpty() })
+            if (proxyRoutes.update(plan)) {
+                http.connectionPool.evictAll()
+                catalogClient.connectionPool.evictAll()
+            }
+        }
     }
 
     /** Coil uses the app's client, so artwork goes out with the server's User-Agent too. */

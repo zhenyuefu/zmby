@@ -197,7 +197,8 @@ private fun LinesCard(s: ServerStatus) {
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(line.name, fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                    Text(displayAddress(line.url), fontSize = 17.sp, color = secondaryText(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // 设置 › 网络 decides which lines use the proxy; here it is only shown.
+                    Text(displayAddress(line.url) + if (line.proxy) " · 代理" else "", fontSize = 17.sp, color = secondaryText(), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Text(if (!measured) "未测" else ms?.let { "$it ms" } ?: "超时", fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
             }

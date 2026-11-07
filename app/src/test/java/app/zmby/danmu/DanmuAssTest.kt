@@ -23,6 +23,22 @@ class DanmuAssTest {
         assertTrue(ass.contains("\\move(1920, 46,"))
     }
 
+    @Test fun `a film below 40 fps crosses slower by the overlay's ratio, others keep the duration`() {
+        val c = DanmuAss.Config.of(3, 100)
+        assertEquals(20.0, c.forFrameRate(23.976).duration, 1e-9)
+        assertEquals(20.0, c.forFrameRate(29.97).duration, 1e-9)
+        assertEquals(10.0, c.forFrameRate(59.94).duration, 1e-9)
+        assertEquals(10.0, c.forFrameRate(50.0).duration, 1e-9)
+        assertEquals(10.0, c.forFrameRate(null).duration, 1e-9)
+        assertEquals(10.0, c.forFrameRate(0.0).duration, 1e-9)
+        val film = listOf(app.zmby.emby.MediaStream(0, type = "Audio"), app.zmby.emby.MediaStream(1, type = "Video", averageFrameRate = 23.976))
+        assertEquals(23.976, DanmuAss.frameRate(film)!!, 1e-9)
+        assertEquals(null, DanmuAss.frameRate(listOf(app.zmby.emby.MediaStream(0, type = "Audio"))))
+        // Each scrolling line lasts the whole slower crossing.
+        val ass = DanmuAss.build(DanmuAss.items(listOf(Danmaku(1_000, "慢"))), c.forFrameRate(23.976))
+        assertTrue(ass, ass.contains("Dialogue: 2,0:00:01.00,0:00:21.00,Float"))
+    }
+
     @Test fun `text length is danmu2ass's thirds of an em times the width ratio`() {
         val c = DanmuAss.Config(fontSize = 42, widthRatio = 1.2)
         // 4 non-ASCII (3 each) + 2 ASCII (2 each) = 16 thirds: 42 × 16 / 3 = 224 (integer), × 1.2.

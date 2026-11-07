@@ -17,9 +17,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
-/** One address of a server (LAN, DDNS, CDN…); all lines of a server reach the same Emby with the same token. */
+/**
+ * One address of a server (LAN, DDNS, CDN…); all lines of a server reach the same Emby with the same
+ * token. [proxy]: requests to this line go through the proxy in 设置 › 网络, and its playback through
+ * the local relay (the system player cannot use the proxy itself).
+ */
 @Serializable
-data class ServerLine(val id: String, val name: String, val url: String)
+data class ServerLine(val id: String, val name: String, val url: String, val proxy: Boolean = false)
 
 /** How this server takes part in favourites (favorites spec): two-way, push only, or not at all. */
 @Serializable
@@ -229,6 +233,11 @@ class ServerRegistry(
     fun selectLine(id: String, lineId: String) = update(id) { if (it.lines.any { l -> l.id == lineId }) it.copy(lineId = lineId) else it }
 
     fun addLine(id: String, name: String, url: String) = update(id) { it.copy(lines = it.lines + ServerLine(newId(), name, url)) }
+
+    /** 设置 › 网络: whether line [lineId] of server [id] goes through the proxy. */
+    fun setLineProxy(id: String, lineId: String, on: Boolean) = update(id) { c ->
+        c.copy(lines = c.lines.map { if (it.id == lineId) it.copy(proxy = on) else it })
+    }
 
     /** One line's speed test: [ms] null = unreachable. */
     data class Ping(val serverId: String, val lineId: String, val ms: Long?, val version: String?)

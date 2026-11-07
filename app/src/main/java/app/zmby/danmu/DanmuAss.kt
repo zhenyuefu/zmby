@@ -39,6 +39,16 @@ object DanmuAss {
         /** ASS alpha byte, as the CLI computes it: `((1.0 - alpha) * 255.0) as u8`. */
         val opacity: Int get() = ((1.0 - alpha) * 255.0).toInt().coerceIn(0, 255)
 
+        /**
+         * For a video of [fps]: below [DanmuStage.LOW_RATE_HZ] the player outputs about that many
+         * refreshes a second (Zidoo's auto frame rate), so comments cross slower by the overlay's own
+         * ratio ([DanmuStage.LOW_RATE_CROSS_MS] to [DanmuStage.CROSS_MS]), 10 s becoming 20 s.
+         * Unknown rates keep [duration].
+         */
+        fun forFrameRate(fps: Double?): Config =
+            if (fps == null || fps <= 0.0 || fps >= DanmuStage.LOW_RATE_HZ) this
+            else copy(duration = duration * DanmuStage.LOW_RATE_CROSS_MS / DanmuStage.CROSS_MS)
+
         /** `(float_percentage * height / lane_size) as usize`. */
         val lanes: Int get() = (floatPercentage * height.toDouble() / laneSize.toDouble()).toInt().coerceAtLeast(0)
 
@@ -195,6 +205,10 @@ object DanmuAss {
         }
         return sb.toString()
     }
+
+    /** The video's frame rate as the server reports it, if any. */
+    fun frameRate(streams: List<app.zmby.emby.MediaStream>): Double? =
+        streams.firstOrNull { it.type.equals("Video", ignoreCase = true) }?.let { it.realFrameRate ?: it.averageFrameRate }
 
     /** Our comments for [build]: seconds from milliseconds, text made safe for ASS. */
     fun items(comments: List<Danmaku>): List<Item> =

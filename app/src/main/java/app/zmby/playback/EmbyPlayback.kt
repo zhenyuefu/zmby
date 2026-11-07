@@ -117,6 +117,8 @@ class PlaybackPreparer(
     private val localStrm: LocalStrmPreparer? = null,
     private val now: () -> Long = System::currentTimeMillis,
     private val artwork: suspend (ServerSession, BaseItemDto) -> PlaybackImages = { _, _ -> PlaybackImages() },
+    /** Whether a URL goes through the proxy (设置 › 网络); such a stream plays through [relay]. */
+    private val proxied: (String) -> Boolean = { false },
 ) {
 
     suspend fun prepare(
@@ -222,7 +224,10 @@ class PlaybackPreparer(
                 throw e
             }
         }
-        return build(usesRelay(caps.get(session.capsKey)))
+        // The system player cannot use the proxy: a proxied line plays through the relay, which can.
+        val viaProxy = relay != null && proxied(directUrl)
+        if (viaProxy) ZLog.i(TAG, "line goes through the proxy; playing through the local relay")
+        return build(usesRelay(caps.get(session.capsKey)) || viaProxy)
     }
 
     /**
@@ -270,8 +275,10 @@ class PlaybackPreparer(
         val main = external?.let { stream ->
             stream to (StreamUrls.subtitle(session.baseUrl, item.id, source, stream, session.accessToken) ?: throw SubtitlePrepareException("字幕没有下载地址"))
         }
+        // The version that plays decides the pace: a film at 23.976 fps crosses slower (danmu design).
+        val config = danmu.config.forFrameRate(app.zmby.danmu.DanmuAss.frameRate(source.mediaStreams))
         val ass = withContext(Dispatchers.Default) {
-            app.zmby.danmu.DanmuAss.bytes(app.zmby.danmu.DanmuAssFonts.build(app.zmby.danmu.DanmuAss.items(comments), danmu.config))
+            app.zmby.danmu.DanmuAss.bytes(app.zmby.danmu.DanmuAssFonts.build(app.zmby.danmu.DanmuAss.items(comments), config))
         }
         return try {
             localStrm.prepareDanmu(url, main, ass).also {

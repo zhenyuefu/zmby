@@ -6,6 +6,9 @@ import android.view.TextureView
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -15,7 +18,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -45,7 +54,9 @@ import app.zmby.zmby
 import kotlinx.coroutines.flow.collectLatest
 
 /*
- * Trailers behind the home hero and the detail pages (trailer design; ui-spec §2.1, §2.2). One
+ * Trailers in the home hero and at the top of the detail pages (trailer design; ui-spec §2.1, §2.2):
+ * a 16:9 window at the top right whose left and bottom edges dissolve into the still backdrop, which
+ * stays drawn around it, never the whole background. One
  * ExoPlayer per screen, built only when a trailer is found and released whenever the screen pauses
  * (the Zidoo player needs the decoder) or leaves. The video loads under the still backdrop and fades
  * in only once its first frame is decoded, so a slow or failing trailer never shows a black frame.
@@ -70,13 +81,15 @@ class TrailerPlayer internal constructor(private val context: Context, private v
     var finished by mutableStateOf<String?>(null)
         private set
 
-    /** The surface's opacity, animated by [TrailerSurface]; 1 means the still backdrop is covered. */
+    /** Paused and faded out while the page is scrolled away from its top (detail pages). */
+    var held by mutableStateOf(false)
+        private set
+
+    /** The surface's opacity, animated by [TrailerSurface]. */
     internal val alpha = Animatable(0f)
-    val covering: Boolean get() = alpha.value >= 1f
 
     private var player: ExoPlayer? = null
     private var view: TrailerTextureView? = null
-    private var held = false
     private var sound = false
 
     private val listener = object : Player.Listener {
@@ -144,7 +157,7 @@ class TrailerPlayer internal constructor(private val context: Context, private v
         }
     }
 
-    /** Paused while [hold] (the detail backdrop covered by the scrolled page), playing again after. */
+    /** Paused and faded out while [hold] (the detail page scrolled down), shown and playing again after. */
     fun hold(hold: Boolean) {
         if (held == hold) return
         held = hold
@@ -231,13 +244,46 @@ fun rememberTrailerPlayer(): TrailerPlayer {
 }
 
 /**
- * The video, filling its box like a cropped backdrop; transparent until [TrailerPlayer.showing],
- * then fading in (and out again when it ends or stops). Compose it only while [TrailerPlayer.key] is set.
+ * The trailer window over a full-screen backdrop (trailer design): a 16:9 box two thirds of the
+ * screen high at the top right, which on the home page is the hero area. Its left and bottom edges
+ * fade out over [EDGE_LEFT] and [EDGE_BOTTOM] of the box, so the video dissolves into the still
+ * backdrop drawn under it. Compose it only while [TrailerPlayer.key] is set.
  */
 @Composable
-fun TrailerSurface(player: TrailerPlayer, modifier: Modifier = Modifier) {
+fun BoxScope.TrailerWindow(player: TrailerPlayer) {
+    TrailerSurface(
+        player,
+        Modifier
+            .align(Alignment.TopEnd)
+            .fillMaxHeight(WINDOW_HEIGHT)
+            .aspectRatio(16f / 9f, matchHeightConstraintsFirst = true)
+            // Its own layer, so the masks below cut only the video, not the backdrop under it.
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithCache {
+                val left = Brush.horizontalGradient(0f to Color.Transparent, EDGE_LEFT to Color.Black, endX = size.width)
+                val bottom = Brush.verticalGradient((1f - EDGE_BOTTOM) to Color.Black, 1f to Color.Transparent, endY = size.height)
+                onDrawWithContent {
+                    drawContent()
+                    drawRect(left, blendMode = BlendMode.DstIn)
+                    drawRect(bottom, blendMode = BlendMode.DstIn)
+                }
+            },
+    )
+}
+
+/** The window's height as a fraction of the screen (720 of 1080 design dp, the hero's bottom edge). */
+private const val WINDOW_HEIGHT = 2f / 3f
+private const val EDGE_LEFT = 0.35f
+private const val EDGE_BOTTOM = 0.3f
+
+/**
+ * The video, filling its box like a cropped backdrop; transparent until [TrailerPlayer.showing],
+ * then fading in (and out again when it ends, stops or is held). Compose it only while [TrailerPlayer.key] is set.
+ */
+@Composable
+private fun TrailerSurface(player: TrailerPlayer, modifier: Modifier = Modifier) {
     LaunchedEffect(player) {
-        snapshotFlow { player.showing }.collectLatest { on ->
+        snapshotFlow { player.showing && !player.held }.collectLatest { on ->
             player.alpha.animateTo(if (on) 1f else 0f, tween(if (on) FADE_IN_MS else FADE_OUT_MS))
         }
     }

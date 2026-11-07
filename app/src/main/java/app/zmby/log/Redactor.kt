@@ -23,6 +23,7 @@ class Redactor {
         out = QUERY.replace(out) { "${it.groupValues[1]}=$MASK" }
         out = TOKEN_HEADER.replace(out) { "${it.groupValues[1]}: $MASK" }
         out = AUTH_HEADER.replace(out) { "${it.groupValues[1]}: ${it.groupValues[2]}$MASK" }
+        out = PROXY_AUTH.replace(out) { "${it.groupValues[1]}: $MASK" }
         out = JSON_FIELD.replace(out) { "\"${it.groupValues[1]}\":\"$MASK\"" }
         out = BEARER.replace(out) { "Bearer $MASK" }
         return out
@@ -50,13 +51,16 @@ class Redactor {
 
         private val TOKEN_HEADER = Regex("(?i)\\b(X-Emby-Token|X-MediaBrowser-Token|Cookie|Set-Cookie)\\s*:\\s*[^\\r\\n,;]+")
 
+        /** The proxy's credentials (设置 › 网络): the whole value, scheme included. */
+        private val PROXY_AUTH = Regex("(?i)\\b(Proxy-Authorization)\\s*:\\s*[^\\r\\n]+")
+
         /** A plain Authorization header; X-Emby-Authorization keeps its fields and loses only Token="…". */
         private val AUTH_HEADER = Regex("(?i)(?<![-\\w])(Authorization)\\s*:\\s*(Bearer |Basic )?[^\\r\\n]+")
 
         /** A bearer token anywhere in a line (the segment databases' API keys, e.g. PublicMetaDB). */
         private val BEARER = Regex("(?i)\\bBearer\\s+(?!\\*\\*\\*)[A-Za-z0-9._~+/=-]{8,}")
 
-        private val JSON_FIELD = Regex("(?i)\"(AccessToken|Pw|Password|backupPassword|confirm|Token|tmdb_read_token|publicmetadb_key|api_key|X-Emby-Token)\"\\s*:\\s*\"[^\"]*\"")
+        private val JSON_FIELD = Regex("(?i)\"(AccessToken|Pw|Password|backupPassword|confirm|Token|tmdb_read_token|publicmetadb_key|proxy_password|api_key|X-Emby-Token)\"\\s*:\\s*\"[^\"]*\"")
 
         /**
          * A signed link reduced to what is safe and useful to log: scheme, host, path and the

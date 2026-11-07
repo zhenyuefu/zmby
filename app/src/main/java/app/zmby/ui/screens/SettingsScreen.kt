@@ -81,7 +81,7 @@ import kotlinx.coroutines.withContext
 private enum class Category(val label: String, val glyph: Glyph, val value: String) {
     Playback("播放", Glyph.Play, "Zidoo"), Metadata("影视资料", Glyph.Film, "TMDB · Bangumi"),
     Home("首页", Glyph.Home, "主推 · 媒体库"), Servers("服务器与来源", Glyph.Servers, "连接 · 聚合"),
-    Cache("缓存", Glyph.Stack, "资料 · 图片"), About("关于", Glyph.Info, "zmby")
+    Network("网络", Glyph.Globe, "代理服务器"), Cache("缓存", Glyph.Stack, "资料 · 图片"), About("关于", Glyph.Info, "zmby")
 }
 
 /** Settings.dc.html: categories on the left (moving onto one shows it), grouped rows on the right. */
@@ -153,6 +153,7 @@ fun SettingsScreen(nav: Nav) {
                 Category.Playback -> { Playback(nav, qualityRow, onQuality = { qualityOpen = true }); Tracks(); General(nav) }
                 Category.Home -> { HomeRows(nav); Appearance() }
                 Category.Servers -> { ServersSummary(nav); Sources(nav) }
+                Category.Network -> NetworkSettings()
                 Category.About -> About()
             }
           }
@@ -309,7 +310,7 @@ private fun DanmuServer() {
 
 /** `.st`: a small heading inside a group card. */
 @Composable
-private fun SettingsSubtitle(text: String) {
+internal fun SettingsSubtitle(text: String) {
     Text(text, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Z.textDisabled, letterSpacing = 1.sp,
         modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 4.dp))
 }

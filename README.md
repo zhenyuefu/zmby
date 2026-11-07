@@ -7,7 +7,7 @@
 <p align="center"><strong>聚合 Emby 片库，用芝杜系统播放器播放。</strong></p>
 
 <p align="center">Android TV · 多服务器聚合 · Zidoo 原生播放</p>
-<p align="center"><a href="https://github.com/zhenyuefu/zmby/releases/tag/v1.0.0">下载 1.0.0</a> · <a href="#快速开始">快速开始</a> · <a href="docs/USAGE.md">使用指南</a> · <a href="docs/DEVELOPMENT.md">开发指南</a></p>
+<p align="center"><a href="https://github.com/zhenyuefu/zmby/releases/tag/v1.0.1">下载 1.0.1</a> · <a href="#快速开始">快速开始</a> · <a href="docs/USAGE.md">使用指南</a> · <a href="docs/DEVELOPMENT.md">开发指南</a></p>
 
 ![zmby 首页：真实媒体库与 TMDB 影视资料](docs/images/home.jpg)
 
@@ -23,6 +23,7 @@ zmby 是面向芝杜（Zidoo）的 Android TV Emby 客户端。把多台服务�
 - **预告片**：主推区与详情页在背景自动播放预告片，依次取 IMDb、烂番茄与媒体服务器上存放的预告片（默认静音，可在设置 › 首页关闭或开启声音）。
 - **多方评分**：详情页显示 IMDb、烂番茄与爆米花评分（经 Wikidata 定位，可在设置 › 影视资料关闭）。
 - **电视操作**：遥控器焦点、快速选集，手机扫码添加服务器和填写 API 配置。
+- **代理服务器**：可以指定一个 HTTP 或 SOCKS5 代理，只有选中的服务器线路和外部 API（TMDB、Bangumi、弹幕、IMDb、烂番茄、片段标记）走代理。走代理的线路由本机转发给播放器（设置 › 网络；尚未在真机上验证）。
 
 ## 界面
 
@@ -56,6 +57,7 @@ zmby 是面向芝杜（Zidoo）的 Android TV Emby 客户端。把多台服务�
 | 片头片尾跳过、下一集提示 | 设置 → 播放；详情页可查看和调整标记 |
 | 切换参与聚合的服务器 | 设置 → 服务器与来源 |
 | 导出或恢复配置 | 服务器 → 备份与恢复 |
+| 让部分线路或 API 走代理 | 设置 → 网络 |
 | 调整图片、资料缓存 | 设置 → 缓存 |
 
 遥控器用方向键移动、确认键选择、返回键退回；最左侧再按左键可打开导航。更多操作见[使用指南](docs/USAGE.md)。

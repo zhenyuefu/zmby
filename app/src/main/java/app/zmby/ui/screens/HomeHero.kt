@@ -79,7 +79,7 @@ import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.Scrims
 import app.zmby.ui.components.TitleLogo
 import app.zmby.ui.components.TrailerPlayer
-import app.zmby.ui.components.TrailerSurface
+import app.zmby.ui.components.TrailerWindow
 import androidx.compose.runtime.snapshotFlow
 import app.zmby.ui.components.backdropRequest
 import app.zmby.ui.components.blurredBackdropKey
@@ -288,18 +288,17 @@ fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims, trailer: TrailerPlayer?
                         compositingStrategy = if ("herolayer" in app.zmby.Diagnostics.drawOff) CompositingStrategy.Auto else CompositingStrategy.Offscreen
                     },
             ) {
-                // The trailer of the title resting here, under the scrims (trailer design). Once it
-                // covers the page the still backdrop is not drawn: one full-screen pass less per frame.
+                // The trailer of the title resting here, in the hero area under the scrims (trailer design).
                 val playing = trailer != null && i == carousel.target && trailer.key != null && trailer.key == carousel.itemAt(i)?.key
                 if (url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) {
                     AsyncImage(
                         model = remember(url) { backdropRequest(context, url, w, h) },
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().then(if (playing) Modifier.graphicsLayer { alpha = if (trailer!!.covering) 0f else 1f } else Modifier),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
-                if (playing) TrailerSurface(trailer!!, Modifier.fillMaxSize())
+                if (playing) TrailerWindow(trailer!!)
                 Box(Modifier.fillMaxSize().drawWithCache { onDrawBehind { with(scrims) { draw(size) } } })
             }
         }

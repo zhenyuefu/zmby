@@ -42,7 +42,8 @@ class DanmuSubtitlePrepareTest {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
                 request.path!!.contains("PlaybackInfo") -> MockResponse().setBody("""
                     {"PlaySessionId":"ps","MediaSources":[{"Id":"src","Container":"mkv","DirectStreamUrl":"/video.mkv","RunTimeTicks":10000000000,
-                     "MediaStreams":[{"Index":1,"Type":"Audio","Language":"chi","IsDefault":true},
+                     "MediaStreams":[{"Index":0,"Type":"Video","Codec":"hevc","RealFrameRate":23.976},
+                       {"Index":1,"Type":"Audio","Language":"chi","IsDefault":true},
                        {"Index":2,"Type":"Subtitle","Codec":"subrip","Language":"chi"},
                        {"Index":3,"Type":"Subtitle","Codec":"PGSSUB","Language":"chi"},
                        {"Index":4,"Type":"Subtitle","Codec":"srt","Language":"eng","IsExternal":true}]}]}
@@ -100,6 +101,8 @@ class DanmuSubtitlePrepareTest {
                 assertNull(local.subtitlePid)
                 assertEquals(listOf("zmby_danmu.danmu.ass"), local.extras.map { it.name })
                 assertTrue(local.extras.single().readText().contains("前方高能"))
+                // The version plays at 23.976 fps: scrolling lines cross in 20 s, not 10 (danmu design).
+                assertTrue(local.extras.single().readText().contains("Dialogue: 2,0:00:01.00,0:00:21.00,Float"))
                 assertTrue(p.launch.extras.containsKey(ZidooPlayer.EXTRA_SUBTITLE_IDX))
                 assertFalse(p.launch.extras.containsKey(ZidooPlayer.EXTRA_SUBTITLE_PID))
                 assertEquals(local.uri, p.launch.uri)

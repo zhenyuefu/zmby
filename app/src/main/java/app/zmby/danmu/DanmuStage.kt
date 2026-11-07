@@ -368,19 +368,29 @@ class DanmuStage<G : Any>(
         const val FIXED_MS = 4_000L
         /** A scrolling comment travels one screen width in this long. */
         const val CROSS_MS = 8_000f
+        /**
+         * Below [LOW_RATE_HZ] (a 24/25/30 Hz output, as Zidoo's auto frame rate picks for films) the
+         * text can move only that many times a second, and 8 s a screen meant 10 px jumps at 1080p
+         * that read as judder (12 s still did on the Z9X 8K): there a screen takes this long, half the
+         * step. The player-subtitle ASS slows by the same ratio ([DanmuAss.Config.forFrameRate]).
+         */
+        const val LOW_RATE_CROSS_MS = 16_000f
+        const val LOW_RATE_HZ = 40f
         /** One still not placed this long after its time is dropped. */
         const val LATE_MS = 1_000L
         const val MAX_WAITING = 48
 
         /**
-         * The step pattern closest to one screen width per [CROSS_MS] (danmu design: 刷新率). Low and
+         * The step pattern closest to one screen width per [CROSS_MS], or [LOW_RATE_CROSS_MS] below
+         * [LOW_RATE_HZ] (danmu design: 刷新率). Low and
          * 60 Hz class rates get whole pixels every refresh. Above that a step of one or two pixels
          * rounds badly (144 Hz would run 20 % fast, 165 Hz 31 % slow), so [px] every [DanmuSpeed.ticks]
          * refreshes is allowed as long as the pattern still repeats at least 60 times a second, too fast
          * to read as judder: 3 every 2 at 144 and 165 Hz, 2 every 3 at 360 Hz.
          */
         fun speedFor(screenPx: Int, periodNs: Long): DanmuSpeed {
-            val target = screenPx / CROSS_MS * periodNs / 1e6 // Pixels per refresh.
+            val cross = if (1e9 / periodNs < LOW_RATE_HZ) LOW_RATE_CROSS_MS else CROSS_MS
+            val target = screenPx / cross * periodNs / 1e6 // Pixels per refresh.
             val maxTicks = (1e9 / periodNs / 60 + 0.01).toInt().coerceIn(1, 8)
             var best = DanmuSpeed(kotlin.math.round(target).toInt().coerceAtLeast(1), 1)
             var bestError = kotlin.math.abs(best.px - target)

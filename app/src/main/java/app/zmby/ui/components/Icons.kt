@@ -60,6 +60,8 @@ enum class Glyph(val path: String, val filled: Boolean = false) {
     Close("M6 6l12 12M18 6L6 18"),
     // 我的 (MainSidebar.dc.html): a head and shoulders.
     Person("M16 8a4 4 0 1 1-8 0a4 4 0 1 1 8 0M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"),
+    // 设置 › 网络 (代理服务器): a globe with its meridian and equator.
+    Globe("M21 12a9 9 0 1 1-18 0a9 9 0 1 1 18 0M3 12h18M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9M12 3c-2.4 2.5-3.6 5.5-3.6 9s1.2 6.5 3.6 9"),
     // 季集映射 (Series.dc.html): two opposed arrows.
     Swap("M4 7h11l-3-3M20 17H9l3 3"),
     // 弹幕 (DanmuPanel.dc.html): a speech bubble with two lines.

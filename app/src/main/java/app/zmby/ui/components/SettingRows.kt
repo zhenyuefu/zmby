@@ -82,7 +82,7 @@ fun warnText(): androidx.compose.ui.graphics.Color = if (LocalInverted.current) 
 
 /** A row that toggles on OK; the whole row takes focus. */
 @Composable
-fun ToggleSetting(title: String, checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, sub: String? = null, mono: Boolean = false, dimmed: Boolean = false, warn: Boolean = false) {
+fun ToggleSetting(title: String, checked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, sub: String? = null, mono: Boolean = false, dimmed: Boolean = false, warn: Boolean = false, focusKey: String = title) {
     SelectableRow(
         onToggle,
         modifier.defaultMinSize(minHeight = 70.dp),
@@ -91,7 +91,7 @@ fun ToggleSetting(title: String, checked: Boolean, onToggle: () -> Unit, modifie
         radius = 20.dp,
         padding = SetPadding,
         label = "$title ${if (checked) "开" else "关"}",
-        focusKey = title,
+        focusKey = focusKey,
     ) {
         SettingLabel(title, sub, mono, Modifier.weight(1f), warn)
         GlassToggle(checked)

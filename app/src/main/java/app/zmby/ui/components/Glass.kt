@@ -210,16 +210,15 @@ fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.()
             // into an offscreen layer, each frame then draws one textured quad. The Z9X 8K redraws the
             // whole screen every frame (it reports full-screen damage), and these three passes cost
             // about 5 ms of its GPU time per frame while rows scrolled. A playing trailer redraws the
-            // layer every video frame anyway: then it is drawn straight to the screen, and the still
-            // image under the video is skipped once the video covers it (trailer design).
+            // layer every video frame anyway: then it is drawn straight to the screen (trailer design).
             .graphicsLayer {
-                compositingStrategy = if ("bdlayer" in app.zmby.Diagnostics.drawOff || video?.showing == true) CompositingStrategy.Auto else CompositingStrategy.Offscreen
+                compositingStrategy = if ("bdlayer" in app.zmby.Diagnostics.drawOff || (video != null && video.showing && !video.held)) CompositingStrategy.Auto
+                    else CompositingStrategy.Offscreen
             },
     ) {
-        if (backdrop.url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) {
-            Artwork(backdrop.url, Modifier.fillMaxSize().then(if (video != null) Modifier.graphicsLayer { alpha = if (video.covering) 0f else 1f } else Modifier))
-        }
-        if (video != null) TrailerSurface(video, Modifier.fillMaxSize())
+        if (backdrop.url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) Artwork(backdrop.url, Modifier.fillMaxSize())
+        // The top of the page only: the still backdrop stays around it and below (trailer design).
+        if (video != null) TrailerWindow(video)
         if (backdrop.url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) {
             if (blurProgress != null && backdrop.blurred != null && "blurcover" !in app.zmby.Diagnostics.drawOff) {
                 Box(Modifier.fillMaxSize().drawWithCache {

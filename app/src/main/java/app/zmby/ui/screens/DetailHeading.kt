@@ -118,9 +118,9 @@ internal fun CompactHeader(heading: DetailHeadingState, display: DetailDisplay, 
 }
 
 /**
- * Plays the page's IMDb trailer behind the fixed backdrop once [DetailViewModel.trailer] finds it
- * (trailer design; ui-spec §2.2), once per visit: back from the player it does not start again. It
- * pauses while the scrolled page has blurred the backdrop away and goes on when it shows again.
+ * Plays the page's IMDb trailer at the top of the fixed backdrop once [DetailViewModel.trailer] finds
+ * it (trailer design; ui-spec §2.2), once per visit: back from the player it does not start again. As
+ * soon as the page scrolls down it pauses and fades back to the still backdrop; at the top it goes on.
  */
 @Composable
 internal fun DetailTrailerHost(vm: DetailViewModel, trailer: app.zmby.ui.components.TrailerPlayer, heading: DetailHeadingState) {
@@ -136,8 +136,8 @@ internal fun DetailTrailerHost(vm: DetailViewModel, trailer: app.zmby.ui.compone
     }
 }
 
-/** The blurred cover over the backdrop is this far in when the trailer under it pauses. */
-private const val TRAILER_HOLD_AT = 0.95f
+/** The page has scrolled this far towards its blurred backdrop (60 of 600 dp) when the trailer pauses. */
+private const val TRAILER_HOLD_AT = 0.1f
 
 /**
  * The header's ratings (ratings design; ui-spec §2.2): IMDb, Tomatometer, Popcornmeter, then the

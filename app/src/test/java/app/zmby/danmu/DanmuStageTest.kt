@@ -50,15 +50,16 @@ class DanmuStageTest {
         assertEquals(6L, t.ticks)
     }
 
-    @Test fun `every common refresh rate gets an even step pattern close to eight seconds a screen`() {
+    @Test fun `every common refresh rate gets an even step pattern close to eight seconds a screen, sixteen below 40 Hz`() {
         val rates = listOf(23.976f, 24f, 25f, 29.97f, 30f, 48f, 50f, 59.94f, 60f, 72f, 75f, 90f, 100f,
             119.88f, 120f, 144f, 165f, 240f, 360f)
         for (width in listOf(1920, 3840)) for (hz in rates) {
             val period = DanmuTicker.periodOf(hz)
             val speed = DanmuStage.speedFor(width, period)
             val crossSeconds = width / speed.perMs(period) / 1000
-            // Within a quarter of the target everywhere; exact at the 24/30/60/120 Hz families.
-            assertTrue("$width@$hz: ${speed} crosses in $crossSeconds s", crossSeconds in 6.0..10.0)
+            // Within a quarter of the target everywhere; exact at the 60/120 Hz families.
+            val range = if (hz < DanmuStage.LOW_RATE_HZ) 14.0..18.0 else 6.0..10.0
+            assertTrue("$width@$hz: ${speed} crosses in $crossSeconds s", crossSeconds in range)
             // A pattern longer than one refresh still repeats at least 60 times a second.
             assertTrue("$width@$hz: $speed", speed.ticks == 1 || hz / speed.ticks >= 59.9f)
             // The steps within one pattern differ by at most one pixel.
@@ -68,7 +69,10 @@ class DanmuStageTest {
         val p = { hz: Float -> DanmuTicker.periodOf(hz) }
         assertEquals(DanmuSpeed(4, 1), DanmuStage.speedFor(1920, p(60f)))
         assertEquals(DanmuSpeed(4, 1), DanmuStage.speedFor(1920, p(59.94f)))
-        assertEquals(DanmuSpeed(10, 1), DanmuStage.speedFor(1920, p(23.976f)))
+        assertEquals(DanmuSpeed(5, 1), DanmuStage.speedFor(1920, p(23.976f)))
+        assertEquals(DanmuSpeed(10, 1), DanmuStage.speedFor(3840, p(23.976f)))
+        assertEquals(DanmuSpeed(5, 1), DanmuStage.speedFor(1920, p(25f)))
+        assertEquals(DanmuSpeed(4, 1), DanmuStage.speedFor(1920, p(30f)))
         assertEquals(DanmuSpeed(5, 1), DanmuStage.speedFor(1920, p(50f)))
         assertEquals(DanmuSpeed(2, 1), DanmuStage.speedFor(1920, p(120f)))
         assertEquals(DanmuSpeed(2, 1), DanmuStage.speedFor(1920, p(119.88f)))
@@ -235,10 +239,12 @@ class DanmuStageTest {
         s.update(1_000, 60)
         val scroll = s.active[0]
         assertEquals(1920 - 240, s.x(scroll, 60))
-        // 60 Hz to 24 Hz: ten pixels a refresh from now on, same place and remaining time.
+        // 60 Hz to 24 Hz: five pixels a refresh from now on (the slower low-rate pace). The start is
+        // a whole number of refreshes, so the place holds to within half a step.
         s.retime(DanmuStage.speedFor(1920, DanmuTicker.periodOf(23.976f)), DanmuTicker.periodOf(23.976f) / 1e6, 60)
-        assertEquals(1920 - 240, s.x(scroll, 60))
-        assertEquals(1920 - 250, s.x(scroll, 61))
+        val x = s.x(scroll, 60)
+        assertTrue("$x", kotlin.math.abs(x - (1920 - 240)) <= 3)
+        assertEquals(x - 5, s.x(scroll, 61))
         val fixedLeft = s.nextFixedEnd()!! - 60
         assertEquals(72L, fixedLeft) // About three seconds at 24 Hz.
     }

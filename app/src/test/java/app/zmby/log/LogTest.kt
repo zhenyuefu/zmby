@@ -39,6 +39,12 @@ class RedactorTest {
     }
 
     @Test
+    fun masksProxyCredentials() {
+        assertEquals("Proxy-Authorization: ***", r.redact("Proxy-Authorization: Basic bWU6c2VjcmV0"))
+        assertMasked("""{"proxy_user":"me","proxy_password":"hunter2"}""", "hunter2")
+    }
+
+    @Test
     fun masksPasswordsAndTokensInJson() {
         assertMasked("""{"Username":"me","Pw":"hunter22"}""", "hunter22")
         assertMasked("""{"User":{"Id":"u1"},"AccessToken":"tok-123456789","ServerId":"s"}""", "tok-123456789")
