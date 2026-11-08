@@ -91,7 +91,7 @@ open class DetailViewModel(private val app: ZmbyApp, val server: String, val ite
      * Asked [DETAIL_TRAILER_DELAY_MS] after what it needs is known, so the page's own requests go
      * first; stored answers need no request. A trailer already found is kept while what it came from
      * is unchanged (copies arriving one server at a time do not restart it). None for resource-only
-     * pages and with 自动播放预告片 off.
+     * pages; found also with 自动播放预告片 off, for the header's 预告片 button.
      */
     val trailer: StateFlow<TrailerInfo?> = _trailer.asStateFlow()
 
@@ -99,8 +99,9 @@ open class DetailViewModel(private val app: ZmbyApp, val server: String, val ite
         viewModelScope.launch(Dispatchers.IO) {
             val own = detail.map { d -> d?.ref?.takeIf { !resourceOnly && it.server != "catalog" } }.distinctUntilChanged { a, b -> a?.key == b?.key }
             var askedId: String? = null
-            kotlinx.coroutines.flow.combine(imdbId, own, trailerCopies, app.settings.trailerAutoplay.flow) { id, mine, found, on ->
-                if (!on || resourceOnly) null
+            // Looked up also with 自动播放预告片 off: the header's 预告片 button still opens it (ui-spec §2.23).
+            kotlinx.coroutines.flow.combine(imdbId, own, trailerCopies) { id, mine, found ->
+                if (resourceOnly) null
                 else TrailerQuery(id, (listOfNotNull(mine) + found).distinctBy { it.key }.take(MAX_TRAILER_COPIES))
             }.distinctUntilChanged { a, b -> a?.imdbId == b?.imdbId && a?.copies?.map { it.key } == b?.copies?.map { it.key } }
                 .collectLatest { query ->

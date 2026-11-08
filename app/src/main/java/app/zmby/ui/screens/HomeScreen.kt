@@ -127,6 +127,9 @@ private val CONTENT_TOP = 120.dp
 /** Main.dc.html: left→right 0.96 → 0.78 (34 %) → 0.1 (70 %); bottom 560 of 1080, solid for its lower 30 %. */
 private val HOME_SCRIMS = Scrims(listOf(0f to 0.96f, 0.34f to 0.78f, 0.70f to 0.1f), bottomFrom = 520f / 1080f, bottomSolid = 0.3f)
 
+/** While the hero's trailer shows, the left scrim lightens to these stops (TrailerHero.dc.html; ui-spec §2.23). */
+private val HOME_TRAILER_SCRIM = listOf(0f to 0.88f, 0.32f to 0.6f, 0.62f to 0f)
+
 /** A library picked on a server's own home: the browse tab opens on it. */
 data class BrowseTarget(val server: String, val libraryId: String, val types: String)
 
@@ -149,6 +152,9 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
     val carousel = rememberRetained("heroCarousel") { HeroCarousel() }
     // The resting title's IMDb trailer plays behind the hero (trailer design); released on pause.
     val trailer = rememberTrailerPlayer()
+    val scrims = remember(trailer) { HOME_SCRIMS.copy(lighter = HOME_TRAILER_SCRIM, lightness = { trailer.alpha.value }) }
+    // Key presses, counted for quiet mode; read only by its effect, never in composition.
+    val keyPresses = remember { mutableIntStateOf(0) }
     val backdropVisible = remember(carousel) { { carousel.backdropVisible } }
     val backdropShift = remember(carousel) { { -carousel.scrolled } }
     val vm = screenModel("home") { HomeViewModel(app) }
@@ -236,8 +242,9 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
     ActionFeedbackHost(Modifier.fillMaxSize()) {
     BackdropScreen(
         null,
-        HOME_SCRIMS,
+        scrims,
         modifier = Modifier.onPreviewKeyEvent { e ->
+            if (e.type == KeyEventType.KeyDown) keyPresses.intValue++
             if (e.type == KeyEventType.KeyDown && e.key != Key.Back) exitConfirmation.reset()
             // 在看 has its own actions. Other home cards keep the sidebar Menu shortcut.
             if (tab == 0 && sideBlock.intValue == 0 && e.key == Key.Menu) {
@@ -255,12 +262,12 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
         },
         visible = backdropVisible,
         shift = backdropShift,
-        layer = if (tab == 0) ({ HeroBackdrop(carousel, HOME_SCRIMS, trailer) }) else null,
+        layer = if (tab == 0) ({ HeroBackdrop(carousel, scrims, trailer) }) else null,
         slices = if (tab == 0) heroGlassSlices(carousel) else null,
     ) {
         val openSearch = { nav.go(Route.Search) }
         when (tab) {
-            0 -> HomeFeed(nav, shownAt, carousel, trailer, search, entry, onLibrary = { lib ->
+            0 -> HomeFeed(nav, shownAt, carousel, trailer, { keyPresses.intValue }, search, entry, onLibrary = { lib ->
                 val series = lib.item.collectionType == "tvshows"
                 browseTarget = BrowseTarget(lib.server, lib.item.id, if (series) "Series" else "Movie")
                 onTab(if (series) 2 else 1)
@@ -343,7 +350,7 @@ private fun HomeTopBar(vm: HomeViewModel, search: FocusRequester, onSearch: () -
 }
 
 @Composable
-private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, trailer: TrailerPlayer, search: FocusRequester, entry: FocusRequester, onLibrary: (ServerItem) -> Unit, onWatching: () -> Unit, onWatchingMenu: (WatchCard) -> Unit) {
+private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, trailer: TrailerPlayer, keys: () -> Int, search: FocusRequester, entry: FocusRequester, onLibrary: (ServerItem) -> Unit, onWatching: () -> Unit, onWatchingMenu: (WatchCard) -> Unit) {
     TraceRecomposition("Home.feed")
     val context = LocalContext.current
     val app = context.zmby
@@ -370,6 +377,7 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, trailer: T
     LaunchedEffect(tick) { if (tick > 0) vm.forgetHeroFetches() }
     HeroPrefetch(carousel, tick) { vm.prefetchHero(it) }
     HeroTrailerHost(vm, carousel, trailer)
+    HeroQuietMode(carousel, trailer, keys)
 
     val activity = context as? android.app.Activity
     val shown = featured.isNotEmpty() || layout.watching
@@ -393,28 +401,29 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, trailer: T
                 HomeHeroItem(nav, vm, carousel, featured.isNotEmpty(), chart, shownAt, search, entry, running, list, scope)
             }
             // 在看 (ui-spec §2.18): the first cards of the 在看 page, then 「全部 ›」 to it.
-            if (layout.watching) item(key = "watching", contentType = "row") { HomeWatchingRow(nav, vm, onWatching, onWatchingMenu) }
-            if (layout.watchlist) item(key = "watchlist", contentType = "row") {
+            // In quiet mode the rows move down and dim, out of the trailer's way (ui-spec §2.23).
+            if (layout.watching) item(key = "watching", contentType = "row") { Box(Modifier.heroQuiet(carousel)) { HomeWatchingRow(nav, vm, onWatching, onWatchingMenu) } }
+            if (layout.watchlist) item(key = "watchlist", contentType = "row") { Box(Modifier.heroQuiet(carousel)) {
                 TraceRecomposition("Home.row.watchlist")
                 val cards by vm.watchlistRow.collectAsStateWithLifecycle()
                 PosterRow("待看", cards, bottom = 48.dp) { card ->
                     card.watchlist?.let { e -> watchlistRef(e, app.registry.all)?.let { nav.open(it) } }
                 }
-            }
-            if (layout.libraries) item(key = "libraries", contentType = "row") { HomeLibrariesRow(vm, onLibrary) }
+            } }
+            if (layout.libraries) item(key = "libraries", contentType = "row") { Box(Modifier.heroQuiet(carousel)) { HomeLibrariesRow(vm, onLibrary) } }
             layout.libraryRows.forEach { rowKey ->
-                item(key = rowKey, contentType = "row") {
+                item(key = rowKey, contentType = "row") { Box(Modifier.heroQuiet(carousel)) {
                     TraceRecomposition("Home.row.libLatest")
                     val rows by vm.libraryRows.collectAsStateWithLifecycle()
                     val row = rows.firstOrNull { it.key == rowKey }
                     if (row != null) PosterRow(row.title, row.cards, bottom = 48.dp) { card -> card.ref?.let { nav.open(it) } }
-                }
+                } }
             }
-            if (layout.latest) item(key = "latest", contentType = "row") {
+            if (layout.latest) item(key = "latest", contentType = "row") { Box(Modifier.heroQuiet(carousel)) {
                 TraceRecomposition("Home.row.latest")
                 val cards by vm.latestRow.collectAsStateWithLifecycle()
                 PosterRow("最新添加", cards, bottom = 80.dp) { card -> card.ref?.let { nav.open(it) } }
-            }
+            } }
         }
     }
 }

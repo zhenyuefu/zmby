@@ -58,7 +58,7 @@ internal fun rememberDetailHeading(scroll: ScrollState, gap: Float): DetailHeadi
 
 /** Directional contrast recedes as the fixed artwork becomes uniformly dark and blurred. */
 @Composable
-internal fun rememberDetailScrims(heading: DetailHeadingState, series: Boolean = false): Scrims = remember(heading, series) {
+internal fun rememberDetailScrims(heading: DetailHeadingState, series: Boolean = false, trailer: app.zmby.ui.components.TrailerPlayer? = null): Scrims = remember(heading, series, trailer) {
     Scrims(
         horizontal = if (series) listOf(0f to 0.96f, 0.4f to 0.75f, 0.75f to 0.15f)
             else listOf(0f to 0.97f, 0.4f to 0.8f, 0.75f to 0.15f),
@@ -66,6 +66,9 @@ internal fun rememberDetailScrims(heading: DetailHeadingState, series: Boolean =
         bottomStops = listOf(0f to 0f, 0.55f to 0.55f, 1f to 0.9f),
         strength = { 1f - heading.backdropProgress },
         dim = { 0.35f + 0.23f * heading.backdropProgress },
+        // Lighter while the trailer shows, so the stage is not darkened (TrailerDetail.dc.html; ui-spec §2.23).
+        lighter = listOf(0f to 0.9f, 0.36f to 0.62f, 0.64f to 0f),
+        lightness = { trailer?.alpha?.value ?: 0f },
     )
 }
 
@@ -118,18 +121,21 @@ internal fun CompactHeader(heading: DetailHeadingState, display: DetailDisplay, 
 }
 
 /**
- * Plays the page's IMDb trailer at the top of the fixed backdrop once [DetailViewModel.trailer] finds
- * it (trailer design; ui-spec §2.2), once per visit: back from the player it does not start again. As
- * soon as the page scrolls down it pauses and fades back to the still backdrop; at the top it goes on.
+ * Plays the page's trailer behind the header once [DetailViewModel.trailer] finds it (trailer design;
+ * ui-spec §2.2, §2.23), with 自动播放预告片 on, once per visit: back from the player it does not start
+ * again, nor after the full-screen trailer was opened. As soon as the page scrolls down it pauses and
+ * fades back to the still backdrop; at the top it goes on.
  */
 @Composable
-internal fun DetailTrailerHost(vm: DetailViewModel, trailer: app.zmby.ui.components.TrailerPlayer, heading: DetailHeadingState) {
+internal fun DetailTrailerHost(vm: DetailViewModel, trailer: app.zmby.ui.components.TrailerPlayer, heading: DetailHeadingState, full: FullTrailerState) {
     val app = androidx.compose.ui.platform.LocalContext.current.zmby
     val key = "${vm.server}:${vm.itemId}"
     androidx.compose.runtime.LaunchedEffect(vm, trailer) {
-        kotlinx.coroutines.flow.combine(vm.trailer, app.settings.trailerSound.flow) { t, sound -> t to sound }.collect { (t, sound) ->
-            if (t == null) trailer.stop() else trailer.load("$key:${t.source}:${t.videoId}", t, sound)
-        }
+        kotlinx.coroutines.flow.combine(vm.trailer, app.settings.trailerSound.flow, app.settings.trailerAutoplay.flow,
+            androidx.compose.runtime.snapshotFlow { full.used }) { t, sound, auto, used -> t.takeIf { auto && !used } to sound }
+            .collect { (t, sound) ->
+                if (t == null) trailer.stop() else trailer.load("$key:${t.source}:${t.videoId}", t, sound)
+            }
     }
     androidx.compose.runtime.LaunchedEffect(trailer, heading) {
         androidx.compose.runtime.snapshotFlow { heading.backdropProgress >= TRAILER_HOLD_AT }.collect { trailer.hold(it) }

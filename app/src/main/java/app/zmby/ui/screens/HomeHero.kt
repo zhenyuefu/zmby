@@ -79,7 +79,8 @@ import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.Scrims
 import app.zmby.ui.components.TitleLogo
 import app.zmby.ui.components.TrailerPlayer
-import app.zmby.ui.components.TrailerWindow
+import app.zmby.ui.components.TrailerChip
+import app.zmby.ui.components.TrailerStage
 import androidx.compose.runtime.snapshotFlow
 import app.zmby.ui.components.backdropRequest
 import app.zmby.ui.components.blurredBackdropKey
@@ -97,6 +98,7 @@ import coil.request.Disposable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -163,6 +165,15 @@ class HeroCarousel {
 
     /** The home list; how far it has scrolled the hero up drives the fade. */
     var list by mutableStateOf<LazyListState?>(null)
+
+    /**
+     * Quiet mode (ui-spec §2.23): a trailer has played [QUIET_AFTER_MS] without a key, so the overview
+     * folds to one line and the rows below move down and dim. Any key ends it.
+     */
+    var quiet by mutableStateOf(false)
+
+    /** [quiet] eased, 0..1 (read while drawing the rows). */
+    val quietness = Animatable(0f)
 
     private var elapsed = 0L
     private var autoAt = 0L
@@ -298,8 +309,10 @@ fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims, trailer: TrailerPlayer?
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-                if (playing) TrailerWindow(trailer!!)
+                if (playing) TrailerStage(trailer!!)
                 Box(Modifier.fillMaxSize().drawWithCache { onDrawBehind { with(scrims) { draw(size) } } })
+                // The status chip at the stage's bottom right, inside the hero (ui-spec §2.23).
+                if (playing) TrailerChip(trailer!!, Modifier.align(Alignment.TopEnd).padding(top = 612.dp, end = 80.dp))
             }
         }
     }
@@ -335,7 +348,7 @@ fun HeroPages(carousel: HeroCarousel, details: Map<String, BaseItemDto>) {
                             compositingStrategy = CompositingStrategy.Offscreen
                         },
                 ) {
-                    HeroInfo(ref, details[ref.key], carousel.labels[ref.key] ?: carousel.defaultLabel)
+                    HeroInfo(ref, details[ref.key], carousel.labels[ref.key] ?: carousel.defaultLabel, carousel.quiet)
                 }
             }
         }
@@ -343,7 +356,7 @@ fun HeroPages(carousel: HeroCarousel, details: Map<String, BaseItemDto>) {
 }
 
 @Composable
-private fun HeroInfo(ref: ServerItem, full: BaseItemDto?, label: String?) {
+private fun HeroInfo(ref: ServerItem, full: BaseItemDto?, label: String?, quiet: Boolean = false) {
     val app = LocalContext.current.zmby
     val library = app.library
     val item = ref.item
@@ -381,7 +394,7 @@ private fun HeroInfo(ref: ServerItem, full: BaseItemDto?, label: String?) {
         val overview = (full ?: item).overview
         Box(Modifier.height(74.dp)) {
             if (!overview.isNullOrBlank()) {
-                Text(overview, fontSize = 24.sp, lineHeight = 37.sp, color = Z.textPrimary.copy(alpha = 0.75f), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(760.dp))
+                Text(overview, fontSize = 24.sp, lineHeight = 37.sp, color = Z.textPrimary.copy(alpha = 0.75f), maxLines = if (quiet) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(760.dp))
             }
         }
     }
@@ -520,4 +533,40 @@ fun HeroPrefetch(carousel: HeroCarousel, refresh: Any?, prefetchDetails: (List<S
         inFlight.values.removeAll { it.isDisposed }
         prefetchDetails(window)
     }
+}
+
+/** A trailer playing this long without a key turns on quiet mode (ui-spec §2.23). */
+internal const val QUIET_AFTER_MS = 6_000L
+
+/** How far the rows under the hero move down in quiet mode, and their opacity then. */
+internal val QUIET_SHIFT = 80.dp
+internal const val QUIET_ALPHA = 0.6f
+
+/**
+ * Turns quiet mode on once the hero's trailer has shown for [QUIET_AFTER_MS] since the last key
+ * ([keys] counts presses), off on any key or when the trailer stops; eases [HeroCarousel.quietness].
+ */
+@Composable
+fun HeroQuietMode(carousel: HeroCarousel, trailer: TrailerPlayer, keys: () -> Int) {
+    LaunchedEffect(carousel, trailer) {
+        snapshotFlow { (trailer.showing && !trailer.held && trailer.key == carousel.current?.key) to keys() }
+            .collectLatest { (on, _) ->
+                carousel.quiet = false
+                if (!on) return@collectLatest
+                delay(QUIET_AFTER_MS)
+                carousel.quiet = true
+            }
+    }
+    LaunchedEffect(carousel) {
+        snapshotFlow { carousel.quiet }.collectLatest { q ->
+            carousel.quietness.animateTo(if (q) 1f else 0f, androidx.compose.animation.core.tween(if (q) 600 else 250))
+        }
+    }
+}
+
+/** A row under the hero in quiet mode: moved down [QUIET_SHIFT] and dimmed to [QUIET_ALPHA] (draw phase only). */
+fun Modifier.heroQuiet(carousel: HeroCarousel): Modifier = graphicsLayer {
+    val q = carousel.quietness.value
+    translationY = QUIET_SHIFT.toPx() * q
+    alpha = 1f - (1f - QUIET_ALPHA) * q
 }

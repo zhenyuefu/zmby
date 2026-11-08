@@ -73,6 +73,12 @@ enum class Glyph(val path: String, val filled: Boolean = false) {
     Phone("M9.5 2.5h5A2.5 2.5 0 0 1 17 5v14a2.5 2.5 0 0 1-2.5 2.5h-5A2.5 2.5 0 0 1 7 19V5a2.5 2.5 0 0 1 2.5-2.5zM11 18.5h2"),
     // A picked-up row in a ranked list (SettingsQuality.dc.html).
     Reorder("M8 9l4-4 4 4M8 15l4 4 4-4"),
+    // 预告片 (TrailerDetail.dc.html): a screen with a play sign; the chip's muted and sound speakers;
+    // the full-screen trailer's 暂停.
+    Trailer("M6 5h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3zM10.5 9.5v5l4-2.5z"),
+    Muted("M4 9v6h4l5 4V5L8 9zM17 9l4 6M21 9l-4 6"),
+    Sound("M4 9v6h4l5 4V5L8 9zM16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"),
+    Pause("M7 5h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM15 5h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z", filled = true),
     // Rating badges (ratings design): single-colour silhouettes drawn for zmby, not the services' logos.
     // Tomatometer fresh: a tomato under its calyx; rotten: a splat.
     Tomato("M12 8c4.7 0 8.5 3 8.5 6.8S16.7 21.5 12 21.5 3.5 18.6 3.5 14.8 7.3 8 12 8zM12 2.2l.9 2.6 2.8-.8-1.6 2.2 2.4 1.2-3.4.1L12 7.6l-1.1-1.1-3.4-.1 2.4-1.2L8.3 4l2.8.8z", filled = true),

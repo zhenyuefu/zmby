@@ -11,6 +11,7 @@ import android.graphics.drawable.BitmapDrawable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -81,7 +82,21 @@ data class Scrims(
     /** Detail pages fade their directional scrims into uniform dimming as they scroll. */
     val strength: () -> Float = { 1f },
     val dim: () -> Float = { 0f },
+    /**
+     * The lighter left-to-right stops used while a trailer shows (ui-spec §2.23), as many as
+     * [horizontal]; [lightness] (the trailer's opacity) blends towards them.
+     */
+    val lighter: List<Pair<Float, Float>>? = null,
+    val lightness: () -> Float = { 0f },
 ) {
+    /** [horizontal] blended towards [lighter] by [lightness]. */
+    fun horizontalStops(): List<Pair<Float, Float>> {
+        val l = lighter ?: return horizontal
+        val t = lightness().coerceIn(0f, 1f)
+        if (t <= 0f || l.size != horizontal.size) return horizontal
+        return horizontal.zip(l) { (s0, a0), (s1, a1) -> (s0 + (s1 - s0) * t) to (a0 + (a1 - a0) * t) }
+    }
+
     fun DrawScope.draw(area: Size, alpha: Float = 1f) {
         if ("scrim" in app.zmby.Diagnostics.drawOff) return
         val d = dim() * alpha
@@ -93,7 +108,7 @@ data class Scrims(
     fun DrawScope.drawDirectional(area: Size, directional: Float = 1f) {
         if ("scrim" in app.zmby.Diagnostics.drawOff || directional <= 0f) return
         drawRect(
-            Brush.horizontalGradient(*horizontal.map { (stop, a) -> stop to Z.bg.copy(alpha = a) }.toTypedArray(), endX = area.width),
+            Brush.horizontalGradient(*horizontalStops().map { (stop, a) -> stop to Z.bg.copy(alpha = a) }.toTypedArray(), endX = area.width),
             size = area,
             alpha = directional,
         )
@@ -136,7 +151,7 @@ class Backdrop(
         val image = blurred ?: return null
         if (area.width <= 0f || area.height <= 0f) return null
         val dim = (scrims.dim() * 32).roundToInt()
-        val strength = (scrims.strength() * 32).roundToInt()
+        val strength = (scrims.strength() * 32).roundToInt() * 64 + (scrims.lightness() * 32).roundToInt()
         source?.takeIf { it.area == area && it.dim == dim && it.strength == strength }?.let { return it.bitmap }
         val k = SLICE_WIDTH / area.width
         val w = SLICE_WIDTH.roundToInt()
@@ -217,8 +232,8 @@ fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.()
             },
     ) {
         if (backdrop.url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) Artwork(backdrop.url, Modifier.fillMaxSize())
-        // The top of the page only: the still backdrop stays around it and below (trailer design).
-        if (video != null) TrailerWindow(video)
+        // The stage at the top of the page, the ambient layer around it (ui-spec §2.23).
+        if (video != null) TrailerStage(video)
         if (backdrop.url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) {
             if (blurProgress != null && backdrop.blurred != null && "blurcover" !in app.zmby.Diagnostics.drawOff) {
                 Box(Modifier.fillMaxSize().drawWithCache {
@@ -227,6 +242,8 @@ fun BackdropLayer(modifier: Modifier = Modifier, layer: (@Composable BoxScope.()
             }
             Box(Modifier.fillMaxSize().drawWithCache { onDrawBehind { with(backdrop.scrims) { draw(size) } } })
         }
+        // Detail pages: the status chip at the top right, clear of the strip below (ui-spec §2.23).
+        if (video != null) TrailerChip(video, Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(top = 48.dp, end = 80.dp))
     }
 }
 

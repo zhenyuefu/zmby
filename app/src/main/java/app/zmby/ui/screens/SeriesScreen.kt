@@ -165,8 +165,10 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
         onDismiss = { quickSelect = false })
     // The work's IMDb trailer behind the backdrop (trailer design); released when the page pauses or leaves.
     val trailer = rememberTrailerPlayer()
-    DetailTrailerHost(vm, trailer, heading)
-    BackdropProvider(display.backdrop, rememberDetailScrims(heading, series = true)) {
+    // The header's 预告片 button opens it full screen with sound (ui-spec §2.23).
+    val fullTrailer = rememberFullTrailer()
+    DetailTrailerHost(vm, trailer, heading, fullTrailer)
+    BackdropProvider(display.backdrop, rememberDetailScrims(heading, series = true, trailer = trailer)) {
       ActionFeedbackHost(Modifier.fillMaxSize()) {
         BackdropLayer(Modifier.fillMaxSize(), blurProgress = { heading.backdropProgress }, trailer = trailer)
         // Section changes align the context row; inner card focus must not move the whole page.
@@ -182,6 +184,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                     initialFocusKey = seriesId, onFocusChanged = { headerFocused.value = it; if (it) accordion.showHeader() },
                     onMarks = { marking = it },
                     danmu = danmu,
+                    fullTrailer = fullTrailer,
                     onQuickSelect = { quickSelect = true },
                     onRetry = { versions, failed -> versions.retry(); failed.forEach(app.registry::retry); pipeline.resourceRetry.value++ },
                     onDown = { accordion.open(SECTION_EPISODES) })
@@ -215,6 +218,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                 if (shape.episodeCount > 0 && seasons.size == 1) "${shape.episodeCount} 集" else null).joinToString(" · "))
         marking?.let { SegmentMarksPanel(it.server, it.item, onDismiss = { marking = null }) }
         DanmuPanelHost(danmu)
+        DetailFullTrailer(vm, fullTrailer, display.title, trailer)
       }
     }
 }
@@ -342,11 +346,12 @@ private fun SeriesHeaderHost(
     vm: SeriesViewModel, selection: EpisodeSelection, ref: ServerItem, display: DetailDisplay, heading: DetailHeadingState,
     seriesCopies: List<ServerItem>, directoryWork: CatalogWork?,
     playVersion: (Version, Long, VersionsState) -> Unit, playButton: FocusRequester, initialFocusKey: String?,
-    onFocusChanged: (Boolean) -> Unit, onMarks: (ServerItem) -> Unit, danmu: DanmuPanelState?, onQuickSelect: () -> Unit,
+    onFocusChanged: (Boolean) -> Unit, onMarks: (ServerItem) -> Unit, danmu: DanmuPanelState?, fullTrailer: FullTrailerState, onQuickSelect: () -> Unit,
     onRetry: (VersionsState, List<String>) -> Unit, onDown: () -> Unit,
 ) {
     TraceRecomposition("Series.header")
     val view by vm.episodeView.collectAsStateWithLifecycle()
+    val trailerInfo by vm.trailer.collectAsStateWithLifecycle()
     val resources by vm.pipeline.availability.collectAsStateWithLifecycle()
     val pending = resources.pending
     val failed = resources.failed
@@ -368,7 +373,13 @@ private fun SeriesHeaderHost(
         danmu = danmu, availability = availability,
         onQuickSelect = onQuickSelect,
         onRetry = { onRetry(versions, failed) },
-        onDown = onDown)
+        onDown = onDown,
+        trailer = trailerInfo, fullTrailer = fullTrailer)
+    // 「播放正片」 in the full-screen trailer plays what the main button would.
+    val mainResume = selected?.item?.let { resumeMsOf(it) } ?: 0L
+    androidx.compose.runtime.SideEffect {
+        fullTrailer.playMain = selected?.takeIf { shown?.item != null }?.let { v -> { playVersion(v, mainResume, versions) } }
+    }
 }
 
 @Composable
@@ -596,6 +607,8 @@ private fun SeriesHeader(
     availability: String? = null,
     onRetry: () -> Unit = {},
     onDown: () -> Unit = {},
+    trailer: app.zmby.trailer.TrailerInfo? = null,
+    fullTrailer: FullTrailerState? = null,
 ) {
     val s = ref.item
     Column(
@@ -619,6 +632,8 @@ private fun SeriesHeader(
             if(current != null && selected != null && resumeMs > 0) GlassButton("从头播放", { onPlay(current,selected,0) })
             // Then the icon buttons in their fixed order (ui-spec §2.15); unavailable ones stay in place, dimmed.
             ActionDivider()
+            // 预告片 first, only once found (ui-spec §2.23).
+            if (fullTrailer != null) TrailerAction(trailer, fullTrailer)
             QuickPickAction(onQuickSelect)
             WatchedAction(watchedRef, episodeCopies)
             FavoriteAction(ref, (listOf(ref) + seriesCopies).distinctBy { it.key })

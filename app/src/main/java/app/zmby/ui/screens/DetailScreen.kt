@@ -195,8 +195,10 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     accordion.header = headerPlay
     // The work's IMDb trailer behind the backdrop (trailer design); released when the page pauses or leaves.
     val trailer = rememberTrailerPlayer()
-    DetailTrailerHost(vm, trailer, heading)
-    BackdropProvider(display.backdrop, rememberDetailScrims(heading)) {
+    // The header's 预告片 button opens it full screen with sound (ui-spec §2.23).
+    val fullTrailer = rememberFullTrailer()
+    DetailTrailerHost(vm, trailer, heading, fullTrailer)
+    BackdropProvider(display.backdrop, rememberDetailScrims(heading, trailer = trailer)) {
       ActionFeedbackHost(Modifier.fillMaxSize()) {
         BackdropLayer(Modifier.fillMaxSize(), blurProgress = { heading.backdropProgress }, trailer = trailer)
         // Section changes align the context row; inner card focus must not move the whole page.
@@ -207,7 +209,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
           androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides defaultScrollSpec) {
             Column(Modifier.fillMaxWidth()) {
                 // The version that plays: its own item (another server's copy has its own resume point).
-                DetailHeaderHost(vm, selection, ref, display, heading, accordion, danmu, headerPlay, ::playVersion, onMarks = { marking = it })
+                DetailHeaderHost(vm, selection, ref, display, heading, accordion, danmu, headerPlay, fullTrailer, ::playVersion, onMarks = { marking = it })
                 Spacer(Modifier.height(44.dp))
                 if (hasCollections) {
                     // Like 剧集, it never collapses.
@@ -241,18 +243,31 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
         DetailCompactHeader(vm, selection, heading, display, detailMeta(it, display))
         marking?.let { m -> SegmentMarksPanel(m.server, m.item, onDismiss = { marking = null }) }
         DanmuPanelHost(danmu)
+        DetailFullTrailer(vm, fullTrailer, display.title, trailer)
       }
     }
 }
 
 @Composable
+internal fun DetailFullTrailer(vm: DetailViewModel, state: FullTrailerState, title: String, background: app.zmby.ui.components.TrailerPlayer) {
+    val info by vm.trailer.collectAsStateWithLifecycle()
+    FullTrailerHost(state, info, title, background)
+}
+
+@Composable
 private fun DetailHeaderHost(vm: MovieDetailViewModel, selection: EpisodeSelection, ref: ServerItem, display: DetailDisplay, heading: DetailHeadingState,
-    accordion: Accordion, danmu: DanmuPanelState, headerPlay: FocusRequester, playVersion: (Version, Long, VersionsState) -> Unit, onMarks: (ServerItem?) -> Unit) {
+    accordion: Accordion, danmu: DanmuPanelState, headerPlay: FocusRequester, fullTrailer: FullTrailerState, playVersion: (Version, Long, VersionsState) -> Unit, onMarks: (ServerItem?) -> Unit) {
     TraceRecomposition("Detail.header")
     val view by vm.view.collectAsStateWithLifecycle()
+    val trailerInfo by vm.trailer.collectAsStateWithLifecycle()
     val versions = view.versions
     val selected = selection.selected(view)
     val playRef = selected?.ref
+    // 「播放正片」 in the full-screen trailer plays what the main button would.
+    val mainResume = playRef?.item?.let { resumeMsOf(it) } ?: 0L
+    androidx.compose.runtime.SideEffect {
+        fullTrailer.playMain = selected?.let { v -> { playVersion(v, mainResume, versions) } }
+    }
     DetailHeader(
         ref,
         display,
@@ -269,6 +284,8 @@ private fun DetailHeaderHost(vm: MovieDetailViewModel, selection: EpisodeSelecti
         onRetry = versions.retry,
         playRequester = headerPlay,
         onDown = { accordion.order.firstOrNull()?.let(accordion::open) },
+        trailer = trailerInfo,
+        fullTrailer = fullTrailer,
     )
 }
 
@@ -347,7 +364,7 @@ internal fun detailMeta(item: BaseItemDto, display: DetailDisplay): String = lis
 ).joinToString(" · ")
 
 @Composable
-private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: DetailHeadingState, playItem: BaseItemDto?, watchedRef: ServerItem?, instances: List<ServerItem>, onPlay: (Long) -> Unit, onFocused: () -> Unit, onMarks: () -> Unit, danmuRef: ServerItem?, danmu: DanmuPanelState, availability: String = "暂无资源", onRetry: () -> Unit = {}, playRequester: FocusRequester? = null, onDown: () -> Unit = {}) {
+private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: DetailHeadingState, playItem: BaseItemDto?, watchedRef: ServerItem?, instances: List<ServerItem>, onPlay: (Long) -> Unit, onFocused: () -> Unit, onMarks: () -> Unit, danmuRef: ServerItem?, danmu: DanmuPanelState, availability: String = "暂无资源", onRetry: () -> Unit = {}, playRequester: FocusRequester? = null, onDown: () -> Unit = {}, trailer: app.zmby.trailer.TrailerInfo? = null, fullTrailer: FullTrailerState? = null) {
     val app = LocalContext.current.zmby
     val item = ref.item
     Column(
@@ -376,6 +393,8 @@ private fun DetailHeader(ref: ServerItem, display: DetailDisplay, heading: Detai
             if (resume > 0) GlassButton("从头播放", { onPlay(0) })
             // Then the icon buttons in their fixed order (ui-spec §2.15); unavailable ones stay in place, dimmed.
             ActionDivider()
+            // 预告片 first, only once found (ui-spec §2.23).
+            if (fullTrailer != null) TrailerAction(trailer, fullTrailer)
             WatchedAction(watchedRef, instances)
             val copies = (listOf(ref) + instances).distinctBy { it.key }
             FavoriteAction(ref, copies)
