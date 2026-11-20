@@ -44,6 +44,8 @@ sealed interface Route {
     data object Settings : Route
     /** 合集页: one collection (BoxSet) on [server] and the films it holds. */
     data class Collection(val server: String, val collectionId: String) : Route
+    /** Live directory shared with the film detail back-stack entry. */
+    data class WorkCollection(val key: String, val directory: kotlinx.coroutines.flow.StateFlow<List<app.zmby.ui.screens.MovieCollection>>) : Route
     /** 人物页: [personKey] in the store, reached from [server]'s own person [personId]. */
     data class Person(val personKey: String, val server: String, val personId: String) : Route
     /** 设置 › 数据来源 › one feature's servers or providers. */

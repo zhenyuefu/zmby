@@ -132,6 +132,18 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
             .rows("results").mapNotNull { brief(it, ref.kind) }
     }
 
+    /** The movie detail already identified its collection. One cached directory supplies every card. */
+    suspend fun movieCollection(id: String): Pair<app.zmby.data.ServerItem, List<app.zmby.data.ServerItem>> = withContext(Dispatchers.IO) {
+        val body = api.tmdb("collection/$id", mapOf("language" to textLanguage()))
+        require(body.str("id") == id)
+        val box = BaseItemDto(id = "collection:$id", type = "BoxSet", name = body.str("name"), overview = body.str("overview"),
+            imageTags = listOfNotNull(art(body.str("poster_path"))?.let { "Primary" to it }).toMap())
+        val parts = body.rows("parts").sortedBy { it.str("release_date") ?: "9999" }
+            .filter { it.str("id")?.toLongOrNull()?.let { n -> n > 0 } == true }
+            .mapNotNull { brief(it, "movie") }.filter { it.ref.kind == "movie" }.distinctBy { it.ref }.map { it.cardRef() }
+        app.zmby.data.ServerItem("catalog", box) to parts
+    }
+
     /** The stored 为你推荐 list of a work (local first, ui-spec §2.14). */
     suspend fun storedRecommendations(workKey: String): app.zmby.aggregate.StoredRecommendations? = withContext(Dispatchers.IO) {
         cache.get(recsKey(workKey))?.let { runCatching { api.json.decodeFromString(app.zmby.aggregate.StoredRecommendations.serializer(), it.json) }.getOrNull() }
@@ -195,7 +207,8 @@ class CatalogRepository(private val api: CatalogHttp, private val cache: Catalog
             art(ArtworkLanguage.choose(images.rows("logos"), logoLanguage(), original), "w500"),
             body.rows("seasons").mapNotNull { s -> s.num("season_number")?.let { CatalogSeason(it, s.str("name") ?: "第 $it 季", s.num("episode_count") ?: 0, s.str("air_date")) } },
             cast.groupBy { it.key }.values.map { people -> people.first().copy(role = people.map { it.role }.filter { it.isNotBlank() }.distinct().joinToString(" · ")) }, ids,
-            aliases = names(body, titleField), originalLanguage = body.str("original_language"))
+            aliases = names(body, titleField), originalLanguage = body.str("original_language"),
+            collectionId = body.child("belongs_to_collection").str("id")?.takeIf { ref.kind == "movie" && it.toLongOrNull()?.let { n -> n > 0 } == true })
     }
     suspend fun episodes(work: CatalogWork, season: Int): List<CatalogEpisode> = withContext(Dispatchers.IO) {
         if (work.ref.source == "tmdb") {

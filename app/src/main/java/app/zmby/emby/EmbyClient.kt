@@ -230,7 +230,7 @@ class EmbyClient(
         }
 
     /** What a collection (BoxSet) holds, oldest first as Emby lists a collection. */
-    suspend fun collectionItems(s: ServerSession, collectionId: String, limit: Int = 300): ItemsResult =
+    suspend fun collectionItems(s: ServerSession, collectionId: String, limit: Int = COLLECTION_LIMIT): ItemsResult =
         get(s.baseUrl, s, "Users/${s.userId}/Items") {
             addQueryParameter("ParentId", collectionId)
             addQueryParameter("SortBy", "ProductionYear,PremiereDate,SortName")
@@ -676,6 +676,7 @@ class EmbyClient(
         private val JSON = "application/json; charset=utf-8".toMediaType()
         private const val MAX_BITRATE = 1_000_000_000L
         const val FALLBACK_PAUSE_MS = 10 * 60 * 1000L
+        const val COLLECTION_LIMIT = 300
         const val LIST_FIELDS =
             "ProviderIds,ProductionYear,RunTimeTicks,BackdropImageTags,UserData,UserDataLastPlayedDate,Overview,Genres,CommunityRating,ChildCount,Path,PresentationUniqueKey,DateCreated,PremiereDate,SortName"
 

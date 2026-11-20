@@ -180,8 +180,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
     val recKey = tmdbId?.let { r -> "movie:tmdb:${r.id}" } ?: Keys.work(ref.server, ref.item)
     val recCopies = remember(cached?.ref?.key, instances) { (listOfNotNull(cached?.ref) + instances).distinctBy { c -> c.key } }
     val recs = rememberRecommendations(recKey, recCopies, tmdbId, tick).orEmpty()
-    // 合集 (2026-11-05): the collections this film is in on its own server, at the top like a series' 剧集.
-    val collections = rememberMovieCollections(cached?.ref, tick)
+    val collections = vm.collections.collectAsStateWithLifecycle()
     val hasCollections by remember(collections) { derivedStateOf { collections.value.isNotEmpty() } }
     // The blocks in page order; only those with something to show (ui-spec §2.14).
     accordion.arrange(listOfNotNull(
@@ -214,7 +213,7 @@ fun DetailScreen(nav: Nav, server: String, itemId: String, resourceOnly: Boolean
                 if (hasCollections) {
                     // Like 剧集, it never collapses.
                     DetailBlock(accordion, SECTION_COLLECTION) {
-                        MovieCollectionBlock(nav, collections.value, cached?.ref?.item?.id ?: itemId, accordion.entry(SECTION_COLLECTION))
+                        MovieCollectionBlock(nav, collections.value, vm.collections, accordion.entry(SECTION_COLLECTION))
                     }
                 }
                 if (hasVersions) {

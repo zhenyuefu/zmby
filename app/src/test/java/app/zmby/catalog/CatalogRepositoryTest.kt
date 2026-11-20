@@ -12,6 +12,28 @@ import java.util.concurrent.TimeUnit
 class TooBigRowException : RuntimeException("Row too big to fit into CursorWindow")
 
 class CatalogRepositoryTest {
+    @Test fun `movie response identifies the series and simultaneous directory reads share one request`() = runBlocking {
+        MockWebServer().use { server ->
+            val cache = MemoryCache()
+            val repo = CatalogRepository(CatalogHttp(OkHttpClient(), cache, { "test" }, server.url("/3/").toString()),
+                cache, { "zh-CN" }, { "zh-CN" }, { "zh-CN" }, { false })
+            server.enqueue(MockResponse().setBody("""{"id":2,"original_title":"Two","belongs_to_collection":{"id":7}}"""))
+            server.enqueue(MockResponse().setBody("{}"))
+            server.enqueue(MockResponse().setBody("""{"id":7,"name":"Series","parts":[{"id":2,"release_date":"2020-01-01"},
+                {"id":1,"release_date":"2010-01-01"},{"id":1},{"id":3},{"id":0}]}"""))
+            val work = repo.work(CatalogId("tmdb", "movie", "2"))
+            assertEquals("7", work.collectionId)
+            assertEquals("7", repo.cached(work.ref)?.collectionId)
+            val reads = List(2) { async { repo.movieCollection(requireNotNull(work.collectionId)) } }.awaitAll()
+            assertEquals(reads.first(), reads.last())
+            assertEquals(listOf("1", "2", "3"), reads.first().second.map { it.item.providerIds["Tmdb"] })
+            assertEquals(3, server.requestCount)
+            assertEquals("/3/movie/2", server.takeRequest().requestUrl!!.encodedPath)
+            assertEquals("/3/movie/2/images", server.takeRequest().requestUrl!!.encodedPath)
+            assertEquals("/3/collection/7", server.takeRequest().requestUrl!!.encodedPath)
+        }
+    }
+
     @Test fun `danmu alternate names stay on the known work identity for TV and movies`() = runBlocking {
         MockWebServer().use { server ->
             for ((kind, field) in listOf("tv" to "name", "movie" to "title")) {

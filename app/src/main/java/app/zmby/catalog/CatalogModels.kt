@@ -34,6 +34,7 @@ data class CatalogWork(
     val ids: Map<String, String> = emptyMap(),
     val aliases: List<String> = emptyList(),
     val originalLanguage: String? = null,
+    val collectionId: String? = null,
 ) {
     fun item() = BaseItemDto(id = "catalog:${ref.key}", name = title, originalTitle = originalTitle,
         type = if (ref.kind == "movie") "Movie" else "Series", productionYear = year, providerIds = ids, originalLanguage = originalLanguage)

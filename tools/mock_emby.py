@@ -637,6 +637,7 @@ def mock_bangumi(rest, q):
 TMDB_ONLY = [
     {"id": 990201, "media_type": "tv", "name": "沙丘：预言", "original_name": "Dune: Prophecy", "first_air_date": "2024-11-17", "vote_average": 7.0, "genres": ["科幻"]},
     {"id": 990202, "media_type": "movie", "title": "银河漫游指南", "original_title": "The Hitchhiker's Guide", "release_date": "2005-04-28", "vote_average": 6.8, "genres": ["科幻"]},
+    {"id": 438631, "media_type": "movie", "title": "沙丘", "original_title": "Dune", "release_date": "2021-09-15", "genres": ["科幻"]},
     {"id": 990203, "media_type": "movie", "title": "一九四二", "original_title": "Back to 1942", "release_date": "2012-11-29", "vote_average": 7.1, "genres": ["剧情", "历史"]},
 ]
 
@@ -663,6 +664,8 @@ def mock_tmdb(rest, q, headers):
         return ({"status_code": 7, "status_message": "Invalid API key"}, 401)
     rows = tmdb_rows()
     parts = rest.split("/")
+    if rest == "collection/990701":
+        return ({"id": 990701, "name": "沙丘（模拟合集）", "parts": [r for r in rows if r["id"] in (438631, 693134)]},)
     if rest == "configuration":
         return ({"images": {"secure_base_url": "https://image.tmdb.org/t/p/"}},)
     if parts[0] in ("trending", "movie", "tv") and parts[-1] in ("week", "now_playing", "popular", "top_rated", "airing_today", "on_the_air"):
@@ -694,6 +697,8 @@ def mock_tmdb(rest, q, headers):
             return ({"episodes": []},)
         body = {k: v for k, v in row.items() if k != "_imdb"}
         body["genres"] = [{"id": i, "name": g} for i, g in enumerate(row["genres"])]
+        if kind == "movie" and tid in ("438631", "693134"):
+            body["belongs_to_collection"] = {"id": 990701}
         body["original_language"] = "zh"
         body["translations"] = {"translations": []}
         body["external_ids"] = {"imdb_id": row["_imdb"]} if row.get("_imdb") else {}

@@ -132,6 +132,7 @@ private fun App(activity: android.app.Activity) {
                     // Backup and restore run only on the phone, tablet or computer page (no file picker on the box).
                     Route.Backup -> ImportScreen(onDone = nav::back, backupTab = true)
                     Route.Settings -> SettingsScreen(nav)
+                    is Route.WorkCollection -> app.zmby.ui.screens.WorkCollectionScreen(nav, route)
                     is Route.Collection -> app.zmby.ui.screens.CollectionScreen(nav, route.server, route.collectionId)
                     is Route.Person -> app.zmby.ui.screens.PersonScreen(nav, route.personKey, route.server, route.personId)
                     is Route.DataSource -> app.zmby.ui.screens.DataSourceScreen(nav, route.feature)

@@ -305,6 +305,16 @@ internal class MovieDetailViewModel(private val app: ZmbyApp, server: String, it
     val versionsShown: StateFlow<Boolean> get() = presenter.anything
     val instances: StateFlow<List<ServerItem>> get() = presenter.instances
 
+    private val collectionCopies = kotlinx.coroutines.flow.combine(detail, presenter.view) { cached, view ->
+        (listOfNotNull(cached?.ref) + view.versions.copies).filter { it.server != "catalog" && it.item.type == "Movie" }.distinctBy { it.key }
+    }.distinctUntilChanged { a, b -> a.map { it.key to it.item.providerIds } == b.map { it.key to it.item.providerIds } }
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
+
+    val collections = MovieCollectionDirectory(app).collections(server, collectionCopies,
+        kotlinx.coroutines.flow.combine(canonical, companion) { work, other ->
+            listOfNotNull(work, other?.takeIf { it.primary == work?.ref?.key }?.work).firstOrNull { it.ref.source == "tmdb" && it.ref.kind == "movie" }
+        }).stateIn(viewModelScope, SharingStarted.WhileSubscribed(1_500), emptyList())
+
     init {
         // The versions found on the other servers are trailer sources too (after the page's own copy).
         viewModelScope.launch { presenter.instances.collect { trailerCopies.value = it } }

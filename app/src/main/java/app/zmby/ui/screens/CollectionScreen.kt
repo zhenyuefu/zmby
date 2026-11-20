@@ -46,7 +46,6 @@ import app.zmby.ui.components.GlassButton
 import app.zmby.ui.components.Glyph
 import app.zmby.ui.components.PosterCard2x3
 import app.zmby.ui.components.RowTitle
-import app.zmby.ui.open
 import app.zmby.ui.rememberInitialFocus
 import app.zmby.ui.rememberResumeTick
 import app.zmby.ui.screenModel
@@ -100,8 +99,7 @@ class CollectionViewModel(private val app: ZmbyApp, private val server: String, 
             if (cached != null && cached.items.isNotEmpty()) _state.update { it.copy(films = cached.items, loaded = true) }
             if (cached != null && !Freshness.due(Freshness.Kind.Browse, cached.fetchedAt, System.currentTimeMillis())) return@launch
             try {
-                val films = app.library.collectionItems(server, collectionId)
-                app.store.putList(key, server, films.map { it.item })
+                val films = app.library.collectionItems(server, collectionId).items
                 _state.update { it.copy(films = films, loaded = true, error = null) }
             } catch (e: CancellationException) {
                 throw e
@@ -134,9 +132,26 @@ fun CollectionScreen(nav: Nav, server: String, collectionId: String) {
     val app = LocalContext.current.zmby
     val vm = screenModel("collection:$server:$collectionId") { CollectionViewModel(app, server, collectionId) }
     val st by vm.state.collectAsStateWithLifecycle()
-    val faces = app.cardFaces.version.collectAsStateWithLifecycle()
     val tick = rememberResumeTick()
     LaunchedEffect(tick) { if (tick > 0) vm.refresh() }
+    CollectionContent(nav, server, st, onRetry = vm::retry)
+}
+
+@Composable
+internal fun WorkCollectionScreen(nav: Nav, route: app.zmby.ui.Route.WorkCollection) {
+    val collections by route.directory.collectAsStateWithLifecycle()
+    val collection = collections.firstOrNull { it.represents(route.key) }
+    if (collection == null) {
+        GlassButton("返回", nav::back)
+        return
+    }
+    CollectionContent(nav, collection.box.server, CollectionState(collection.box.item, collection.films, loaded = true), collection)
+}
+
+@Composable
+private fun CollectionContent(nav: Nav, server: String, st: CollectionState, collection: MovieCollection? = null, onRetry: () -> Unit = {}) {
+    val app = LocalContext.current.zmby
+    val faces = app.cardFaces.version.collectAsStateWithLifecycle()
     var fullText by remember { mutableStateOf(false) }
     val item = st.item
     Row(Modifier.fillMaxSize()) {
@@ -144,7 +159,7 @@ fun CollectionScreen(nav: Nav, server: String, collectionId: String) {
             val poster = item?.let { app.library.primaryImage(ServerItem(server, it), maxHeight = 600) }
             Artwork(poster, Modifier.size(260.dp, 390.dp).clip(RoundedCornerShape(20.dp)))
             Text(item?.let(::titleOf).orEmpty(), fontSize = 48.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 56.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(500.dp))
-            val meta = listOf(collectionMeta(st.films), app.registry.get(server)?.name.orEmpty()).filter { it.isNotEmpty() }.joinToString(" · ")
+            val meta = listOf(collection?.meta ?: remember(st.films) { collectionMeta(st.films) }, collection?.sourceLabel(app) ?: app.registry.get(server)?.name.orEmpty()).filter { it.isNotEmpty() }.joinToString(" · ")
             if (meta.isNotEmpty()) Text(meta, fontSize = 22.sp, color = Z.textSecondary)
             val overview = item?.overview?.takeIf { it.isNotBlank() }
             if (overview != null) {
@@ -162,13 +177,13 @@ fun CollectionScreen(nav: Nav, server: String, collectionId: String) {
             verticalArrangement = Arrangement.spacedBy(36.dp),
         ) {
             item(key = "title", span = { GridItemSpan(maxLineSpan) }, contentType = "title") {
-                RowTitle(if (st.films.isEmpty()) "合集内容" else "合集内 ${st.films.size} 部")
+                RowTitle(if (collection?.catalog == true) "系列共 ${st.films.size} 部 · 已找到 ${collection.foundCount} 部片源" else if (st.films.isEmpty()) "合集内容" else "合集内 ${st.films.size} 部")
             }
             st.error?.let { message ->
                 item(key = "error", span = { GridItemSpan(maxLineSpan) }, contentType = "title") {
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                         Text(message, fontSize = 24.sp, color = Z.textSecondary, maxLines = 2, modifier = Modifier.weight(1f, fill = false))
-                        GlassButton("重试", vm::retry, glyph = Glyph.Refresh, height = 64.dp)
+                        GlassButton("重试", onRetry, glyph = Glyph.Refresh, height = 64.dp)
                     }
                 }
             }
@@ -179,13 +194,15 @@ fun CollectionScreen(nav: Nav, server: String, collectionId: String) {
             }
             items(st.films, key = { it.key }, contentType = { "poster" }) { ref ->
                 val first = ref === st.films.firstOrNull()
-                val face = remember(faces.value, ref.key) { app.cardFaces.face(ref) }
+                val copy = collection?.available(ref)?.firstOrNull()
+                val film = copy ?: ref
+                val face = remember(faces.value, film.key) { app.cardFaces.face(film) }
                 PosterCard2x3(
-                    imageUrl = face?.poster ?: app.library.primaryImage(ref),
+                    imageUrl = face?.poster ?: app.library.primaryImage(film) ?: app.library.backdrop(ref),
                     title = face?.title ?: titleOf(ref.item),
-                    onClick = { nav.open(ref) },
+                    onClick = { nav.openCollectionMember(ref, copy) },
                     width = 196.dp,
-                    topEnd = unwatchedBadge(ref.item),
+                    topEnd = collection?.status(ref) ?: unwatchedBadge(film.item),
                     subtitle = browseCaption(ref.item),
                     focusKey = "collection:${ref.key}",
                     modifier = if (first) Modifier.focusRequester(rememberInitialFocus(ref.key)) else Modifier,

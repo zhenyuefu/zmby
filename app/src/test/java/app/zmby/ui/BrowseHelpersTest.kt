@@ -29,7 +29,7 @@ class BrowseHelpersTest {
     @Test fun `a film's collections are only those that hold it`() {
         fun film(id: String, year: Int? = null) = app.zmby.data.ServerItem("s", BaseItemDto(id, type = "Movie", productionYear = year, communityRating = 8.06))
         val box = { id: String, films: List<String> -> app.zmby.ui.screens.MovieCollection(app.zmby.data.ServerItem("s", BaseItemDto(id, type = "BoxSet")), films.map { film(it) }) }
-        val kept = app.zmby.ui.screens.MovieCollectionsModel.keepContaining("m0", listOf(box("a", listOf("m0", "m1")), box("b", listOf("m2"))))
+        val kept = app.zmby.ui.screens.containingCollections("m0", listOf(box("a", listOf("m0", "m1")), box("b", listOf("m2"))))
         assertEquals(listOf("a"), kept.map { it.box.item.id })
         assertEquals("2014 · 8.1", app.zmby.ui.screens.collectionCardLine(film("m0", 2014)))
     }

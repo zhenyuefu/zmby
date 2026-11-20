@@ -8,6 +8,8 @@ import app.zmby.aggregate.VersionSource
 import app.zmby.emby.BaseItemDto
 import app.zmby.emby.MediaSourceInfo
 import app.zmby.emby.EmbyClient
+import app.zmby.store.CachedList
+import app.zmby.store.Freshness
 import app.zmby.emby.ItemsResult
 import app.zmby.emby.ServerSession
 import app.zmby.emby.UaMode
@@ -348,28 +350,48 @@ class Library(
         emby.genres(session(server), parentId, types).items.mapNotNull { it.name?.takeIf(String::isNotBlank) }
 
     /** A collection's films (and series), oldest first. */
-    suspend fun collectionItems(server: String, collectionId: String): List<ServerItem> =
-        emby.collectionItems(session(server), collectionId).items.map { ServerItem(server, it) }.also(::note)
+    suspend fun collectionItems(server: String, collectionId: String): CachedList {
+        val page = emby.collectionItems(session(server), collectionId)
+        val key = "collection:$server:$collectionId"
+        val items = page.items.map { ServerItem(server, it) }.also(::note)
+        val total = maxOf(page.totalRecordCount, items.size)
+        store?.putList(key, server, page.items, total)
+        return CachedList(key, items, total, System.currentTimeMillis())
+    }
 
     /**
      * The collections on [server] holding [itemId], each with its titles (电影详情 › 合集). At most
      * three are opened, and only those whose titles include [itemId] are kept: a server that ignores
      * `ListItemIds` answers with collections the film is not in.
      */
-    suspend fun collectionsOf(server: String, itemId: String): List<Pair<ServerItem, List<ServerItem>>> = coroutineScope {
+    suspend fun collectionsOf(server: String, itemId: String): List<Pair<ServerItem, CachedList>> = coroutineScope {
         // A server seen ignoring ListItemIds is not asked again for a day: its answer is any three
         // collections, four requests per film opened for almost never a hit (performance plan RN).
         ignoresListItemIds[server]?.let { if (System.currentTimeMillis() - it < DAY_MS) return@coroutineScope emptyList() }
         val s = session(server)
         val boxes = emby.collectionsOf(s, itemId).items.filter { it.type == "BoxSet" && it.id != itemId }.take(3)
-        val opened = boxes.map { b -> async { ServerItem(server, b) to emby.collectionItems(s, b.id).items.map { ServerItem(server, it) } } }.awaitAll()
-        val found = opened.filter { (_, films) -> films.any { it.item.id == itemId } }
+        val opened = boxes.map { box ->
+            async { ServerItem(server, box) to membersForMovie(server, s, box.id, itemId) }
+        }.awaitAll()
+        val found = opened.filter { (_, films) -> films.items.any { it.item.id == itemId } }
         if (found.size < opened.size) {
             ZLog.i("Library", "${status(server)?.name} ignores ListItemIds; collections of a film not asked for a day")
             ignoresListItemIds[server] = System.currentTimeMillis()
         }
-        note(found.flatMap { (box, films) -> listOf(box) + films })
+        note(found.flatMap { (box, films) -> listOf(box) + films.items })
         found
+    }
+
+    private val sharedCollectionItems = app.zmby.net.RequestCache<List<String>, CachedList>(32, { Freshness.BROWSE_MS })
+
+    private suspend fun membersForMovie(server: String, session: ServerSession, boxId: String, movieId: String): CachedList {
+        val key = "collection:$server:$boxId"
+        val cached = store?.list(key)
+        if (cached != null && cached.items.any { it.item.id == movieId } &&
+            !Freshness.due(Freshness.Kind.Browse, cached.fetchedAt, System.currentTimeMillis())) return cached
+        return sharedCollectionItems.get(listOf(server, session.userId, session.baseUrl, boxId)) {
+            collectionItems(server, boxId)
+        }
     }
 
     /** Servers whose collections answer ignored ListItemIds, and when that was seen. */
@@ -463,6 +485,10 @@ class Library(
     override suspend fun seasons(server: String, seriesId: String) = emby.seasons(session(server), seriesId).items
 
     // ---- aggregation (VersionSource, SearchSource)
+
+    /** One lightweight page per TMDB ID batch. The total tells a truncated answer from a real miss. */
+    suspend fun movieCollectionMatches(server: String, ids: List<String>): ItemsResult =
+        emby.byProviderIds(session(server), "Movie", ids.map { "tmdb.$it" })
 
     override suspend fun byProviderIds(server: String, type: String, ids: List<String>): List<BaseItemDto> =
         emby.byProviderIds(session(server), type, ids).items
