@@ -13,6 +13,10 @@ object EpisodeContinuation {
         episode.replace(it, "#").replace(Regex("[ ._]+"), " ").trim()
     }?.takeIf { it.any(Char::isLetter) }
 
+    /** Persist only a fingerprint, never the file name or a signed path. */
+    fun releaseHash(source: MediaSourceInfo): Int? =
+        release(source.fileName?.substringBefore('?') ?: source.name)?.hashCode()
+
     fun score(previous: MediaSourceInfo, candidate: MediaSourceInfo): Int {
         fun same(a: String?, b: String?) = a != null && a == b
         fun folder(s: MediaSourceInfo) = s.path?.replace('\\', '/')?.substringBeforeLast('/', "")?.takeIf { it.isNotBlank() }

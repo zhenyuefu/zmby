@@ -249,14 +249,15 @@ internal fun versionCards(
     cached: Map<String, ServerVersions.Found> = emptyMap(),
 ): Pair<List<VersionGroup>, List<String>> {
     val groups = mutableListOf<VersionGroup>()
-    if (self != null && item.mediaSources.isNotEmpty()) {
-        groups += VersionGroup(self, uniqueVersions(item.mediaSources.sortedWith(versionOrder).map { Version(self, item, it) }), "当前服务器")
+    if (self != null && item.mediaSources.any { !it.loadingResource }) {
+        groups += VersionGroup(self, uniqueVersions(item.mediaSources.filterNot { it.loadingResource }.sortedWith(versionOrder).map { Version(self, item, it) }), "当前服务器")
     }
     val unresponsive = mutableListOf<String>()
     fun card(s: ServerStatus, r: ServerVersions.Found) {
-        if (r.sources.isEmpty()) return
+        val sources = r.sources.filterNot { it.loadingResource }
+        if (sources.isEmpty()) return
         val note = r.verdict.reason + if (r.verdict.confidence == Confidence.Possible) " · 可能匹配" else ""
-        groups += VersionGroup(s, uniqueVersions(r.sources.sortedWith(versionOrder).map { Version(s, r.item, it) }), note,
+        groups += VersionGroup(s, uniqueVersions(sources.sortedWith(versionOrder).map { Version(s, r.item, it) }), note,
             possible = r.verdict.confidence != Confidence.Strong)
     }
     for (s in others) {
@@ -330,7 +331,7 @@ internal fun VersionSection(
     val scope = rememberCoroutineScope()
     val versions = state.all
     val tiers = QualityTier.entries.filter { t -> versions.any { it.tier == t } }
-    var tier by remember(state.default?.tier) { mutableStateOf(state.default?.tier ?: tiers.firstOrNull() ?: QualityTier.OTHER) }
+    var tier by remember(selected?.tier) { mutableStateOf(selected?.tier ?: tiers.firstOrNull() ?: QualityTier.OTHER) }
     if (tier !in tiers && tiers.isNotEmpty()) tier = tiers.first()
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
         // One card per server, in server order; versions on the same server stack inside it.

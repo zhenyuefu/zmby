@@ -71,4 +71,17 @@ class VersionProgressTest {
         assertEquals(mapOf("a:1" to old), newestProgress(mapOf("a:1" to untimed), mapOf("a:1" to old)))
         assertEquals(mapOf("a:1" to old), newestProgress(mapOf("a:1" to old), mapOf("a:1" to untimed)))
     }
+
+    @Test fun `next episode remembers high bitrate 1080p on its own series and server`() {
+        fun ep(id: String, width: Int, rate: Long, server: String = "a"): Version {
+            val v = version(server, "e8", id)
+            return v.copy(item = v.item.copy(type = "Episode", seriesId = "show"),
+                source = v.source.copy(bitrate = rate, mediaStreams = listOf(app.zmby.emby.MediaStream(0, "Video", width = width, height = width * 9 / 16))))
+        }
+        val high = ep("BD", 1920, 32_000_000)
+        val ranked = listOf(ep("4k", 3840, 8_000_000), ep("wrongServer", 1920, 32_000_000, "b"), ep("web", 1920, 5_000_000), high)
+        val previous = memory(high, "2026-11-01T00:00:00Z").copy(itemId = "e7", seriesId = "show", edition = app.zmby.playback.EpisodeEdition.of(high.source))
+        assertEquals(high, playbackDefault(ranked, null, 90, previous))
+        assertEquals(ranked.first(), playbackDefault(ranked, null, 90, previous.copy(seriesId = "another")))
+    }
 }

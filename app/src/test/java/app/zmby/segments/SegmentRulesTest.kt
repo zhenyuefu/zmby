@@ -155,4 +155,16 @@ class SegmentRulesTest {
         assertEquals(0, SegmentMarks.adjust(5_000, 90_000, -10_000, 2_000_000))
         assertEquals(2_000_000, SegmentMarks.adjust(1_995_000, 0, 60_000, 2_000_000))
     }
+
+    @Test fun `invalid opening outro lets the following provider supply the real credits`() {
+        val duration = 52 * 60_000L
+        val opening = Segment(SegmentKind.Credits, 0, 100_000)
+        val intro = Segment(SegmentKind.Intro, 1_000, 94_000)
+        val credits = Segment(SegmentKind.Credits, 51 * 60_000L + 12_000, null)
+        val order = listOf(SegmentProvider.Emby, SegmentProvider.TheIntroDB)
+        val plan = SegmentRules.merge(order, mapOf(order[0] to SegmentRules.valid(listOf(opening), duration),
+            order[1] to SegmentRules.valid(listOf(intro, credits), duration)))
+        assertEquals(credits, plan[SegmentKind.Credits]?.second)
+        assertEquals(intro, plan[SegmentKind.Intro]?.second)
+    }
 }

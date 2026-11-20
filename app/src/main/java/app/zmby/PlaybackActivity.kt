@@ -34,6 +34,7 @@ import app.zmby.playback.PlaybackMonitor
 import app.zmby.playback.SubtitlePrepareException
 import app.zmby.playback.SubtitleSelectionVerifier
 import app.zmby.playback.TrackChoice
+import app.zmby.playback.EpisodeEdition
 import app.zmby.playback.SavedPlayback
 import app.zmby.playback.TrackLanguages
 import app.zmby.playback.Alternate
@@ -433,7 +434,8 @@ class PlaybackActivity : ComponentActivity() {
                 acceptsStatus = { status -> matchesPlaybackAttempt(status, beforeLaunch, prepared.statusPaths) },
                 onStarted = {
                     prepared.selection?.let { selection ->
-                        val saved = SavedPlayback(playServer, item.id, selection, System.currentTimeMillis())
+                        val saved = SavedPlayback(playServer, item.id, selection, System.currentTimeMillis(), item.seriesId,
+                            prepared.version?.takeIf { item.type == "Episode" }?.let(EpisodeEdition::of))
                         app.appScope.launch(Dispatchers.IO) { app.playbackMemory.remember(saved) }
                     }
                 },
@@ -551,10 +553,15 @@ class PlaybackActivity : ComponentActivity() {
                 app.watchSync.afterPlayback(ServerItem(playedServer, item), playedVersion?.runTimeTicks?.let(::ticksToMs) ?: item.runtimeMs, done, matched, startedAt)
             }.onFailure { ZLog.w(TAG, "观看进度回写 failed", it) }
         }
+        val completed = active.monitor.outcome(result)
+        if (callingActivity != null && item?.type == "Episode" && completed.watched) {
+            setResult(RESULT_OK, Intent().putExtra(EXTRA_SERVER, playedServer).putExtra(RETURN_ITEM, item.id)
+                .putExtra(RETURN_SEASON, item.parentIndexNumber ?: -1))
+        }
         lifecycleScope.launch {
             // Give the stop report a moment so the screen underneath reloads the new resume point.
-            val done = withTimeoutOrNull(REPORT_WAIT_MS) { outcome.await() }
-            if (item?.type != "Episode" || done?.watched != true || !app.settings.offerNextEpisode.value) return@launch finish()
+            withTimeoutOrNull(REPORT_WAIT_MS) { outcome.await() }
+            if (item?.type != "Episode" || !completed.watched || !app.settings.offerNextEpisode.value) return@launch finish()
             val upNext = overlayNext ?: runCatching { app.library.nextEpisode(ServerItem(server, item), carriedVersion) }
                 .onFailure { ZLog.w(TAG, "next episode lookup failed", it) }
                 .getOrNull()
@@ -655,7 +662,9 @@ class PlaybackActivity : ComponentActivity() {
         private const val TAG = "Play"
         private const val KEY_LAUNCHED = "launched"
         private const val EXTRA_ITEM = "item"
-        private const val EXTRA_SERVER = "server"
+        internal const val RETURN_ITEM = "returned_episode"
+        internal const val RETURN_SEASON = "returned_season"
+        internal const val EXTRA_SERVER = "server"
         private const val EXTRA_START_MS = "start_ms"
         private const val EXTRA_SOURCE_ID = "media_source_id"
         /** How long the segment lookup waits for PlaybackInfo to name the version played. */

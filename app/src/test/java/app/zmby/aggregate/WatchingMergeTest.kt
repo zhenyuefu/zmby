@@ -129,16 +129,16 @@ class WatchingMergeTest {
         assertNull(waiting.target)
     }
 
-    @Test fun `an episode not aired yet waits and is listed after the others`() {
+    @Test fun `an episode not aired yet waits and is ordered by its viewing date`() {
         val show = WatchSource("a", 0,
             played = listOf(ep("a", "x", 7, done = true, played = "2026-10-30T10:00:00Z")),
             nextUp = listOf(ep("a", "x", 8, premiere = "2026-11-07T12:00:00Z")),
             series = mapOf("x" to series("x", "7")))
         val older = WatchSource("b", 1, resume = listOf(movie("m", tmdb = "1", played = "2026-10-01T10:00:00Z", positionMin = 5)))
         val cards = WatchingMerge.merge(listOf(show, older), now = now)
-        assertEquals(listOf(WatchState.Resume, WatchState.Waiting), cards.map { it.state })
-        assertEquals("2026-11-07T12:00:00Z", cards.last().airDate)
-        assertEquals(Slot(1, 8), cards.last().slot)
+        assertEquals(listOf(WatchState.Waiting, WatchState.Resume), cards.map { it.state })
+        assertEquals("2026-11-07T12:00:00Z", cards.first().airDate)
+        assertEquals(Slot(1, 8), cards.first().slot)
     }
 
     @Test fun `next up alone is shown, hidden until new activity, and left out when the setting is off`() {
@@ -171,5 +171,14 @@ class WatchingMergeTest {
         val card = WatchingMerge.merge(listOf(s), now = now).single()
         assertEquals(Slot(1, 7), card.slot)
         assertEquals(6, card.bar!!.watched)
+    }
+
+    @Test fun `series and offsetless UTC dates order works across servers`() {
+        val movie = WatchSource("first", 0, resume = listOf(movie("film", played = "2026-10-20T20:00:00+02:00", positionMin = 2)))
+        val parent = series("show", "12").copy(userData = UserItemData(lastPlayedDate = "2026-10-20T18:01:00.1234567"))
+        val show = WatchSource("second", 1, nextUp = listOf(ep("second", "show", 8)), series = mapOf("show" to parent))
+        val cards = WatchingMerge.merge(listOf(movie, show))
+        assertEquals(listOf("second", "first"), cards.map { it.server })
+        assertEquals(WatchingMerge.time("2026-10-20T18:01:00.123Z"), cards.first().lastActivity)
     }
 }

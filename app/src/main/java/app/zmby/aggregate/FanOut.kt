@@ -42,7 +42,7 @@ interface ResultStore {
 }
 
 /** Opts a shared request into the [ResultStore]: its kind (a table partition) and how to encode the answer. */
-class Persist<T>(val kind: String, val serializer: kotlinx.serialization.KSerializer<T>)
+class Persist<T>(val kind: String, val serializer: kotlinx.serialization.KSerializer<T>, val reusable: (T) -> Boolean = { true })
 
 /** Bounds active operations. Queue time and cancelled consumers never count as server failures. */
 class FanOut(
@@ -70,7 +70,8 @@ class FanOut(
         val key = storedKey(share, context, server) ?: return null
         val text = try { store.read(persist.kind, key, server, maxAgeMs) } catch (e: CancellationException) { throw e } catch (_: Exception) { null } ?: return null
         return runCatching { json.decodeFromString(persist.serializer, text) }
-            .onFailure { app.zmby.log.ZLog.w("FanOut", "stored ${persist.kind} answer unreadable: ${it.message}") }.getOrNull()
+            .onFailure { app.zmby.log.ZLog.w("FanOut", "stored ${persist.kind} answer unreadable: ${it.message}") }
+            .getOrNull()?.takeIf(persist.reusable)
     }
 
     private fun <T> writeStored(persist: Persist<T>, share: Any, context: Any?, server: String, value: T) {
@@ -256,7 +257,7 @@ class FanOut(
         // A shared operation updates health once, regardless of its number of consumers.
         when (outcome) {
             is Outcome.Ok -> health.onSuccess(server)
-            is Outcome.Failed -> health.onFailure(server, outcome.error, outcome.timedOut)
+            is Outcome.Failed -> if (outcome.error !is app.zmby.data.ResourcesLoading) health.onFailure(server, outcome.error, outcome.timedOut)
             is Outcome.Skipped -> Unit
         }
         outcome

@@ -94,11 +94,12 @@ fun resumeMsOf(item: BaseItemDto): Long {
  * ones on other servers.
  */
 fun play(context: Context, ref: ServerItem, startMs: Long, mediaSourceId: String? = null, tracks: TrackChoice = TrackChoice(),
-    alternates: List<app.zmby.playback.Alternate> = emptyList(), copies: List<ServerItem> = emptyList()) {
+    alternates: List<app.zmby.playback.Alternate> = emptyList(), copies: List<ServerItem> = emptyList(),
+    launch: (android.content.Intent) -> Unit = context::startActivity) {
     require(ref.server != "catalog") { "Catalogue entries have no playback address" }
     val app = context.zmby
     val json = app.library.itemJson(ref.item)
-    context.startActivity(PlaybackActivity.intent(context, ref.server, json, startMs, mediaSourceId, tracks, app.putHandoff(alternates, copies)))
+    launch(PlaybackActivity.intent(context, ref.server, json, startMs, mediaSourceId, tracks, app.putHandoff(alternates, copies)))
 }
 
 /**

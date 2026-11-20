@@ -265,6 +265,13 @@ class Accordion(first: String) {
         }
     }
 
+    /** An already-composed row card selected by the quick picker or the returning player. */
+    suspend fun focusCard(section: String, card: FocusRequester) {
+        cancelNavigation()
+        active = section
+        if (card.requestWhenReady()) kotlinx.coroutines.coroutineScope { align(section) }
+    }
+
     private fun CoroutineScope.align(key: String) {
         val scroll = scroll ?: return
         val top = topOf(alignmentRow(key)) ?: return

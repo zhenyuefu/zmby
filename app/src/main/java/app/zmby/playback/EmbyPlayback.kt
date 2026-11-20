@@ -145,7 +145,9 @@ class PlaybackPreparer(
         }
         val info = client.playbackInfo(session, item.id, startPositionMs, mediaSourceId)
         info.errorCode?.let { throw EmbyException("服务器拒绝播放（$it）") }
-        val source = chooseSource(info.mediaSources, mediaSourceId ?: EpisodeContinuation.source(info.mediaSources, preferredVersion)?.id)
+        val playable = info.mediaSources.filterNot { it.loadingResource }
+        if (playable.isEmpty() && info.mediaSources.isNotEmpty()) throw EmbyException("服务器仍在查找资源，请稍后重试")
+        val source = chooseSource(playable, mediaSourceId ?: EpisodeContinuation.source(playable, preferredVersion)?.id)
         val runTimeTicks = source.runTimeTicks ?: item.runTimeTicks
         val images = try { artwork(session, item) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }

@@ -92,6 +92,9 @@ object SegmentRules {
     /** A segment ending this close to (or past) the runtime is treated as running to the end. */
     private const val END_SLACK_MS = 3_000L
 
+    /** End markers in the opening half of a file cannot describe this edition's ending. */
+    fun validEnding(startMs: Long, durationMs: Long) = startMs in (durationMs / 2)..<durationMs
+
     /**
      * Drops what cannot belong to a video of [durationMs]: empty or reversed spans, spans starting
      * past the end. A [declared] runtime off by more than [PROVIDER_TOLERANCE_MS] drops everything.
@@ -103,7 +106,7 @@ object SegmentRules {
             val end = s.endMs
             if (end != null && end <= s.startMs) return@mapNotNull null
             if (durationMs != null && durationMs > 0) {
-                if (s.startMs >= durationMs) return@mapNotNull null
+                if (s.startMs >= durationMs || !s.kind.atStart && !validEnding(s.startMs, durationMs)) return@mapNotNull null
                 if (end != null && end > durationMs + PROVIDER_TOLERANCE_MS) return@mapNotNull null
                 if (end != null && end >= durationMs - END_SLACK_MS) return@mapNotNull s.copy(endMs = null)
             }
@@ -278,6 +281,7 @@ class SegmentSkipper(
             val mode = mode(s.kind)
             if (mode == SkipMode.Off) continue
             if (!s.contains(positionMs)) continue
+            if (!s.kind.atStart && !SegmentRules.validEnding(s.startMs, durationMs)) continue
             // A playback that starts inside the intro skips it; one resumed inside the credits does not.
             val ranInto = (previousMs == null && s.kind.atStart) ||
                 (previousMs != null && previousMs <= positionMs && positionMs - previousMs <= NATURAL_STEP_MS && previousMs >= s.startMs - NATURAL_STEP_MS)

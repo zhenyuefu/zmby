@@ -1,6 +1,7 @@
 package app.zmby.ui.screens
 
 import androidx.lifecycle.viewModelScope
+import app.zmby.playback.EpisodeEdition
 import app.zmby.ZmbyApp
 import app.zmby.aggregate.FanOut
 import app.zmby.aggregate.Outcome
@@ -145,7 +146,22 @@ internal class SeriesViewModel(private val app: ZmbyApp, server: String, seriesI
         }
     }.distinctUntilChanged()
 
-    private val presenter = VersionPresenter(app, viewModelScope, queries, pipeline.tick, onServerRefresh = ::refreshResources, onCatalogRefresh = ::refreshResources)
+    private val seriesMemory = pipeline.state.map { data ->
+        val refs = data.allResources.ifEmpty { data.episodes.flatMap { it.resources } }
+        val saved = app.playbackMemory.latest(refs)
+        saved?.let { old -> refs.firstOrNull { it.server == old.server && it.item.id == old.itemId }?.let { old to it } }
+    }.distinctUntilChanged { a, b -> a?.first == b?.first && a?.second?.key == b?.second?.key }
+        .map { previous ->
+            val (saved, ref) = previous ?: return@map null
+            if (saved.edition != null || ref.item.seriesId == null) return@map saved
+            val source = ref.item.mediaSources.firstOrNull { it.id == saved.selection.sourceId } ?: try {
+                app.library.sources(ref.server, ref.item.id).firstOrNull { it.id == saved.selection.sourceId }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { null }
+            source?.let { saved.copy(seriesId = ref.item.seriesId, edition = EpisodeEdition.of(it)).also(app.playbackMemory::remember) }
+        }.onStart { emit(null) }.flowOn(Dispatchers.IO)
+
+    private val presenter = VersionPresenter(app, viewModelScope, queries, pipeline.tick, onServerRefresh = ::refreshResources, onCatalogRefresh = ::refreshResources, seriesMemory = seriesMemory)
 
     /**
      * The episode the page is on, its versions and their merged progress (performance plan R3): only the

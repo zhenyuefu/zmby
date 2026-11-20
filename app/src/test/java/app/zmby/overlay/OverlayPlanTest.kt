@@ -73,4 +73,22 @@ class OverlayPlanTest {
         p.onSample(2_600_500, d)
         assertNull(p.prompt)
     }
+
+    @Test fun `opening credits mislabeled as ending do not consume the late card`() {
+        var ready = false
+        val p = OverlayPlan({ 0L }, { ready })
+        ready = true
+        p.onSample(0, d)
+        p.onSample(1_000, d)
+        assertNull(p.prompt)
+        p.onOffer(SkipDecision.Offer(SegmentKind.Intro, 94_000, 94_000), 1_000)
+        assertTrue(p.prompt is OverlayPrompt.Skip)
+        ready = false
+        p.onSample(d - 32_000, d)
+        p.onSample(d - 29_000, d)
+        ready = true
+        p.onSample(d - 19_000, d)
+        p.onSample(d - 18_000, d)
+        assertEquals(OverlayPrompt.Next, p.prompt)
+    }
 }

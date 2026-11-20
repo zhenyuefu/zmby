@@ -3,6 +3,8 @@ package app.zmby.emby
 import app.zmby.log.ZLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
@@ -62,6 +64,14 @@ data class ServerSession(
 }
 
 class EmbyException(message: String, val code: Int? = null) : IOException(message)
+
+/** Unlike a display list, an authoritative favourites page needs both fields, even when empty. */
+@Serializable
+private data class FavoritePage(
+    @SerialName("Items") val items: List<BaseItemDto>,
+    @SerialName("TotalRecordCount") val total: Int,
+    @SerialName("StartIndex") val start: Int? = null,
+)
 
 class EmbyClient(
     private val http: OkHttpClient,
@@ -139,7 +149,40 @@ class EmbyClient(
         parentId: String? = null,
         /** Sort and filter parameters of the browse page ([app.zmby.data.BrowseQuery.params]); they replace the defaults. */
         query: Map<String, String> = emptyMap(),
-    ): ItemsResult = get(s.baseUrl, s, "Users/${s.userId}/Items") {
+    ): ItemsResult = browsePage(s, types, favoritesOnly, start, limit, parentId, query)
+
+    /** Only return a complete list: an omitted favourite may be removed from other servers. */
+    suspend fun completeFavorites(s: ServerSession): List<BaseItemDto> {
+        val limit = 300
+        val items = mutableListOf<BaseItemDto>()
+        val seenIds = HashSet<String>()
+        var expectedTotal: Int? = null
+        do {
+            val start = items.size
+            val page = browsePage<FavoritePage>(s, "Movie,Series", true, start, limit)
+            check(page.start == null || page.start == start) { "Unexpected favourites page offset" }
+            check(expectedTotal == null || page.total == expectedTotal) { "Favourites count changed during pull" }
+            expectedTotal = page.total
+            check(page.total >= start && page.items.size <= minOf(limit, page.total - start)) { "Invalid favourites page size" }
+            check(start == page.total || page.items.isNotEmpty()) { "Favourites page ended before the reported total" }
+            for (item in page.items) {
+                check(item.type == "Movie" || item.type == "Series") { "Unexpected item type in favourites" }
+                check(item.id.isNotBlank() && seenIds.add(item.id)) { "Missing or repeated favourite item ID" }
+                items.add(item)
+            }
+        } while (items.size < page.total)
+        return items
+    }
+
+    private suspend inline fun <reified T> browsePage(
+        s: ServerSession,
+        types: String,
+        favoritesOnly: Boolean,
+        start: Int,
+        limit: Int,
+        parentId: String? = null,
+        query: Map<String, String> = emptyMap(),
+    ): T = get(s.baseUrl, s, "Users/${s.userId}/Items") {
         if (parentId != null) addQueryParameter("ParentId", parentId)
         addQueryParameter("IncludeItemTypes", types)
         addQueryParameter("Recursive", "true")
@@ -254,7 +297,7 @@ class EmbyClient(
     /** Playback facts only; provider-backed detail pages do not ask for server descriptions or cast. */
     suspend fun resourceItem(s: ServerSession, itemId: String): BaseItemDto =
         get(s.baseUrl, s, "Users/${s.userId}/Items/$itemId") {
-            addQueryParameter("Fields", "ProviderIds,MediaSources,MediaStreams,Chapters,Path,RunTimeTicks,UserData,PresentationUniqueKey")
+            addQueryParameter("Fields", "ProviderIds,MediaSources,MediaStreams,Chapters,Path,RunTimeTicks,UserData,UserDataLastPlayedDate,PresentationUniqueKey")
         }
 
     /**
@@ -327,7 +370,7 @@ class EmbyClient(
             addQueryParameter("StartIndex", start.toString())
             addQueryParameter("Limit", limit.toString())
             // 在看 stores these with the other lists, so it asks for the same fields and artwork.
-            addQueryParameter("Fields", if (listFields) LIST_FIELDS else "ProviderIds,RunTimeTicks,UserData")
+            addQueryParameter("Fields", if (listFields) LIST_FIELDS else "ProviderIds,RunTimeTicks,UserData,UserDataLastPlayedDate")
             if (!listFields) addQueryParameter("EnableImages", "false")
         }
 
@@ -634,7 +677,7 @@ class EmbyClient(
         private const val MAX_BITRATE = 1_000_000_000L
         const val FALLBACK_PAUSE_MS = 10 * 60 * 1000L
         const val LIST_FIELDS =
-            "ProviderIds,ProductionYear,RunTimeTicks,BackdropImageTags,UserData,Overview,Genres,CommunityRating,ChildCount,Path,PresentationUniqueKey,DateCreated,PremiereDate,SortName"
+            "ProviderIds,ProductionYear,RunTimeTicks,BackdropImageTags,UserData,UserDataLastPlayedDate,Overview,Genres,CommunityRating,ChildCount,Path,PresentationUniqueKey,DateCreated,PremiereDate,SortName"
 
         /** Accepts "host:8096", "http://host:8096/", "https://host/emby" and returns it without a trailing slash. */
         fun normalizeBaseUrl(raw: String): String {

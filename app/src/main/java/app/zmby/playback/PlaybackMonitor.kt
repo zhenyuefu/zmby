@@ -31,6 +31,7 @@ interface MonitorOverlay {
      * (closed, permission revoked): the monitor then skips by itself, as without the overlay.
      */
     fun onOffer(offer: app.zmby.segments.SkipDecision.Offer): Boolean = false
+    val showingOrHandledNext: Boolean get() = false
     /** zmby moved the position (an automatic skip or a button on the overlay). */
     fun onSeeked(positionMs: Long) {}
     /** The player opened another file: hide everything, nothing here belongs to it. */
@@ -127,7 +128,8 @@ class PlaybackMonitor(
             val skip = skipper?.takeIf { it.isCompleted }?.getCompletedOrNull()
             val decision = if (skip != null && status.durationMs > 0) skip.decide(previous, status.positionMs, status.durationMs) else null
             val asked = decision is app.zmby.segments.SkipDecision.Offer && overlay?.onOffer(decision) == true
-            val target = decision?.targetMs?.takeIf { !asked }
+            val endHandled = decision is app.zmby.segments.SkipDecision.Seek && !decision.kind.atStart && overlay?.showingOrHandledNext == true
+            val target = decision?.targetMs?.takeIf { !asked && !endHandled }
             previous = status.positionMs
             if (target != null) {
                 // Like a user's seek: the new position is reported at once, so the server's resume
@@ -202,6 +204,13 @@ class PlaybackMonitor(
         return false
     }
 
+    /** The local completion decision is available even while a server is draining reports. */
+    fun outcome(result: ZidooResult?): PlaybackOutcome {
+        val runtime = runtimeMs?.takeIf { it > 0 } ?: result?.durationMs ?: lastDurationMs
+        val position = resolveFinalPosition(result, lastPositionMs, runtime)
+        return PlaybackOutcome(position, result?.completed == true || (position != null && WatchThreshold.isWatched(position, runtime, watchedPercent)))
+    }
+
     /**
      * Reports the final position and, past the watch threshold, marks the item played. Call once
      * the player activity has returned; later calls return null.
@@ -210,9 +219,8 @@ class PlaybackMonitor(
         if (finished) return null
         finished = true
         // Unscraped items have no runtime on the server; the player knows the file's duration.
-        val runtime = runtimeMs ?: result?.durationMs ?: lastDurationMs
-        val position = resolveFinalPosition(result, lastPositionMs, runtime)
-        val watched = result?.completed == true || (position != null && WatchThreshold.isWatched(position, runtime, watchedPercent))
+        val runtime = runtimeMs?.takeIf { it > 0 } ?: result?.durationMs ?: lastDurationMs
+        val (position, watched) = outcome(result)
         ZLog.i(TAG, "finish result=$result lastPolled=${lastPositionMs}ms runtime=${runtime}ms -> final=${position}ms watched=$watched")
         if (position == null) {
             reports.finish(null, runtime, false, tracker?.snapshot())

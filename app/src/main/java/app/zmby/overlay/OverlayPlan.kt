@@ -55,9 +55,9 @@ class OverlayPlan(
             if (passed || left || positionMs >= skip.targetMs) prompt = null
         }
         if (!nextOffered && nextAvailable() && durationMs > 0 && prev != null && ranInto(prev, positionMs)) {
-            val credits = creditsStartMs()
-            val start = credits ?: (durationMs - NEXT_BEFORE_END_MS)
-            if (positionMs >= start && prev < start + SegmentSkipper.NATURAL_STEP_MS && positionMs < durationMs - SegmentSkipper.END_GUARD_MS) {
+            val credits = creditsStartMs()?.takeIf { app.zmby.segments.SegmentRules.validEnding(it, durationMs) }
+            val start = credits ?: maxOf(durationMs / 2, durationMs - NEXT_BEFORE_END_MS)
+            if (positionMs >= start && positionMs < durationMs - SegmentSkipper.END_GUARD_MS) {
                 nextOffered = true
                 prompt = OverlayPrompt.Next
             }
@@ -88,7 +88,7 @@ class OverlayPlan(
         prompt = null
     }
 
-    private fun ranInto(prev: Long, now: Long) = prev <= now && now - prev <= SegmentSkipper.NATURAL_STEP_MS
+    private fun ranInto(prev: Long, now: Long) = prev < now && now - prev <= SegmentSkipper.NATURAL_STEP_MS
 
     companion object {
         /** Without known credits the card shows this long before the end. */

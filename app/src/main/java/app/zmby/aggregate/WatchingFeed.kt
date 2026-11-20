@@ -1,5 +1,6 @@
 package app.zmby.aggregate
 
+import app.zmby.data.withPlaybackProgress
 import app.zmby.data.Library
 import app.zmby.emby.BaseItemDto
 import app.zmby.log.ZLog
@@ -37,16 +38,19 @@ class WatchingFeed(private val library: Library, private val fanOut: FanOut, pri
         return store.listsFlow(base).flatMapLatest { lists ->
             val watched = servers.associateWith { s -> seriesIn(s, lists) }
             val dirKeys = watched.flatMap { (s, ids) -> ids.map { episodesKey(s, it) } }
-            combine(store.listsFlow(dirKeys), store.watchingHidden.observe(), store.episodeMappings.observeAll()) { dirs, hidden, rules ->
+            combine(store.listsFlow(dirKeys), store.watchingHidden.observe(), store.episodeMappings.observeAll(),
+                store.db.progressReports().observeRecent(512)) { dirs, hidden, rules, reports ->
+                val local = reports.associate { it.key to it.userData() }
+                fun watchedItems(list: CachedList?) = list?.items.orEmpty().map { it.withPlaybackProgress(local).item }
                 val sources = servers.map { s ->
                     WatchSource(
                         server = s,
                         order = order[s] ?: Int.MAX_VALUE,
-                        resume = items(lists[resumeKey(s)]),
-                        nextUp = items(lists[nextUpKey(s)]),
-                        played = items(lists[playedKey(s)]),
+                        resume = watchedItems(lists[resumeKey(s)]),
+                        nextUp = watchedItems(lists[nextUpKey(s)]),
+                        played = watchedItems(lists[playedKey(s)]),
                         series = items(lists[seriesKey(s)]).associateBy { it.id },
-                        episodes = watched[s].orEmpty().associateWith { items(dirs[episodesKey(s, it)]) }.filterValues { it.isNotEmpty() },
+                        episodes = watched[s].orEmpty().associateWith { watchedItems(dirs[episodesKey(s, it)]) }.filterValues { it.isNotEmpty() },
                     )
                 }
                 WatchingMerge.merge(sources, rules, hidden.associate { it.workKey to it.hiddenAt })

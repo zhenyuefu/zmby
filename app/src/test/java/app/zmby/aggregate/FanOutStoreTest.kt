@@ -68,6 +68,20 @@ class FanOutStoreTest {
         assertEquals("again", (ask(fan(), calls, "again") as Outcome.Ok).value)
     }
 
+    @Test fun `an upgrade refetches a stored placeholder and reuses its replacement`() = runBlocking {
+        val calls = AtomicInteger()
+        ask(fan(), calls, "正在获取中")
+        val upgraded = Persist("versions", String.serializer()) { it != "正在获取中" }
+        repeat(2) {
+            val result = fan().run(listOf("a"), 1000, share = listOf("versions", "movie-1"), cacheMs = 500, persist = upgraded) {
+                calls.incrementAndGet()
+                "real"
+            }.toList().single()
+            assertEquals("real", (result as Outcome.Ok).value)
+        }
+        assertEquals(2, calls.get())
+    }
+
     @Test fun `steps are stored too and a manual refresh drops them`() = runBlocking {
         val calls = AtomicInteger()
         val step = Persist(FanOut.KIND_SEASONS, String.serializer())

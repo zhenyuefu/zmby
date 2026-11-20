@@ -49,20 +49,32 @@ internal fun rememberVersionProgress(versions: VersionsState, tick: Int): Versio
  * threshold) plays its own copy from there unless the last successful start here ([memory]) is that
  * copy or came later; otherwise the remembered version while still valid, then the ranked first.
  */
-internal fun playbackDefault(ordered: List<Version>, memory: SavedPlayback?, percent: Int): Version? {
-    val remembered = memory?.let { m -> ordered.firstOrNull { it.ref.server == m.server && it.item.id == m.itemId && m.selection.restore(it.source) != null } }
-    fun time(v: Version) = v.item.userData?.lastPlayedDate?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+internal fun playbackDefault(ordered: List<Version>, memory: SavedPlayback?, percent: Int, seriesMemory: SavedPlayback? = null): Version? {
+    val remembered = memory?.let { m -> ordered.firstOrNull { it.ref.server == m.server && it.item.id == m.itemId && it.source.id == m.selection.sourceId } }
+    fun time(v: Version) = app.zmby.emby.embyTime(v.item.userData?.lastPlayedDate)
+    fun previousEdition(candidates: List<Version>): Version? {
+        val edition = seriesMemory?.edition ?: return null
+        val sameSeries = candidates.filter { it.server.id == seriesMemory.server && it.item.seriesId != null && it.item.seriesId == seriesMemory.seriesId }
+        return sameSeries.map { it to app.zmby.playback.EpisodeEdition.of(it.source) }
+            .filter { (_, e) -> (edition.resolution != null && e.resolution == edition.resolution) ||
+                (edition.resolution == null && edition.releaseHash != null && e.releaseHash == edition.releaseHash) }
+            .minWithOrNull(compareBy<Pair<Version, app.zmby.playback.EpisodeEdition>> { edition.releaseHash == null || it.second.releaseHash != edition.releaseHash }
+                .thenBy { edition.codec != null && it.second.codec != edition.codec }
+                .thenBy { val rate = it.second.bitrate
+                    if (rate == null || edition.bitrate == null) Long.MAX_VALUE else kotlin.math.abs(rate - edition.bitrate) })?.first
+    }
     // Equal or missing times keep the ranked order.
     val latest = ordered.distinctBy { it.ref.key }
         .filter { it.item.userData?.played == true || it.item.resumeMs > 0 }
         .maxWithOrNull(compareBy(nullsFirst()) { time(it) })
     val resumes = latest != null && latest.item.userData?.played != true &&
         WatchThreshold.startPosition(latest.item.resumeMs, latest.item.runtimeMs, percent) > 0
-    if (latest == null || !resumes) return remembered ?: ordered.firstOrNull()
+    if (latest == null || !resumes) return remembered ?: previousEdition(ordered) ?: ordered.firstOrNull()
     if (memory != null && remembered != null) {
         if (remembered.ref.key == latest.ref.key) return remembered
         val at = time(latest)
         if (at == null || at < memory.playedAt) return remembered
     }
-    return ordered.first { it.ref.key == latest.ref.key }
+    val sameCopy = ordered.filter { it.ref.key == latest.ref.key }
+    return previousEdition(sameCopy) ?: sameCopy.first()
 }

@@ -30,7 +30,7 @@ enum class WatchState {
     Resume,
     /** Finished an episode: 「下一集」 the one after it. */
     Next,
-    /** The next episode has not aired, or no server has it: 「等待更新」, listed after the others. */
+    /** The next episode has not aired, or no server has it: 「等待更新」. */
     Waiting,
 }
 
@@ -155,18 +155,18 @@ object WatchingMerge {
             val key = groupKey(group, ids)
             val raw = g.flatMap { events[it].orEmpty() }
             val all = dedupe(raw)
-            val status = g.filter { it.series }.mapNotNull { n -> sources.firstOrNull { it.server == n.server }?.series?.get(n.id)?.status }
+            val series = g.filter { it.series }.mapNotNull { n -> sources.firstOrNull { it.server == n.server }?.series?.get(n.id) }
             // The episode list before deduplication: an episode also in NextUp is still part of it.
             val directory = raw.filter { it.fromDirectory }.mapNotNull { it.slot }.toSortedSet()
-            if (g.first().series) seriesCard(key, all, directory, status, orderOf, now) else filmCard(key, all, orderOf)
+            if (g.first().series) seriesCard(key, all, directory, series, orderOf, now) else filmCard(key, all, orderOf)
         }
         return cards
             .filter { c -> includeNext || c.state == WatchState.Resume }
             .filter { c -> hidden[c.key]?.let { at -> (c.lastActivity ?: Long.MIN_VALUE) > at } ?: true }
             .sortedWith(
-                compareBy<WatchCard> { it.state == WatchState.Waiting }
-                    .thenByDescending { it.lastActivity ?: Long.MIN_VALUE }
-                    .thenBy { orderOf[it.server] ?: Int.MAX_VALUE }
+                compareByDescending<WatchCard> { it.lastActivity }
+                    .thenBy { it.state == WatchState.Waiting }
+                    .thenBy { it.shown.item.displayTitle }
                     .thenBy { it.key },
             )
     }
@@ -185,7 +185,7 @@ object WatchingMerge {
         )
     }
 
-    private fun seriesCard(key: String, all: List<Event>, directory: java.util.SortedSet<Slot>, status: List<String>, orderOf: Map<String, Int>, now: Long): WatchCard? {
+    private fun seriesCard(key: String, all: List<Event>, directory: java.util.SortedSet<Slot>, series: List<BaseItemDto>, orderOf: Map<String, Int>, now: Long): WatchCard? {
         val fromLists = all.filter { !it.fromDirectory }
         // A series needs something current: a part-watched episode or a server's 下一集.
         if (fromLists.none { it.kind == Kind.Progress || it.kind == Kind.Hint }) return null
@@ -194,6 +194,8 @@ object WatchingMerge {
         val resumePoints = all.filter { it.kind == Kind.Progress }.map { it.ref }.distinctBy { it.key }
         val servers = servers(all, orderOf)
         val preferred = latest?.server
+        val activity = listOfNotNull(latest?.time, fromLists.mapNotNull { it.time }.maxOrNull(),
+            series.mapNotNull { time(it.userData?.lastPlayedDate) }.maxOrNull()).maxOrNull()
 
         fun resourceAt(slot: Slot): List<Event> = all.filter { it.slot == slot && it.item.locationType != "Virtual" }
             .sortedWith(compareBy<Event> { it.server != preferred }.thenBy { it.order })
@@ -203,7 +205,7 @@ object WatchingMerge {
             val others = slot?.let { s -> resourceAt(s).filter { it.server != target?.server }.map { it.ref } }.orEmpty()
             return WatchCard(
                 key = key, series = true, state = state, target = target, shown = current.ref, startMs = startMs, progress = progress,
-                lastActivity = latest?.time, server = preferred ?: current.server, servers = servers, alternates = others,
+                lastActivity = activity, server = preferred ?: current.server, servers = servers, alternates = others,
                 resumePoints = resumePoints, slot = slot, airDate = airDate,
                 bar = bar(directory, watched, slot, if (state == WatchState.Resume) progress else 0f),
             )
@@ -220,7 +222,7 @@ object WatchingMerge {
         if (next == null) {
             val shown = latest ?: return null
             val allSeen = directory.isNotEmpty() && directory.all { it in watched }
-            if (allSeen && status.none { it.equals("Continuing", ignoreCase = true) }) return null
+            if (allSeen && series.none { it.status.equals("Continuing", ignoreCase = true) }) return null
             return card(WatchState.Waiting, shown, null, 0, 0f, target = null)
         }
         val resource = resourceAt(next).firstOrNull()
@@ -305,5 +307,5 @@ object WatchingMerge {
         return if (runtime <= 0) 0f else (item.resumeMs.toFloat() / runtime).coerceIn(0f, 1f)
     }
 
-    fun time(value: String?): Long? = value?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+    fun time(value: String?): Long? = app.zmby.emby.embyTime(value)
 }

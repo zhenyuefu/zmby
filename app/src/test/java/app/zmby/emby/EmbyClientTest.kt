@@ -43,6 +43,16 @@ class EmbyClientTest {
     @After
     fun tearDown() = server.shutdown()
 
+    @Test fun watchListsRequestTheExplicitLastPlayedDateField() = runTest {
+        repeat(3) { server.enqueue(MockResponse().setBody("""{"Items":[],"TotalRecordCount":0}""")) }
+        client.resume(session)
+        client.nextUp(session, null)
+        client.playedItems(session, 0, 20, listFields = true)
+        repeat(3) {
+            assertTrue("UserDataLastPlayedDate" in server.takeRequest().requestUrl!!.queryParameter("Fields")!!.split(','))
+        }
+    }
+
     @Test fun listIDsAndResourceFactsDoNotNeedFullMetadata() = runTest {
         server.enqueue(MockResponse().setBody("""{"Items":[{"Id":"i1","Type":"Movie","ProviderIds":{"Tmdb":"10"}}],"TotalRecordCount":1}"""))
         assertEquals("10",client.search(session,"Mock").items.single().providerIds["Tmdb"])

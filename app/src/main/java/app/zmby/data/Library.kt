@@ -39,7 +39,7 @@ data class ServerItem(val server: String, val item: BaseItemDto) {
 /** Playback reports are newer than a cached resource directory; a newer server report still wins. */
 fun ServerItem.withPlaybackProgress(progress: Map<String, app.zmby.emby.UserItemData>): ServerItem {
     val local = progress[key] ?: return this
-    fun time(value: String?) = value?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+    fun time(value: String?) = app.zmby.emby.embyTime(value)
     val serverTime = time(item.userData?.lastPlayedDate)
     val localTime = time(local.lastPlayedDate) ?: return this
     if (serverTime != null && serverTime > localTime) return this
@@ -52,12 +52,32 @@ fun ServerItem.withPlaybackProgress(progress: Map<String, app.zmby.emby.UserItem
 fun newestProgress(a: Map<String, app.zmby.emby.UserItemData>, b: Map<String, app.zmby.emby.UserItemData>): Map<String, app.zmby.emby.UserItemData> {
     if (a.isEmpty()) return b
     if (b.isEmpty()) return a
-    fun time(value: app.zmby.emby.UserItemData?) = value?.lastPlayedDate?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+    fun time(value: app.zmby.emby.UserItemData?) = app.zmby.emby.embyTime(value?.lastPlayedDate)
     return (a.keys + b.keys).associateWith { k ->
         val x = a[k]; val y = b[k]
         val tx = time(x); val ty = time(y)
         if (x == null || tx == null || ty != null && ty >= tx) y ?: x!! else x
     }
+}
+
+internal class ResourcesLoading : java.util.concurrent.TimeoutException("服务器仍在查找资源，请重试")
+
+/** Prefer PlaybackInfo for display. A detail response can become ready before PlaybackInfo does. */
+internal fun displaySourceAnswer(playback: List<MediaSourceInfo>, detail: List<MediaSourceInfo>): List<MediaSourceInfo> =
+    when {
+        playback.isEmpty() -> detail
+        playback.all { it.loadingResource } && detail.any { !it.loadingResource } -> detail
+        else -> playback
+    }
+
+internal suspend fun resolveDisplaySources(initial: List<MediaSourceInfo>, reload: suspend () -> List<MediaSourceInfo>): List<MediaSourceInfo> {
+    if (initial.none { it.loadingResource }) return initial
+    for (wait in listOf(800L, 1_600L, 3_200L, 4_000L)) {
+        kotlinx.coroutines.delay(wait)
+        val sources = reload()
+        if (sources.isNotEmpty() && sources.none { it.loadingResource }) return sources
+    }
+    throw ResourcesLoading()
 }
 
 data class LibraryView(val server: String, val id: String, val name: String, val collectionType: String?, val onHome: Boolean, val inSearch: Boolean)
@@ -308,6 +328,9 @@ class Library(
     suspend fun browse(server: String, types: String, favorites: Boolean, parentId: String? = null, start: Int = 0, limit: Int = PAGE, query: Map<String, String> = emptyMap()): ItemsResult =
         emby.browse(session(server), types, favorites, start = start, limit = limit, parentId = parentId, query = query).also { r -> note(r.items.map { ServerItem(server, it) }) }
 
+    suspend fun completeFavorites(server: String): List<BaseItemDto> =
+        emby.completeFavorites(session(server)).also { items -> note(items.map { ServerItem(server, it) }) }
+
     /**
      * Where titles starting with [letter] begin in a browse grid sorted by name: the number of items
      * before it (`NameLessThan`, Limit=0), one request. "#" is the top.
@@ -457,13 +480,24 @@ class Library(
      * Versions listed for display (not for playing): requests for the same item share one answer
      * for [SOURCES_TTL_MS] (performance plan RN ⑦). Playback asks again for fresh stream addresses.
      */
-    private val sourcesCache = app.zmby.net.RequestCache<List<Any?>, List<MediaSourceInfo>>(64, { SOURCES_TTL_MS })
+    private val sourcesCache = app.zmby.net.RequestCache<List<Any?>, List<MediaSourceInfo>>(64, { if (it.isEmpty()) 0L else SOURCES_TTL_MS })
 
-    override suspend fun sources(server: String, itemId: String): List<MediaSourceInfo> {
+    override suspend fun sources(server: String, itemId: String): List<MediaSourceInfo> =
+        displaySources(server, itemId, emptyList())
+
+    override suspend fun displaySources(server: String, item: BaseItemDto): List<MediaSourceInfo> =
+        displaySources(server, item.id, item.mediaSources)
+
+    private suspend fun displaySources(server: String, itemId: String, fallback: List<MediaSourceInfo>): List<MediaSourceInfo> {
         val s = session(server)
         // The session's line, user and token are part of the key: another login never sees these.
         return sourcesCache.get(listOf(server, s.baseUrl, s.userId, s.accessToken.hashCode(), itemId)) {
-            emby.playbackInfo(s, itemId, 0, isPlayback = false).mediaSources
+            suspend fun info() = emby.playbackInfo(s, itemId, 0, isPlayback = false).mediaSources
+            resolveDisplaySources(displaySourceAnswer(info(), fallback)) {
+                val detail = emby.resourceItem(s, itemId)
+                require(detail.id == itemId) { "片源身份发生变化" }
+                displaySourceAnswer(info(), detail.mediaSources)
+            }
         }
     }
 

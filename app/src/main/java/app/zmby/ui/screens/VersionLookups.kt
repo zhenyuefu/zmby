@@ -1,6 +1,8 @@
 package app.zmby.ui.screens
 
 import app.zmby.ZmbyApp
+import app.zmby.aggregate.Verdict
+import app.zmby.aggregate.Confidence
 import app.zmby.aggregate.FailureTracker
 import app.zmby.aggregate.FanOut
 import app.zmby.aggregate.Outcome
@@ -52,7 +54,9 @@ internal class TaggedVersions(val identity: Any?, val value: VersionsState)
 @kotlinx.serialization.Serializable
 internal data class StoredCopy(val item: app.zmby.emby.BaseItemDto, val source: app.zmby.emby.MediaSourceInfo)
 
-private val CATALOG_PERSIST = app.zmby.aggregate.Persist(FanOut.KIND_VERSIONS + ":catalog", kotlinx.serialization.builtins.ListSerializer(StoredCopy.serializer()))
+private val CATALOG_PERSIST = app.zmby.aggregate.Persist(FanOut.KIND_VERSIONS + ":catalog", kotlinx.serialization.builtins.ListSerializer(StoredCopy.serializer())) { copies ->
+    copies.none { it.source.loadingResource }
+}
 
 private fun aggregating(app: ZmbyApp) = combine(app.registry.lineup, app.sources.rows) { _, _ -> app.sources.servers(SourceFeature.Aggregate) }
     .distinctUntilChanged()
@@ -125,6 +129,20 @@ internal class ServerVersionLookup(private val app: ZmbyApp, private val scope: 
                     }
                 }
         }
+        scope.launch {
+            combine(input.filterNotNull().map { i ->
+                (i.identity to (i.lookUp && i.item.mediaSources.any { it.loadingResource }))
+            }.distinctUntilChanged(), retry) { key, _ -> key }.collectLatest { (identity, pending) ->
+                if (!pending) return@collectLatest
+                val i = input.value?.takeIf { it.identity == identity } ?: return@collectLatest
+                val result = try {
+                    val sources = app.library.displaySources(i.server, i.item)
+                    ServerVersions.Found(i.server, i.item, sources, Verdict(Confidence.Strong, "当前服务器"))
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { ServerVersions.Failed(i.server, "片源未就绪", false, FanOut.isTransient(e)) }
+                found.update { f -> if (f.identity == identity) Found(identity, f.map + (i.server to result)) else f }
+            }
+        }
         // Paused and transiently failed servers are asked again when their cool-down ends.
         scope.launch {
             combine(found, input.filterNotNull().map { it.lookUp }.distinctUntilChanged()) { f, l -> f to l }.collectLatest { (f, lookUp) ->
@@ -145,13 +163,17 @@ internal class ServerVersionLookup(private val app: ZmbyApp, private val scope: 
 
     private fun compute(i: Input, found: Map<String, ServerVersions>, servers: List<ServerStatus>, rankPrefs: VersionPrefs, others: List<String>): VersionsState {
         val self = servers.firstOrNull { it.id == i.server }
-        val (groups, unresponsive) = versionCards(self, i.item, servers.filter { it.id in others }, found, i.cached)
+        val selfPending = i.item.mediaSources.any { it.loadingResource }
+        val selfResult = found[i.server]
+        val item = if (selfPending && selfResult is ServerVersions.Found) i.item.copy(mediaSources = selfResult.sources) else i.item
+        val (groups, othersFailed) = versionCards(self, item, servers.filter { it.id in others }, found, i.cached)
+        val unresponsive = othersFailed + listOfNotNull(i.server.takeIf { selfPending && selfResult is ServerVersions.Failed })
         val prefs = rankPrefs.copy(
             manual = app.library.pickedVersion(Keys.work(i.server, if (i.item.type == "Episode" && i.series != null) i.series else i.item) + episodeSuffix(i.item)),
         )
         val all = groups.flatMap { it.versions }
         val ordered = VersionRanker.rank(all, prefs, ::versionFacts)
-        return VersionsState(groups, if (i.lookUp) others.count { it !in found } else 0, ordered.firstOrNull(), unresponsive,
+        return VersionsState(groups, if (i.lookUp) others.count { it !in found } + (if (selfPending && selfResult == null) 1 else 0) else 0, ordered.firstOrNull(), unresponsive,
             ordered = ordered, marks = versionMarks(all, prefs),
             retry = {
                 // 「n 台未响应」 pressed: lift their cool-downs and ask those servers again.
@@ -170,7 +192,7 @@ internal class ServerVersionLookup(private val app: ZmbyApp, private val scope: 
 }
 
 internal fun catalogVersionKey(work: CatalogWork, episode: CatalogEpisode?): Any =
-    listOf("catalog-versions", work.ref, work.ids, episode?.id)
+    listOf("catalog-versions-resolved", work.ref, work.ids, episode?.id)
 
 /**
  * The versions of a catalogue work or episode from its mapped server copies ([rememberCatalogVersions],
@@ -310,7 +332,7 @@ internal class CatalogVersionLookup(private val app: ZmbyApp, private val scope:
             items.flatMap { item ->
                 val full = app.library.resourceItem(server, item.id)
                 require(full.id == item.id && full.type == item.type) { "片源身份发生变化" }
-                val sources = app.library.sources(server, full.id).ifEmpty { full.mediaSources }
+                val sources = app.library.displaySources(server, full)
                 sources.map { StoredCopy(full, it) }
             }
         }.collect { stored ->
@@ -370,6 +392,7 @@ internal class VersionPresenter(
     tick: kotlinx.coroutines.flow.Flow<Int>,
     onServerRefresh: (() -> Unit)?,
     onCatalogRefresh: (() -> Unit)?,
+    seriesMemory: kotlinx.coroutines.flow.Flow<app.zmby.playback.SavedPlayback?> = flowOf(null),
 ) {
     private val serverVersions = ServerVersionLookup(app, scope).also { it.onRefresh = onServerRefresh }
     private val catalogVersions = CatalogVersionLookup(app, scope).also { it.onRefresh = onCatalogRefresh }
@@ -409,11 +432,13 @@ internal class VersionPresenter(
         .distinctUntilChanged { a, b -> a.map { it.key } == b.map { it.key } }
         .flatMapLatest { copies -> if (copies.isEmpty()) flowOf(emptyMap()) else app.store.progressFlow(copies) }
 
-    val view: StateFlow<EpisodeView> = combine(versions, storedProgress.onStart { emit(emptyMap()) }, app.recentProgress, app.settings.watchedPercent, tick) { (row, v), stored, local, percent, _ ->
+    val view: StateFlow<EpisodeView> = combine(versions, storedProgress.onStart { emit(emptyMap()) }, app.recentProgress, app.settings.watchedPercent, combine(tick, seriesMemory) { _, saved -> saved }) { (row, v), stored, local, percent, prior ->
         val records = newestProgress(stored, local)
         val ordered = v.ordered.map { it.copy(item = it.ref.withPlaybackProgress(records).item) }
-        val memory = app.playbackMemory.latest(v.ordered.map { it.ref }.distinctBy { it.key })
-        EpisodeView(row, v, VersionProgress(ordered, playbackDefault(ordered, memory, percent)))
+        val refs = ordered.map { it.ref }.distinctBy { it.key }
+        val memory = app.playbackMemory.latest(refs)
+        val edition = app.playbackMemory.latestSeries(refs) ?: prior
+        EpisodeView(row, v, VersionProgress(ordered, playbackDefault(ordered, memory, percent, edition)))
     }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, EpisodeView(null, VersionsState(emptyList(), 0, null), VersionProgress(emptyList(), null)))
 
     /** Whether there is a version to play: the one thing about versions a page layout needs. */

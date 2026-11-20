@@ -59,7 +59,7 @@ data class PendingWrite(val server: String, val itemId: String, val favorite: Bo
 data class FavoritesState(
     val favorites: List<Favorite> = emptyList(),
     val queue: List<PendingWrite> = emptyList(),
-    /** Last successful pull per server. */
+    /** Last complete pull per server. */
     val lastPull: Map<String, Long> = emptyMap(),
 )
 
@@ -290,7 +290,7 @@ class Favorites(
             .filter { policy(it.id) == FavoriteSync.TwoWay && now - (state.value.lastPull[it.id] ?: 0) >= minGapMs }
             .map { it.id }
         // In parallel with the list timeout: one slow server does not hold up the others.
-        fanOut.run(due, FanOut.LIST_TIMEOUT_MS) { s -> library.browse(s, "Movie,Series", favorites = true, limit = PULL_LIMIT).items }.collect { o ->
+        fanOut.run(due, FanOut.LIST_TIMEOUT_MS, call = library::completeFavorites).collect { o ->
             when (o) {
                 is Outcome.Ok -> lock.withLock { save(FavoriteLogic.pull(state.value, o.server, o.value, clock(), ::policy)) }
                 is Outcome.Failed -> ZLog.w(TAG, "pull from ${library.status(o.server)?.name} failed: ${o.error.message}")
@@ -315,6 +315,5 @@ class Favorites(
         /** The P2 preferences blob; unreadable content is no favourites rather than a crash. */
         fun decodeJson(text: String): FavoritesState? = runCatching { json.decodeFromString(FavoritesState.serializer(), text) }.getOrNull()
         private const val PULL_GAP_MS = 10 * 60_000L
-        private const val PULL_LIMIT = 300
     }
 }

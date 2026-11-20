@@ -43,7 +43,16 @@ data class PlaybackSelection(val sourceId: String, val audio: SavedTrack?, val s
 }
 
 @Serializable
-data class SavedPlayback(val server: String, val itemId: String, val selection: PlaybackSelection, val playedAt: Long) {
+data class EpisodeEdition(val resolution: String?, val codec: String?, val bitrate: Long?, val releaseHash: Int?) {
+    companion object {
+        fun of(source: MediaSourceInfo) = EpisodeEdition(app.zmby.media.resolutionLabel(source), source.videoStream?.codec?.lowercase(),
+            app.zmby.aggregate.VersionRanker.bitrateOf(source), EpisodeContinuation.releaseHash(source))
+    }
+}
+
+@Serializable
+data class SavedPlayback(val server: String, val itemId: String, val selection: PlaybackSelection, val playedAt: Long,
+    val seriesId: String? = null, val edition: EpisodeEdition? = null) {
     val key: String get() = "$server\n$itemId"
 }
 
@@ -56,6 +65,11 @@ class PlaybackMemory(private val prefs: SharedPreferences, private val persist: 
     }.getOrDefault(emptyMap())
 
     fun latest(refs: List<ServerItem>): SavedPlayback? = refs.mapNotNull { entries["${it.server}\n${it.item.id}"] }.maxByOrNull { it.playedAt }
+
+    fun latestSeries(refs: List<ServerItem>): SavedPlayback? {
+        val series = refs.mapNotNull { ref -> ref.item.seriesId?.let { ref.server to it } }.toSet()
+        return entries.values.filter { it.edition != null && (it.server to it.seriesId) in series }.maxByOrNull { it.playedAt }
+    }
 
     fun tracksFor(ref: ServerItem, source: MediaSourceInfo): TrackChoice? = entries["${ref.server}\n${ref.item.id}"]?.selection?.restore(source)
 

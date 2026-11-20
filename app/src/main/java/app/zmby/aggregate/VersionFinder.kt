@@ -17,6 +17,9 @@ interface VersionSource {
     suspend fun identities(server: String, ids: List<String>): List<BaseItemDto> = emptyList()
     suspend fun seasons(server: String, seriesId: String): List<BaseItemDto>
     suspend fun episodePage(server: String, seriesId: String, seasonId: String, start: Int, limit: Int): ItemsResult
+    suspend fun displaySources(server: String, item: BaseItemDto): List<MediaSourceInfo> =
+        sources(server, item.id).ifEmpty { item.mediaSources }
+
     /** The sources the server will actually play (PlaybackInfo, not playback). */
     suspend fun sources(server: String, itemId: String): List<MediaSourceInfo>
 }
@@ -45,7 +48,7 @@ sealed interface ServerVersions {
  */
 class VersionFinder(private val source: VersionSource, private val fanOut: FanOut) {
 
-    private fun key(ref: BaseItemDto, series: BaseItemDto? = null): Any = listOf("versions", identity(ref), series?.let(::identity))
+    private fun key(ref: BaseItemDto, series: BaseItemDto? = null): Any = listOf("versions-resolved", identity(ref), series?.let(::identity))
     private fun identity(ref: BaseItemDto): Any = listOf(ref.id, ref.type, ref.name, ref.productionYear, ref.providerIds,
         ref.path, ref.parentIndexNumber, ref.indexNumber)
 
@@ -122,9 +125,10 @@ class VersionFinder(private val source: VersionSource, private val fanOut: FanOu
     }
 
     private suspend fun found(server: String, item: BaseItemDto, verdict: Verdict): ServerVersions {
-        val sources = try { source.sources(server, item.id).ifEmpty { item.mediaSources } }
+        val sources = try { source.displaySources(server, item) }
         catch (e: CancellationException) { throw e }
-        catch (e: Exception) { item.mediaSources.ifEmpty { throw e } }
+        catch (e: app.zmby.data.ResourcesLoading) { throw e }
+        catch (e: Exception) { item.mediaSources.filterNot { it.loadingResource }.ifEmpty { throw e } }
         return ServerVersions.Found(server, item, sources, verdict)
     }
 
@@ -134,7 +138,9 @@ class VersionFinder(private val source: VersionSource, private val fanOut: FanOu
 
     companion object {
         /** Version lookups are kept across restarts (统一数据层 ③), six hours like in memory. */
-        private val PERSIST = Persist(FanOut.KIND_VERSIONS, ServerVersions.serializer())
+        private val PERSIST = Persist(FanOut.KIND_VERSIONS, ServerVersions.serializer()) { answer ->
+            answer !is ServerVersions.Found || answer.sources.none { it.loadingResource }
+        }
         const val NAME_CANDIDATES = 10
         const val SERIES_CANDIDATES = 3
         const val EPISODE_PAGE = 100

@@ -60,8 +60,17 @@ class LocalStore(val db: ZmbyDatabase, private val json: Json, private val clock
         val known = works.instances(server, unique.map { it.id }).associateBy { it.itemId }
         val seriesIds = unique.mapNotNull { it.seriesId }.distinct()
         val seriesKeys = if (seriesIds.isEmpty()) emptyMap() else works.instances(server, seriesIds).associate { it.itemId to it.workKey }
-        val rows = unique.map { item ->
-            val old = known[item.id]
+        val rows = unique.map { incoming ->
+            val old = known[incoming.id]
+            val saved = old?.let { decode(it)?.item?.userData }
+            val data = incoming.userData
+            val item = when {
+                saved == null -> incoming
+                data == null -> incoming.copy(userData = saved)
+                data.lastPlayedDate.isNullOrBlank() && saved.lastPlayedDate != null ->
+                    incoming.copy(userData = data.copy(lastPlayedDate = saved.lastPlayedDate))
+                else -> incoming
+            }
             val previous = old?.let { decode(it, full = true)?.item }
             val key = if (old != null && StoreKeys.isExternal(old.workKey) && previous != null && MetadataIdentity.same(previous, item)) old.workKey
                 else StoreKeys.work(server, item, item.seriesId?.let { seriesKeys[it] })

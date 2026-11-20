@@ -62,6 +62,9 @@ class PlaybackOverlay(
     )
     private var closed = false
 
+    override var showingOrHandledNext: Boolean = false
+        private set
+
     val card: UpNextCard? get() = completed(upNext)
 
     fun open() {
@@ -159,6 +162,7 @@ class PlaybackOverlay(
             prompt.value = null
             return false
         }
+        if (p == OverlayPrompt.Next) showingOrHandledNext = true
         return true
     }
 

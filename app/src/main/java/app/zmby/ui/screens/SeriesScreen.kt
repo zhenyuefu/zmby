@@ -1,5 +1,8 @@
 package app.zmby.ui.screens
 
+import app.zmby.PlaybackActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.zmby.TraceRecomposition
 import androidx.compose.foundation.focusGroup
@@ -37,6 +40,7 @@ import app.zmby.ui.theme.Mono
 import app.zmby.zmby
 import app.zmby.ui.components.rememberTrailerPlayer
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.android.awaitFrame
@@ -98,14 +102,23 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
     val selection = remember { EpisodeSelection() }
     var picks by rememberRetained("picks", seriesId) { mutableStateOf<Map<String, TrackChoice>>(emptyMap()) }
     fun tracks(v: Version) = picks[v.key] ?: app.playbackMemory.tracksFor(v.ref, v.source) ?: TrackChoice()
+    var finishedCopy by rememberSaveable { mutableStateOf<String?>(null) }
+    var finishedSeason by rememberSaveable { mutableIntStateOf(-1) }
+    val player = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val data = result.data
+        if (result.resultCode == android.app.Activity.RESULT_OK && data?.hasExtra(PlaybackActivity.RETURN_ITEM) == true) {
+            finishedCopy = "${data.getStringExtra(PlaybackActivity.EXTRA_SERVER)}:${data.getStringExtra(PlaybackActivity.RETURN_ITEM)}"
+            finishedSeason = data.getIntExtra(PlaybackActivity.RETURN_SEASON, -1)
+        }
+    }
     fun playVersion(v: Version, startMs: Long, versions: VersionsState) =
-        play(context, v.ref, startMs, v.source.id, tracks(v), versions.alternatesTo(v), versions.copies)
+        play(context, v.ref, startMs, v.source.id, tracks(v), versions.alternatesTo(v), versions.copies, player::launch)
     val scroll = rememberScrollState()
     val heading = rememberDetailHeading(scroll, gap = 20f)
     val rowState = rememberLazyListState()
     val currentCard = remember { FocusRequester() }
     val playButton = remember { FocusRequester() }
-    val headerFocused = remember { mutableStateOf(false) }
+
     var marking by remember { mutableStateOf<ServerItem?>(null) }
     val danmu = rememberDanmuPanel()
     var unsorted by rememberSaveable { mutableStateOf(false) }
@@ -120,7 +133,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
             val selected = selection.selected(view)
             pick(row.key)
             if (row.key == view.shown?.key && selected != null) playVersion(selected, selected.item.resumeMs, view.versions)
-            else row.resources.firstOrNull()?.let { play(context, it, it.item.resumeMs) }
+            else row.resources.firstOrNull()?.let { play(context, it, it.item.resumeMs, launch = player::launch) }
         }
     }
     if (s == null || canonical == null && !fallbackReady) {
@@ -181,7 +194,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                 SeriesHeaderHost(vm, selection, ref, display, heading, recCopies, directoryWork,
                     playVersion = ::playVersion,
                     playButton = playButton,
-                    initialFocusKey = seriesId, onFocusChanged = { headerFocused.value = it; if (it) accordion.showHeader() },
+                    initialFocusKey = seriesId, onFocusChanged = { if (it) accordion.showHeader() },
                     onMarks = { marking = it },
                     danmu = danmu,
                     fullTrailer = fullTrailer,
@@ -192,7 +205,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
                 // 剧集 never collapses: the season row and the current episode stay in place (ui-spec §2.14).
                 DetailBlock(accordion, SECTION_EPISODES) {
                     SeriesEpisodesBlock(nav, pipeline, accordion, unsorted, { unsorted = it }, today, rowState, currentCard, focusedKey, playRow,
-                        tick, headerFocused, quickPickKey, onMappings = { source -> mappingSource = source; mappingsOpen = true })
+                        finishedCopy, finishedSeason, { finishedCopy = null }, quickPickKey, onMappings = { source -> mappingSource = source; mappingsOpen = true })
                 }
                 if (hasVersions) SeriesVersionsHost(vm, selection, accordion, ::tracks, ::playVersion)
                 if (hasTracks) SeriesTracksHost(vm, selection, accordion, ::tracks) { v, choice -> picks = picks + (v.key to choice) }
@@ -231,7 +244,7 @@ fun SeriesScreen(nav: Nav, server: String, seriesId: String, episodeId: String? 
 private fun SeriesEpisodesBlock(
     nav: Nav, pipeline: SeriesPipeline, accordion: Accordion, unsorted: Boolean, setUnsorted: (Boolean) -> Unit, today: String,
     rowState: androidx.compose.foundation.lazy.LazyListState, currentCard: FocusRequester, focusedKey: MutableState<String?>,
-    playRow: (EpisodeRow) -> Unit, tick: Int, headerFocused: State<Boolean>, quickPickKey: MutableState<String?>,
+    playRow: (EpisodeRow) -> Unit, finishedCopy: String?, finishedSeason: Int, handled: () -> Unit, quickPickKey: MutableState<String?>,
     onMappings: (ServerItem?) -> Unit,
 ) {
     TraceRecomposition("Series.episodes")
@@ -246,25 +259,45 @@ private fun SeriesEpisodesBlock(
     val episodeError = data.episodeError
     // One whole-series list; changing season must not hide entries or reclassify other seasons.
     val unknown = mapped.unmatched
-    // Back from the player on the header: a watched episode moves on to the next unwatched one.
-    var handledResumeTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(tick, episodes, headerFocused.value) {
-        if (tick > handledResumeTick && headerFocused.value && episodes.isNotEmpty()) {
-            handledResumeTick = tick
-            val shown = episodes.firstOrNull { it.key == pipeline.currentKey.value } ?: episodes.firstOrNull()
-            if (shown?.item?.userData?.played != true) return@LaunchedEffect
-            val index = episodes.indexOfFirst { it.key == shown.key }
-            episodes.drop(index + 1).firstOrNull { it.item.userData?.played != true }?.let { pipeline.pick(it.key) }
+    // Resolve the actual played copy against the directory, including local episode mappings.
+    var nextSeason by rememberSaveable { mutableStateOf<Int?>(null) }
+    LaunchedEffect(nextSeason, seasonNumber, episodes) {
+        if (nextSeason == null || nextSeason != seasonNumber || episodes.isEmpty()) return@LaunchedEffect
+        nextSeason = null
+        episodes.firstOrNull()?.let { pipeline.pick(it.key); quickPickKey.value = it.key }
+    }
+    LaunchedEffect(finishedCopy, data) {
+        val copy = finishedCopy ?: return@LaunchedEffect
+        val mappedEpisode = data.allCatalog.firstOrNull { ep -> data.mapped.matched[ep.id].orEmpty().any { it.key == copy } }
+        val season = mappedEpisode?.season ?: finishedSeason
+        val index = episodes.indexOfFirst { row -> row.resources.any { it.key == copy } || mappedEpisode != null && row.canonical?.id == mappedEpisode.id }
+        if (index < 0 && season >= 0 && season != seasonNumber && (directoryWork == null || mappedEpisode != null)) {
+            pipeline.chooseSeason(season)
+            return@LaunchedEffect
+        }
+        if (index < 0) return@LaunchedEffect
+        val next = episodes.drop(index + 1).firstOrNull { it.item.indexNumber == null || it.item.indexNumber != episodes[index].item.indexNumber }
+        handled()
+        if (next != null) {
+            pipeline.pick(next.key)
+            quickPickKey.value = next.key
+        } else {
+            val following = seasons.filter { it.number > seasonNumber }.minByOrNull { it.number } ?: return@LaunchedEffect
+            nextSeason = following.number
+            pipeline.chooseSeason(following.number)
         }
     }
     // 快速选集 chose an episode: scroll the row to it and focus it once it is listed.
-    LaunchedEffect(quickPickKey.value, episodes) {
+    val window = androidx.compose.ui.platform.LocalWindowInfo.current
+    val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
+    LaunchedEffect(quickPickKey.value) {
         val key = quickPickKey.value ?: return@LaunchedEffect
-        val index = episodes.indexOfFirst { it.key == key }
-        if (index < 0) return@LaunchedEffect
+        snapshotFlow { window.isWindowFocused }.first { it }
+        val index = pipeline.state.map { it.episodes.indexOfFirst { row -> row.key == key } }.first { it >= 0 }
         rowState.scrollToItem(index)
+        inputMode.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
         awaitFrame()
-        accordion.open(SECTION_EPISODES, focusKey = "episode:$key")
+        accordion.focusCard(SECTION_EPISODES, currentCard)
         quickPickKey.value = null
     }
   Column(Modifier.padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {

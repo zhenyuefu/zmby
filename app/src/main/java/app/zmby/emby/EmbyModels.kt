@@ -154,6 +154,13 @@ data class ChapterInfo(
     @SerialName("MarkerType") val markerType: String? = null,
 )
 
+/** Emby uses UTC; some compatible servers omit the UTC suffix or send an explicit offset. */
+fun embyTime(value: String?): Long? {
+    val text = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    return runCatching { java.time.OffsetDateTime.parse(text).toInstant().toEpochMilli() }.getOrNull()
+        ?: runCatching { java.time.LocalDateTime.parse(text).toInstant(java.time.ZoneOffset.UTC).toEpochMilli() }.getOrNull()
+}
+
 @Serializable
 data class UserItemData(
     @SerialName("PlaybackPositionTicks") val playbackPositionTicks: Long = 0,
@@ -196,6 +203,11 @@ data class MediaSourceInfo(
     /** This version's own chapters, markers included, when the server lists them per source. */
     @SerialName("Chapters") val chapters: List<ChapterInfo> = emptyList(),
 ) {
+    /** A search-in-progress response from a compatible server, until its detail lookup completes. */
+    val loadingResource: Boolean get() = listOfNotNull(name, fileName).any {
+        it.contains("正在获取中") || it.contains("资源加载中")
+    }
+
     val videoStream: MediaStream? get() = mediaStreams.firstOrNull { it.type == "Video" }
     val audioStreams: List<MediaStream> get() = mediaStreams.filter { it.type == "Audio" }
     val subtitleStreams: List<MediaStream> get() = mediaStreams.filter { it.type == "Subtitle" }

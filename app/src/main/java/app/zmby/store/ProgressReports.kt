@@ -38,6 +38,9 @@ interface ProgressReportDao {
 
     @Query("SELECT * FROM progress_report ORDER BY played_at DESC LIMIT :limit") suspend fun recent(limit: Int): List<ProgressReportRow>
 
+    @Query("SELECT * FROM progress_report ORDER BY played_at DESC LIMIT :limit")
+    fun observeRecent(limit: Int): kotlinx.coroutines.flow.Flow<List<ProgressReportRow>>
+
     /** Keeps the newest [keep] reports; older ones are long since in the servers' own lists. */
     @Query("DELETE FROM progress_report WHERE played_at < (SELECT MIN(played_at) FROM (SELECT played_at FROM progress_report ORDER BY played_at DESC LIMIT :keep))")
     suspend fun prune(keep: Int)

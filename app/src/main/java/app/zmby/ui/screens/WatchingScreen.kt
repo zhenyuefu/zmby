@@ -81,7 +81,7 @@ private enum class WatchingFilter(val label: String) { All("全部"), Series("�
 
 /**
  * 在看 (ui-spec §2.18, Watching.dc.html): every work being watched, two large cards a row, newest
- * activity first and 等待更新 last; the same list as the home row. OK resumes a remembered choice
+ * activity first; the same list as the home row. OK resumes a remembered choice
  * or opens details; Menu offers 打开详情, 标记为已观看 and 从在看中移除.
  */
 @Composable
@@ -362,7 +362,7 @@ private fun episodeLabel(card: WatchCard): String? = card.slot?.let { "第 ${it.
 
 /** 「1 小时前 · 朋友的服 · 2 台」. */
 private fun whereLine(card: WatchCard, now: Long, server: String?): String =
-    listOfNotNull(card.lastActivity?.let { activityLabel(it, now) }, server, if (card.servers.size > 1) "${card.servers.size} 台" else null).joinToString(" · ")
+    listOfNotNull(card.lastActivity?.let { activityLabel(it, now) } ?: "观看时间未知", server, if (card.servers.size > 1) "${card.servers.size} 台" else null).joinToString(" · ")
 
 /** The page's state line: 剩余 for films, the episode and 剩余 for series, 下一集 and 等待更新. */
 private fun stateLine(card: WatchCard): String {
