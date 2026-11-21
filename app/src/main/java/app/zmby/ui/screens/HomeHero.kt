@@ -276,13 +276,17 @@ internal fun <T> heroWindow(items: List<T>, target: Int, radius: Int = HERO_PREF
 internal fun screenPx(context: Context): Pair<Int, Int> =
     context.resources.displayMetrics.let { it.widthPixels to it.heightPixels }
 
+/** Only the target page can own the video, including when the carousel wraps to the same item. */
+private fun HeroCarousel.trailerAt(i: Int, trailer: TrailerPlayer): TrailerPlayer? =
+    trailer.takeIf { i == target && it.key != null && it.key == itemAt(i)?.key }
+
 /**
  * The hero's backdrop pages (the home's [app.zmby.ui.components.BackdropLayer]): each page is its
  * backdrop with the home scrims, in its own offscreen layer, so a slide only moves cached layers and
  * a resting page is one textured quad (P4 perf). The pages move up and fade with the scroll.
  */
 @Composable
-fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims, trailer: TrailerPlayer? = null) {
+fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims, trailer: TrailerPlayer) {
     val context = LocalContext.current
     val library = context.zmby.library
     val (w, h) = remember(context) { screenPx(context) }
@@ -300,7 +304,7 @@ fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims, trailer: TrailerPlayer?
                     },
             ) {
                 // The trailer of the title resting here, in the hero area under the scrims (trailer design).
-                val playing = trailer != null && i == carousel.target && trailer.key != null && trailer.key == carousel.itemAt(i)?.key
+                val video = carousel.trailerAt(i, trailer)
                 if (url != null && "backdrop" !in app.zmby.Diagnostics.drawOff) {
                     AsyncImage(
                         model = remember(url) { backdropRequest(context, url, w, h) },
@@ -309,10 +313,10 @@ fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims, trailer: TrailerPlayer?
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-                if (playing) TrailerStage(trailer!!)
+                if (video != null) TrailerStage(video)
                 Box(Modifier.fillMaxSize().drawWithCache { onDrawBehind { with(scrims) { draw(size) } } })
                 // The status chip at the stage's bottom right, inside the hero (ui-spec §2.23).
-                if (playing) TrailerChip(trailer!!, Modifier.align(Alignment.TopEnd).padding(top = 612.dp, end = 80.dp))
+                if (video != null) TrailerChip(video, Modifier.align(Alignment.TopEnd).padding(top = 612.dp, end = 80.dp))
             }
         }
     }
@@ -320,12 +324,15 @@ fun HeroBackdrop(carousel: HeroCarousel, scrims: Scrims, trailer: TrailerPlayer?
 
 /** Glass uses both visible pages and reads the shared animation position during drawing. */
 @Composable
-fun heroGlassSlices(carousel: HeroCarousel): List<BackdropSlice> {
+fun heroGlassSlices(carousel: HeroCarousel, trailer: TrailerPlayer): List<BackdropSlice> {
     val library = LocalContext.current.zmby.library
     return carousel.pages.map { i ->
         key(i) {
             val image = rememberBlurredBackdrop(carousel.itemAt(i)?.let { library.backdrop(it) })
-            remember(carousel, i, image) { BackdropSlice(image) { i - carousel.position.value } }
+            val video = carousel.trailerAt(i, trailer)
+            remember(carousel, i, image, video) {
+                BackdropSlice(image, offset = { i - carousel.position.value }, stillAlpha = { 1f - (video?.alpha?.value ?: 0f) })
+            }
         }
     }
 }

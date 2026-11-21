@@ -152,7 +152,11 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
     val carousel = rememberRetained("heroCarousel") { HeroCarousel() }
     // The resting title's IMDb trailer plays behind the hero (trailer design); released on pause.
     val trailer = rememberTrailerPlayer()
-    val scrims = remember(trailer) { HOME_SCRIMS.copy(lighter = HOME_TRAILER_SCRIM, lightness = { trailer.alpha.value }) }
+    val scrims = remember(carousel, trailer) {
+        HOME_SCRIMS.copy(lighter = HOME_TRAILER_SCRIM, lightness = {
+            if (trailer.key != null && trailer.key == carousel.current?.key) trailer.alpha.value else 0f
+        })
+    }
     // Key presses, counted for quiet mode; read only by its effect, never in composition.
     val keyPresses = remember { mutableIntStateOf(0) }
     val backdropVisible = remember(carousel) { { carousel.backdropVisible } }
@@ -263,7 +267,7 @@ fun HomeScreen(nav: Nav, tab: Int, onExit: () -> Unit, onTab: (Int) -> Unit) {
         visible = backdropVisible,
         shift = backdropShift,
         layer = if (tab == 0) ({ HeroBackdrop(carousel, scrims, trailer) }) else null,
-        slices = if (tab == 0) heroGlassSlices(carousel) else null,
+        slices = if (tab == 0) heroGlassSlices(carousel, trailer) else null,
     ) {
         val openSearch = { nav.go(Route.Search) }
         when (tab) {

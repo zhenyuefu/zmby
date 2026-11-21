@@ -108,7 +108,8 @@ class TrailerPlayer internal constructor(private val context: Context, private v
         private set
 
     /** The surface's opacity, animated by [TrailerSurface]; the ambient layer and the scrims follow it. */
-    val alpha = Animatable(0f)
+    var alpha by mutableStateOf(Animatable(0f))
+        private set
 
     /** Whether it plays with sound (the status chip's speaker or muted glyph). */
     var sound by mutableStateOf(false)
@@ -162,6 +163,8 @@ class TrailerPlayer internal constructor(private val context: Context, private v
     fun load(key: String, info: TrailerInfo, sound: Boolean) {
         if (this.key == key) return
         stop()
+        // Removing a stage mid-fade cancels its animation. Each new trailer starts over its still.
+        alpha = Animatable(0f)
         this.key = key
         this.sound = sound
         finished = null
@@ -412,9 +415,10 @@ private const val AMBIENT_SATURATION = 1.2f
  */
 @Composable
 private fun TrailerSurface(player: TrailerPlayer, modifier: Modifier = Modifier) {
-    LaunchedEffect(player) {
+    val fade = player.alpha
+    LaunchedEffect(player, fade) {
         snapshotFlow { player.showing && !player.held }.collectLatest { on ->
-            player.alpha.animateTo(if (on) 1f else 0f, tween(if (on) FADE_IN_MS else FADE_OUT_MS))
+            fade.animateTo(if (on) 1f else 0f, tween(if (on) FADE_IN_MS else FADE_OUT_MS))
         }
     }
     AndroidView(

@@ -24,6 +24,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -32,6 +33,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.withSaveLayer
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawOutline
@@ -171,8 +173,29 @@ class Backdrop(
     private companion object { const val SLICE_WIDTH = 256f }
 }
 
-/** A blurred page at the same horizontal position (in screen widths) as its sharp backdrop. */
-class BackdropSlice(val image: ImageBitmap?, val offset: () -> Float)
+/** A blurred hero page. As its trailer appears, the whole still slice fades to the live background. */
+class BackdropSlice(val image: ImageBitmap?, val offset: () -> Float, val stillAlpha: () -> Float) {
+    private val fadePaint = androidx.compose.ui.graphics.Paint()
+
+    fun DrawScope.draw(area: Size, scrims: Scrims, seen: Float) {
+        val alpha = stillAlpha()
+        if (alpha <= 0f) return
+        fun drawStill() {
+            drawRect(Z.bg, size = area, alpha = seen)
+            image?.let { drawCover(it, area, seen) }
+            with(scrims) { draw(area, seen) }
+        }
+        translate(offset() * area.width, 0f) {
+            clipRect(0f, 0f, area.width, area.height) {
+                if (alpha >= 1f) drawStill() else {
+                    // Fade the composited still once, including its base colour and both scrims.
+                    fadePaint.alpha = alpha
+                    drawContext.canvas.withSaveLayer(Rect(Offset.Zero, area), fadePaint) { drawStill() }
+                }
+            }
+        }
+    }
+}
 
 /**
  * Dynamic, not static: the backdrop changes whenever the home hero turns to another title, and a
@@ -368,13 +391,7 @@ fun Modifier.glass(shape: Shape, tone: GlassTone = GlassTone.Glass, shadow: Bool
                             translate(-offset.x, -offset.y + backdrop.shift()) {
                                 if (slices != null) {
                                     for (slice in slices) {
-                                        translate(slice.offset() * area.width, 0f) {
-                                            clipRect(0f, 0f, area.width, area.height) {
-                                                drawRect(Z.bg, size = area, alpha = seen)
-                                                slice.image?.let { drawCover(it, area, seen) }
-                                                with(backdrop.scrims) { draw(area, seen) }
-                                            }
-                                        }
+                                        with(slice) { draw(area, backdrop.scrims, seen) }
                                     }
                                 } else if (image != null) {
                                     drawCover(image, area, seen)
