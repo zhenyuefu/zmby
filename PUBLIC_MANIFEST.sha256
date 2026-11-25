@@ -4,9 +4,9 @@
 0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594  LICENSES/Apache-2.0.txt
 20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95  LICENSES/LGPL-2.1.txt
 a5f9f02e2d172627454191014822f3a20f21c52f30bb3cfd7489effbbfd4edea  LICENSES/MIT-danmu2ass.txt
-16195c6543731233f0291e2a5ad5c69ffb4bc8083100571a66297b9ab667e7b6  README.md
+85224a5bcaf81dc505c92d79a8f9fd9e30ca03e14bb9562c68653afa369f029f  README.md
 aa7cf678eb8981e1a3d1493e0c8923c494718e3445a0ba4378bd30b8205e0a09  THIRD_PARTY_NOTICES.md
-ff47baf0e659b78912682d282cb403ed7774a9af5eb22e1f843a96e761a3026e  app/build.gradle.kts
+136c5415901d7ea4eb579e2012206536d7dfbdaa1d07d802aa4097a91e9eaf45  app/build.gradle.kts
 129284da6c7adb6dcf3d047bafad7b00b0277bc433fdc60f286ca8812f1b42cf  app/compose-stability.conf
 223afb9212520b0b89e62459ae552c64c252f70240ec1b383f0490a9049ce241  app/proguard-rules.pro
 67f9892ad72b6735c864c2de763679362595af10fd938ab1a29269ca96015eec  app/schemas/app.zmby.store.ZmbyDatabase/1.json
@@ -24,10 +24,10 @@ b5c464595d1bb5edf50b58c4c753b3a2bac2d5a467d70f8db3d1758f7ecb7a07  app/schemas/ap
 b535ae87bbbccf0540c71c9caea6e2336f29f637ba664df91cdf207077c6ec43  app/src/main/java/app/zmby/PlaybackActivity.kt
 2f985eff2cd06a346a95c744c774e5023cffa38fb256e4732ee8f0e95a689621  app/src/main/java/app/zmby/ZmbyApp.kt
 932e5cb885965842eb71edb851023e9e830363ec99cfd7cb48afeaea1eb9377e  app/src/main/java/app/zmby/aggregate/AggregateSearch.kt
-bd8838a6c14f58bda396019946cafa2bcc209d9841a01c195bff23caa4fecb46  app/src/main/java/app/zmby/aggregate/FanOut.kt
+d17f062e84135da0dbed05312d09dcc7c3bd51871951a33bb02cf90c42793117  app/src/main/java/app/zmby/aggregate/FanOut.kt
 f4e7a152039a5c1081bc7998962b7f7ddb80ddb1b0eef8cb56b2c50b20b80fa7  app/src/main/java/app/zmby/aggregate/Health.kt
 4f0f4bd977dbfdd9460131223f639c544528b7fdc2ab79aac1bcef0cdb5b9b6a  app/src/main/java/app/zmby/aggregate/HeroPicks.kt
-91034d96ba554ec99ac82dc483505551bd354a7bf106e5a5c321f60ba92f8183  app/src/main/java/app/zmby/aggregate/HomeFeed.kt
+7fb5db13ba7d1785a526a43238b2e222e94e32db950608ffd3b46806d4e95457  app/src/main/java/app/zmby/aggregate/HomeFeed.kt
 60c265778ca9d819eac040d87949fa9cebe6d5c571df439a7ac7a03147e4ede5  app/src/main/java/app/zmby/aggregate/Match.kt
 e7d3969e83518213988a69c821751ff156b2bb82f04de49090fb84bec9c0730b  app/src/main/java/app/zmby/aggregate/Merger.kt
 28a1ccd595310aa36a14340766e1c7746f9354d474059aec1d42ae655490705f  app/src/main/java/app/zmby/aggregate/MetadataIdentity.kt
@@ -70,7 +70,7 @@ e0c8e06c6abc57633f90566329a40a9434ca15a8ccbd4bebb912d0630101a81a  app/src/main/j
 c44e58517cec5a832ad43f55fcfe7dad2c4ab81a2053e5cdb6603d549b57781f  app/src/main/java/app/zmby/data/Disk.kt
 1f3ac53bf31df300fc3404fe6623bbb971e03b06998bd9327183a7b2f9f15dd6  app/src/main/java/app/zmby/data/ImageCacheBudget.kt
 fd7a97dcb46874623b1e91ebaf5cc1f40b4f59f17e0bdddc7b5dba0108196d41  app/src/main/java/app/zmby/data/ImportGuard.kt
-e4da4a22dc2992e2a7884a5a9e776002d36de3fcf512bc1fd671d337bf57eec4  app/src/main/java/app/zmby/data/Library.kt
+db309c0a93029d5a8a6876822aa81b12703d03650c0d664929150c129177e289  app/src/main/java/app/zmby/data/Library.kt
 3793e58fcb3d2820e963010673f9d15643f0e670ee1011466a4ebcf3eb615f5b  app/src/main/java/app/zmby/data/PhoneInput.kt
 28d3620865ebe751d61134bf0af59f311fdc7a078975965fe44adb4547dc8e8a  app/src/main/java/app/zmby/data/PhoneInputPage.kt
 b53a0b85d813281099b1505128c49fde315d806b4184ea546eba56ec5936bf89  app/src/main/java/app/zmby/data/ServerCaps.kt
@@ -79,7 +79,7 @@ f31a476a347471f7518cd2e04d19768069cf8a56f648df67d7336fc1c83d68bd  app/src/main/j
 14e5e23428a74548ff5aa46acadf13813f70630aa511c63c6a91dcda0503038a  app/src/main/java/app/zmby/data/ServerRegistry.kt
 a12ad5999dadccf8a905e14d7b155683c2a205f9b1a231a8638b7e2113d012bd  app/src/main/java/app/zmby/data/Settings.kt
 49d909586f8a8b389d99c0c137dba9796330aa8ad3fdef84909343be5279f259  app/src/main/java/app/zmby/emby/ClientIdentity.kt
-00ec780dc0271b6a7939e8f2f489fd89cc346164bbda4d2527a5ed9a6649d518  app/src/main/java/app/zmby/emby/EmbyClient.kt
+971da9f12e36a5dfbed10175a3ead9402392c3918c259ad3d1cd7db6cc0b6143  app/src/main/java/app/zmby/emby/EmbyClient.kt
 d4dd590006ada170d36adee03ff2d00a9a233b2d653b95d04308b77843e3f6c0  app/src/main/java/app/zmby/emby/EmbyModels.kt
 3e61286e199a9ecfbf3636f1713b3b63c88eb44eabd8fa6d0b8eca80ddb008a0  app/src/main/java/app/zmby/favorites/Favorites.kt
 c375af38db398c8dd68efbd48ebe4d94a20f6386017e0599d2c1f1272e233f13  app/src/main/java/app/zmby/favorites/Watchlist.kt
@@ -191,8 +191,8 @@ ec5a1c78b4e672c913d13b0ba8e49ab74e2bf2c91c390964a2ea330b42d98d08  app/src/main/j
 30f43fe8186cd3a518cce63be21ec6ea5b634dbfebbe13a4d0ad2e48d3c745e8  app/src/main/java/app/zmby/ui/screens/FavoritesGrid.kt
 c2e82c322006c1e0528f5f224ba1a035074254f853e71b7d85f7f059ae20be66  app/src/main/java/app/zmby/ui/screens/HomeExitConfirmation.kt
 f71cc3cd2cde7a41044c0382fd87a3d480f0e2f3d3373e7728898e5966b09cd6  app/src/main/java/app/zmby/ui/screens/HomeHero.kt
-494e6933f23257ca0bc3e48efda07414ef698f49335b0d69b60397ac58982e9d  app/src/main/java/app/zmby/ui/screens/HomeModel.kt
-1ce3111b201e5c122cb78a5a5ce17ba681c3f9ac72dbca01d98238c4dfc5d8a0  app/src/main/java/app/zmby/ui/screens/HomeScreen.kt
+3848e1262e884e4304af9aeb3e60df6f8a6ac60a5b1f60e77e267fdb7ba4b928  app/src/main/java/app/zmby/ui/screens/HomeModel.kt
+c145e5bd0799e1def60974bf3f752b532412508f36da3e10cc0e4844ce5b6808  app/src/main/java/app/zmby/ui/screens/HomeScreen.kt
 36133f1cb3136b98c8b12fc7bdc844333ba4695a303ddaa7c50e6c5721714bf3  app/src/main/java/app/zmby/ui/screens/ImportScreen.kt
 49dedf4311e2c00a48f0ef883a936b1f5eca51643d3c8185c0d29e992bf0fba8  app/src/main/java/app/zmby/ui/screens/LoginScreen.kt
 86730a99fafedabc72eeeed94d1fdfcfe78043a6089da330013898394c06dcef  app/src/main/java/app/zmby/ui/screens/MeScreen.kt
@@ -279,7 +279,7 @@ d80eb3fa5391efb0ed70f53f5bfbba95f970ab31700ce91e994625dcd10c89b2  app/src/test/j
 5a68e74882727a65d0de43d2c02e99730d791dbbd945f01111948d0724c35d05  app/src/test/java/app/zmby/data/ServerImportTest.kt
 333923d4f5eff89140178525247b2c826ce908527a2790596c0b2dd80149c802  app/src/test/java/app/zmby/data/SettingsTest.kt
 c28793b75e9fbd8ca5e4d6060b517f65b05751506a2742d34c2e3b7acd9d7df4  app/src/test/java/app/zmby/emby/ClientIdentityTest.kt
-55aa0ce31afc05749240c43057675370121c0104db2314130cde8624b7365e80  app/src/test/java/app/zmby/emby/EmbyClientTest.kt
+e190742ffd8997963bc33ad9a0656c88a39e96ddc681a9c67341980c1b3e98a2  app/src/test/java/app/zmby/emby/EmbyClientTest.kt
 2fe470c7f8a63e8e1d15d386470659408f74b5d00a2e66230e74f9c176d5c1be  app/src/test/java/app/zmby/emby/EmbyModelsTest.kt
 fc1d65fe72c1b7f41a96624bc8d295ed0fdf52d040a161a86c1c946b097e20d9  app/src/test/java/app/zmby/favorites/FavoriteLogicTest.kt
 03a432089a3b7447d659120412b2126089090b2121b6c1de1c3199f675e2576f  app/src/test/java/app/zmby/favorites/FavoritesPullTest.kt
@@ -326,7 +326,7 @@ f024a7ce777610aff7ad7dfdf10e155386b0954c09563fe9426255e953d69e0c  app/src/test/j
 bf296c25578d796f601eb1755f9fe86f77c2220ad4ba7c53755847c9a8cd77dc  app/src/test/java/app/zmby/stats/StatsAggregateTest.kt
 f0c2b2e66f6b376ea4229549f9c335cab28d982c862f69c5f4bb933f31e927bf  app/src/test/java/app/zmby/store/CastRulesTest.kt
 fe7fae7513bb08291f70fe4b7201e11a84eaea6027af29d34cd7cdf83163f626  app/src/test/java/app/zmby/store/EpisodeMappingsTest.kt
-e0b2513228a03c4c790bcb22f21518eb330ec6e4a834f1ce9a575d79fd22969c  app/src/test/java/app/zmby/store/HomeLocalFirstTest.kt
+ec486f9a4a3f2ad952b7e049daa71c6943b4046b9d993929976ea3bb0b869593  app/src/test/java/app/zmby/store/HomeLocalFirstTest.kt
 34b6362524218688f820e153871d5b42f5efd26870d318e5e8b456a6450d56f5  app/src/test/java/app/zmby/store/LocalStoreTest.kt
 cba80711c987815e24d00f090ce5639c0d2cc5d9496b3ec2404a2a37f84b9ede  app/src/test/java/app/zmby/store/SchemaTest.kt
 cd257449506e89637f35e1e03ef2bf53c20afa08ba9ffee37101ab698abe24c8  app/src/test/java/app/zmby/store/StoreKeysTest.kt

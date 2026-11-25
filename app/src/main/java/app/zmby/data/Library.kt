@@ -232,9 +232,9 @@ class Library(
      * The user's top-level libraries on [server]: kept in memory for ten minutes and in the store
      * for offline starts, so home rows and browsing do not ask for them every time.
      */
-    suspend fun views(server: String): List<BaseItemDto> {
+    suspend fun views(server: String, force: Boolean = false): List<BaseItemDto> {
         val now = System.currentTimeMillis()
-        viewsCache[server]?.takeIf { now - it.first < VIEWS_TTL_MS }?.let { return it.second }
+        viewsCache[server]?.takeIf { !force && now - it.first < VIEWS_TTL_MS }?.let { return it.second }
         return try {
             emby.views(session(server)).items.also { items ->
                 viewsCache[server] = now to items
@@ -247,17 +247,19 @@ class Library(
         }
     }
 
-    suspend fun libraries(server: String): List<LibraryView> {
+    suspend fun libraries(server: String, force: Boolean = false): List<LibraryView> {
         val homeOff = offSet("${KEY_HOME_OFF}_v2")
         val searchOff = offSet("${KEY_SEARCH_OFF}_v2")
-        return views(server)
+        return views(server, force)
             .filter { it.collectionType == null || it.collectionType in VIDEO_COLLECTIONS }
             .map { LibraryView(server, it.id, it.name.orEmpty(), it.collectionType, "$server|${it.id}" !in homeOff, "$server|${it.id}" !in searchOff) }
     }
 
+    private val homeOffFlow by lazy { kotlinx.coroutines.flow.MutableStateFlow(offSet("${KEY_HOME_OFF}_v2")) }
+    val hiddenHomeLibraries: StateFlow<Set<String>> get() = homeOffFlow
+
     /** Of [views] (a server's top-level folders), the video libraries whose home switch is on. */
-    fun homeLibraries(server: String, views: List<BaseItemDto>): List<BaseItemDto> {
-        val homeOff = offSet("${KEY_HOME_OFF}_v2")
+    fun homeLibraries(server: String, views: List<BaseItemDto>, homeOff: Set<String>): List<BaseItemDto> {
         return views.filter { (it.collectionType == null || it.collectionType in VIDEO_COLLECTIONS) && "$server|${it.id}" !in homeOff }
     }
 
@@ -287,6 +289,7 @@ class Library(
         val next = synchronized(switchSets) {
             offSet(key).toMutableSet().apply { if (add) add(id) else remove(id) }.toSet().also { switchSets[key] = it }
         }
+        if (key == "${KEY_HOME_OFF}_v2") homeOffFlow.value = next
         Disk.write { prefs.edit { putStringSet(key, next) } }
     }
 
@@ -306,11 +309,7 @@ class Library(
         } else {
             val slots = Semaphore(2)
             enabled.map { lib -> async {
-                slots.withPermit {
-                    try { emby.latest(s, lib.id, perLibrary) }
-                    catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { ZLog.w(TAG, "latest library ${lib.name} on ${registry.get(server)?.name}: ${e.message}"); emptyList() }
-                }
+                slots.withPermit { emby.latest(s, lib.id, perLibrary, lib.collectionType) }
             } }.flatMap { it.await() }
         }
         items
@@ -320,8 +319,8 @@ class Library(
     }
 
     /** 最新 of one library (a server's own home). */
-    suspend fun latestIn(server: String, libraryId: String, limit: Int = 24): List<ServerItem> =
-        emby.latest(session(server), libraryId, limit).distinctBy { it.id }.map { ServerItem(server, it) }.also(::note)
+    suspend fun latestIn(lib: LibraryView, limit: Int = 24): List<ServerItem> =
+        emby.latest(session(lib.server), lib.id, limit, lib.collectionType).distinctBy { it.id }.map { ServerItem(lib.server, it) }.also(::note)
 
     suspend fun nextUp(server: String, limit: Int = 24): List<ServerItem> =
         emby.nextUp(session(server), null, limit = limit).items.map { ServerItem(server, it) }.also(::note)

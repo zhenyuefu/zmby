@@ -113,6 +113,23 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, HomeRows.EMPTY)
 
     private var refreshing: Job? = null
+    private var serverRefresh: Job? = null
+    private var refreshingServer = ""
+
+    fun refreshServerRows(id: String, force: Boolean = false) {
+        if (!force && id == refreshingServer && serverRefresh?.isActive == true) return
+        serverRefresh?.cancel()
+        refreshingServer = id
+        serverRefresh = if (id.isEmpty()) null else viewModelScope.launch {
+            try {
+                app.home.refreshServer(id, force)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ZLog.w("Home", "library rows refresh failed", e)
+            }
+        }
+    }
 
     /** 在看 (ui-spec §2.18): the home row and the page; without 下一集 when the setting is off. */
     val watching: StateFlow<List<WatchCard>> = kotlinx.coroutines.flow.combine(rows, app.settings.watchingIncludesNextUp.flow) { r, next ->
@@ -213,10 +230,10 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
 
     private fun typeYear(item: BaseItemDto) = listOfNotNull(if (item.type == "Series") "剧集" else "电影", item.productionYear?.toString()).joinToString(" · ")
 
-    /** 最新添加 (全部 only), with 「n 个版本」 when several servers have the work. */
+    /** 最新添加 for the selected source, with 「n 个版本」 when several servers have the work. */
     val latestRow: StateFlow<List<PosterModel>> = kotlinx.coroutines.flow.combine(rows, serverHome, app.settings.showLatestRow.flow, app.cardFaces.version) { r, own, show, _ ->
-        if (own != null || !show) emptyList() else r.latest.map { ref ->
-            val count = r.latestCopies[ref.key] ?: 1
+        if (!show) emptyList() else (own?.recent?.take(24) ?: r.latest).map { ref ->
+            val count = if (own == null) r.latestCopies[ref.key] ?: 1 else 1
             val face = app.cardFaces.face(ref)
             PosterModel(ref.key, ref, face?.poster ?: app.library.primaryImage(ref), face?.title ?: titleOf(ref.item), typeYear(ref.item),
                 if (count > 1) "$count 个版本" else null, "latest:${ref.key}")
@@ -308,6 +325,7 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
     /** Entering home and back from the player; a refresh still running is not started again. */
     /** [fromPlayer]: back from the external player, so 在看 asks the servers whatever its age (RN ①). */
     fun refresh(force: Boolean = false, fromPlayer: Boolean = false) {
+        if (force) refreshServerRows(source.value, force = true)
         if (refreshing?.isActive == true) {
             ZLog.d("Home", "refresh still running; not started again")
             return
@@ -315,8 +333,6 @@ class HomeViewModel(private val app: ZmbyApp) : ViewModel() {
         refreshing = viewModelScope.launch {
             val s = servers.first()
             ZLog.d("Home", "refresh: watch ${s.watch.size}, latest ${s.latest.size} servers${if (force) ", forced" else ""}")
-            val own = source.value
-            if (own.isNotEmpty()) launch { runCatching { app.home.refreshServer(own, force) } }
             launch {
                 runCatching { app.home.refreshHero(heroServers.first(), force) }
                     .onFailure { if (it !is CancellationException) ZLog.w("Home", "hero refresh failed", it) }

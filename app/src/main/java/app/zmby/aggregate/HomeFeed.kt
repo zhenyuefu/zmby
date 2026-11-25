@@ -96,10 +96,9 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
         val latestDue = servers.latest.filter { force || Freshness.due(Freshness.Kind.Latest, store.list(latestKey(it))?.fetchedAt, now) }
         val fresh = ConcurrentHashMap<String, List<BaseItemDto>>()
         launch { watching.refresh(servers.watch, watchingForce, now) }
-        launch {
-            collect(latestDue, "latest") { s -> library.latest(s) }.forEach { (s, items) ->
-                store.putList(latestKey(s), s, items)
-                fresh[s] = items
+        latestDue.forEach { server ->
+            launch {
+                refreshLatest(server, latestKey(server)) { library.latest(server) }?.let { fresh[server] = it }
             }
         }
         fresh
@@ -143,19 +142,23 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
 
     /** [server]'s own home from the store: libraries (home switch on) and their newest items. */
     fun serverHome(server: String): Flow<ServerHome> =
-        store.listsFlow(listOf(viewsKey(server))).map { lists -> library.homeLibraries(server, lists[viewsKey(server)]?.items.orEmpty().map { it.item }) }
+        kotlinx.coroutines.flow.combine(store.listsFlow(listOf(viewsKey(server))), library.hiddenHomeLibraries) { lists, hidden ->
+            val libraries = library.homeLibraries(server, lists[viewsKey(server)]?.items.orEmpty().map { it.item }, hidden)
+            libraries to hidden.none { it.startsWith("$server|") }
+        }
             .distinctUntilChanged()
-            .flatMapLatest { libs ->
-                store.listsFlow(libs.map { latestKey(server, it.id) }).map { lists ->
+            .flatMapLatest { (libs, allVisible) ->
+                val keys = libs.map { latestKey(server, it.id) }
+                store.listsFlow(if (allVisible) keys + latestKey(server) else keys).map { lists ->
                     val latest = libs.associate { it.id to lists[latestKey(server, it.id)]?.items.orEmpty() }
-                    val recent = latest.values.flatten().distinctBy { it.item.id }.sortedByDescending { it.item.dateCreated.orEmpty() }
+                    val recent = (lists[latestKey(server)]?.items.orEmpty() + latest.values.flatten()).distinctBy { it.item.id }.sortedByDescending { it.item.dateCreated.orEmpty() }
                     ServerHome(server, libs.map { ServerItem(server, it) }, latest, recent, lists.values.any { it.fetchedAt > 0 })
                 }
             }.flowOn(Dispatchers.Default)
 
     /** One server's home: the newest of each library (one Latest request per library), when older than ten minutes. */
     suspend fun refreshServer(server: String, force: Boolean = false, now: Long = System.currentTimeMillis()) = coroutineScope {
-        val libs = try { library.libraries(server).filter { it.onHome } } catch (e: CancellationException) { throw e } catch (e: Exception) {
+        val libs = try { library.libraries(server, force).filter { it.onHome } } catch (e: CancellationException) { throw e } catch (e: Exception) {
             ZLog.w(TAG, "libraries of ${library.status(server)?.name}: ${e.message}"); return@coroutineScope
         }
         val due = libs.filter { force || Freshness.due(Freshness.Kind.Latest, store.list(latestKey(server, it.id))?.fetchedAt, now) }
@@ -164,8 +167,7 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
             launch {
                 slots.acquire()
                 try {
-                    val outcome = fanOut.all(listOf(server), FanOut.LIST_TIMEOUT_MS) { library.latestIn(server, lib.id) }.single()
-                    if (outcome is Outcome.Ok) store.putList(latestKey(server, lib.id), server, outcome.value.map { it.item })
+                    refreshLatest(server, latestKey(server, lib.id)) { library.latestIn(lib) }
                 } finally {
                     slots.release()
                 }
@@ -173,16 +175,15 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
         }
     }
 
-    private suspend fun collect(servers: List<String>, what: String, call: suspend (String) -> List<ServerItem>): List<Pair<String, List<BaseItemDto>>> {
-        val out = mutableListOf<Pair<String, List<BaseItemDto>>>()
-        fanOut.run(servers, FanOut.LIST_TIMEOUT_MS) { call(it) }.collect { o ->
-            when (o) {
-                is Outcome.Ok -> synchronized(out) { out += o.server to o.value.map { it.item } }
-                is Outcome.Failed -> ZLog.w(TAG, "$what without ${library.status(o.server)?.name ?: o.server}: ${if (o.timedOut) "timed out" else o.error.message}")
-                is Outcome.Skipped -> ZLog.d(TAG, "$what skips ${library.status(o.server)?.name} (cooling down)")
+    private suspend fun refreshLatest(server: String, key: String, load: suspend () -> List<ServerItem>): List<BaseItemDto>? {
+        return when (val result = fanOut.homeSection(server) { load() }) {
+            is Outcome.Ok -> result.value.map { it.item }.also { store.putList(key, server, it) }
+            is Outcome.Failed -> {
+                ZLog.w(TAG, "latest of ${library.status(server)?.name}: ${result.error.message}")
+                null
             }
+            is Outcome.Skipped -> null
         }
-        return out
     }
 
     companion object {

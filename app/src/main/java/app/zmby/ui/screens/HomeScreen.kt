@@ -366,6 +366,10 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, trailer: T
     // Shown from the store at once. Entering home refreshes what is due; back from the player (tick > 0)
     // 在看 asks the servers whatever its age (performance plan RN ①).
     LaunchedEffect(tick) { vm.refresh(fromPlayer = tick > 0) }
+    val selectedSource by vm.source.collectAsStateWithLifecycle()
+    LaunchedEffect(selectedSource, tick) {
+        vm.refreshServerRows(selectedSource)
+    }
     // 主推区 (ui-spec §2.1): the chart or the servers' picks, worked out in the ViewModel (RH ④).
     val featured by vm.featured.collectAsStateWithLifecycle()
     val chart by vm.chart.collectAsStateWithLifecycle()
@@ -415,6 +419,11 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, trailer: T
                 }
             } }
             if (layout.libraries) item(key = "libraries", contentType = "row") { Box(Modifier.heroQuiet(carousel)) { HomeLibrariesRow(vm, onLibrary) } }
+            if (layout.latest) item(key = "latest", contentType = "row") { Box(Modifier.heroQuiet(carousel)) {
+                TraceRecomposition("Home.row.latest")
+                val cards by vm.latestRow.collectAsStateWithLifecycle()
+                PosterRow(if (selectedSource.isEmpty()) "最新添加" else "最近更新", cards, bottom = if (layout.libraryRows.isEmpty()) 80.dp else 48.dp) { card -> card.ref?.let { nav.open(it) } }
+            } }
             layout.libraryRows.forEach { rowKey ->
                 item(key = rowKey, contentType = "row") { Box(Modifier.heroQuiet(carousel)) {
                     TraceRecomposition("Home.row.libLatest")
@@ -423,11 +432,6 @@ private fun HomeFeed(nav: Nav, shownAt: Long, carousel: HeroCarousel, trailer: T
                     if (row != null) PosterRow(row.title, row.cards, bottom = 48.dp) { card -> card.ref?.let { nav.open(it) } }
                 } }
             }
-            if (layout.latest) item(key = "latest", contentType = "row") { Box(Modifier.heroQuiet(carousel)) {
-                TraceRecomposition("Home.row.latest")
-                val cards by vm.latestRow.collectAsStateWithLifecycle()
-                PosterRow("最新添加", cards, bottom = 80.dp) { card -> card.ref?.let { nav.open(it) } }
-            } }
         }
     }
 }

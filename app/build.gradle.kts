@@ -27,8 +27,8 @@ android {
         // Zidoo Z9X 8K runs Android 11 (API 30).
         minSdk = 28
         targetSdk = 30
-        versionCode = 19
-        versionName = "1.0.5"
+        versionCode = 20
+        versionName = "1.0.6"
     }
 
     signingConfigs {

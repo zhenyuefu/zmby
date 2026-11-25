@@ -157,6 +157,31 @@ class EmbyClientTest {
     }
 
     @Test
+    fun movieAndTvLibrariesAskOnceWithoutMixedTypes() = runTest {
+        for (collection in listOf("movies", "tvshows")) {
+            server.enqueue(MockResponse().setBody("""[{"Id":"audio","Type":"Audio"},{"Id":"video","Type":"Episode"}]"""))
+            assertEquals(listOf("video"), client.latest(session, "lib", 24, collection).map { it.id })
+            val url = server.takeRequest().requestUrl!!
+            assertEquals("lib", url.queryParameter("ParentId"))
+            assertEquals(null, url.queryParameter("IncludeItemTypes"))
+        }
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun latest500FallsBackWithinTheSameLibraryAndLimit() = runTest {
+        server.enqueue(MockResponse().setResponseCode(500))
+        server.enqueue(MockResponse().setBody("""[{"Id":"audio","Type":"Audio"},{"Id":"new","Type":"Series"},{"Id":"old","Type":"Movie"}]"""))
+        assertEquals(listOf("new"), client.latest(session, "lib", 1).map { it.id })
+        server.takeRequest()
+        val fallback = server.takeRequest().requestUrl!!
+        assertEquals("/emby/Users/u1/Items/Latest", fallback.encodedPath)
+        assertEquals("lib", fallback.queryParameter("ParentId"))
+        assertEquals("1", fallback.queryParameter("Limit"))
+        assertEquals(null, fallback.queryParameter("IncludeItemTypes"))
+    }
+
+    @Test
     fun latestEnforcesTheRequestedLimitWhenAServerIgnoresIt() = runTest {
         server.enqueue(MockResponse().setBody((1..100).joinToString(prefix = "[", postfix = "]") { """{"Id":"$it","Type":"Movie"}""" }))
         assertEquals(24, client.latest(session, null, 24).size)

@@ -230,7 +230,12 @@ class FanOut(
         shared.task.cancel()
     }
 
-    private suspend fun <T> execute(server: String, timeoutMs: Long, call: suspend (String) -> T): Outcome<T> = permits.withPermit {
+    /** Optional home sections share the network budget and respect cool-down, but never change server health. */
+    suspend fun <T> homeSection(server: String, call: suspend (String) -> T): Outcome<T> =
+        execute(server, LIST_TIMEOUT_MS, call, reportHealth = false)
+
+    private suspend fun <T> execute(server: String, timeoutMs: Long, call: suspend (String) -> T,
+        reportHealth: Boolean = true): Outcome<T> = permits.withPermit {
         if (health.isCooling(server)) return@withPermit Outcome.Skipped(server)
         val started = clock()
         val outcome = try {
@@ -241,7 +246,7 @@ class FanOut(
                 catch (e: CancellationException) { throw e }
                 catch (e: IOException) {
                     // Authentication, rate limiting and other permanent HTTP errors need user action.
-                    if (!isTransient(e)) throw e
+                    if (!isTransient(e) || (!reportHealth && e is EmbyException)) throw e
                     delay(RETRY_DELAY_MS)
                     call(server)
                 }
@@ -255,7 +260,7 @@ class FanOut(
         }
         currentCoroutineContext().ensureActive()
         // A shared operation updates health once, regardless of its number of consumers.
-        when (outcome) {
+        if (reportHealth) when (outcome) {
             is Outcome.Ok -> health.onSuccess(server)
             is Outcome.Failed -> if (outcome.error !is app.zmby.data.ResourcesLoading) health.onFailure(server, outcome.error, outcome.timedOut)
             is Outcome.Skipped -> Unit

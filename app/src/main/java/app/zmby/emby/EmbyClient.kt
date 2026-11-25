@@ -131,13 +131,33 @@ class EmbyClient(
     /** The user's top-level libraries. */
     suspend fun views(s: ServerSession): ItemsResult = get(s.baseUrl, s, "Users/${s.userId}/Views")
 
-    suspend fun latest(s: ServerSession, parentId: String?, limit: Int = 24): List<BaseItemDto> =
-        get<List<BaseItemDto>>(s.baseUrl, s, "Users/${s.userId}/Items/Latest") {
-            if (parentId != null) addQueryParameter("ParentId", parentId)
-            addQueryParameter("IncludeItemTypes", "Movie,Series,Episode,Video")
-            addQueryParameter("Limit", limit.toString())
-            addQueryParameter("Fields", LIST_FIELDS)
-        }.take(limit)
+    suspend fun latest(s: ServerSession, parentId: String?, limit: Int = 24, collectionType: String? = null): List<BaseItemDto> {
+        val types = setOf("Movie", "Series", "Episode", "Video")
+        suspend fun latestPage(filterTypes: Boolean): List<BaseItemDto> =
+            get<List<BaseItemDto>>(s.baseUrl, s, "Users/${s.userId}/Items/Latest") {
+                if (parentId != null) addQueryParameter("ParentId", parentId)
+                if (filterTypes) addQueryParameter("IncludeItemTypes", types.joinToString(","))
+                addQueryParameter("Limit", limit.toString())
+                addQueryParameter("Fields", LIST_FIELDS)
+            }
+        // Movie and TV folders already constrain the content. Some servers reject a mixed type filter here.
+        val filterTypes = parentId == null || (collectionType != "movies" && collectionType != "tvshows")
+        fun videos(page: List<BaseItemDto>, filteredByServer: Boolean) =
+            (if (filteredByServer) page else page.filter { it.type in types }).take(limit)
+        return try {
+            videos(latestPage(filterTypes), filterTypes)
+        } catch (e: EmbyException) {
+            if (e.code != 500) throw e
+            // Some servers reject mixed types within a library and reject Latest without a parent.
+            val items = if (parentId != null) {
+                videos(latestPage(!filterTypes), !filterTypes)
+            } else {
+                browse(s, types.joinToString(","), limit = limit, query = mapOf("SortBy" to "DateCreated")).items
+            }.take(limit)
+            ZLog.i(TAG, "${s.serverName}: Latest fallback (${if (parentId == null) "server" else "library"}) returned ${items.size} items")
+            items
+        }
+    }
 
     /** Movies, series or favorites, newest first; across all libraries unless [parentId] is given. */
     suspend fun browse(
