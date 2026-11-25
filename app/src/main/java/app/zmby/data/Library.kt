@@ -305,11 +305,11 @@ class Library(
         val enabled = libs.filter { it.onHome }
         val items = if (enabled.isEmpty()) emptyList() else if (enabled.size == libs.size) {
             // One bounded request for the whole server, instead of a burst for every library.
-            emby.latest(s, null, perLibrary)
+            emby.recentWorks(s, null, perLibrary)
         } else {
             val slots = Semaphore(2)
             enabled.map { lib -> async {
-                slots.withPermit { emby.latest(s, lib.id, perLibrary, lib.collectionType) }
+                slots.withPermit { emby.recentWorks(s, lib.id, perLibrary) }
             } }.flatMap { it.await() }
         }
         items

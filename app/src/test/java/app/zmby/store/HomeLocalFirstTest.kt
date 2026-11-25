@@ -60,7 +60,8 @@ class HomeLocalFirstTest {
                     path.endsWith("/Views") -> "views"
                     path.endsWith("/Items/Resume") -> "resume"
                     path.endsWith("/Items/Latest") -> "latest"
-                    path.endsWith("/Items") -> "items"
+                    path.endsWith("/Items") && request.requestUrl!!.queryParameter("SortBy") == "DateCreated,SortName,CommunityRating" -> "recent"
+                    path.endsWith("/Items") -> "otherItems"
                     path.endsWith("/Shows/NextUp") -> "nextup"
                     else -> path
                 }
@@ -70,13 +71,13 @@ class HomeLocalFirstTest {
                     return if (browseStatus != 200) MockResponse().setResponseCode(browseStatus)
                         else MockResponse().setBody("""[{"Id":"fallback","Type":"Movie"}]""")
                 }
-                if (kind == "items" && browseStatus != 200) return MockResponse().setResponseCode(browseStatus)
+                if (kind == "recent" && browseStatus != 200) return MockResponse().setResponseCode(browseStatus)
                 val body = when (kind) {
-                    "items" -> """{"Items":[{"Id":"fallback","Type":"Movie","Name":"新片"}]}"""
+                    "recent" -> """{"Items":[{"Id":"m1","Type":"Movie","Name":"新片"}]}"""
                     "views" -> """{"Items":[{"Id":"lib","Name":"电影","CollectionType":"movies"}],"TotalRecordCount":1}"""
                     "resume" -> """{"Items":[{"Id":"r1","Name":"漫长的季节","Type":"Movie","ProviderIds":{"Tmdb":"5"},"UserData":{"PlaybackPositionTicks":100,"LastPlayedDate":"2026-10-24T10:00:00Z"}}],"TotalRecordCount":1}"""
                     "latest" -> """[{"Id":"m1","Name":"沙丘2","Type":"Movie","ProviderIds":{"Tmdb":"693134"},"DateCreated":"2026-10-20T00:00:00Z"}]"""
-                    "nextup" -> """{"Items":[],"TotalRecordCount":0}"""
+                    "nextup", "otherItems" -> """{"Items":[],"TotalRecordCount":0}"""
                     else -> return MockResponse().setResponseCode(404)
                 }
                 return MockResponse().setBody(body).setHeader("Content-Type", "application/json")
@@ -125,10 +126,10 @@ class HomeLocalFirstTest {
         home.refresh(servers, now = now)
         assertEquals(2, count("resume"))
         assertEquals(2, count("nextup"))
-        assertEquals("cached for ten minutes", 1, count("latest"))
+        assertEquals("cached for ten minutes", 1, count("recent"))
         now += 6 * 60_000
         home.refresh(servers, now = now)
-        assertEquals(2, count("latest"))
+        assertEquals(2, count("recent"))
         // The libraries are asked once (memory for ten minutes, the store for offline starts).
         assertEquals(1, count("views"))
     }
@@ -151,7 +152,8 @@ class HomeLocalFirstTest {
         browseStatus = 200
         home.refresh(onlyLatest, force = true, now = now)
         home.refreshServer("s1", force = true, now = now)
-        assertEquals("fallback", home.rows(onlyLatest).first().latest.single().item.id)
+        assertEquals("m1", home.rows(onlyLatest).first().latest.single().item.id)
+        assertEquals(listOf("m1"), home.serverHome("s1").first().recent.map { it.item.id })
         assertEquals("fallback", home.serverHome("s1").first().latest.getValue("lib").single().item.id)
     }
 

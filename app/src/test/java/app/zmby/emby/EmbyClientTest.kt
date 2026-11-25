@@ -146,14 +146,20 @@ class EmbyClientTest {
 
     @Test
     fun latestAcrossLibrariesIsOneBoundedVideoRequest() = runTest {
-        server.enqueue(MockResponse().setBody("[]"))
-        client.latest(session, null, 24)
-        val url = server.takeRequest().requestUrl!!
-        assertEquals("/emby/Users/u1/Items/Latest", url.encodedPath)
-        assertEquals(null, url.queryParameter("ParentId"))
-        assertEquals("24", url.queryParameter("Limit"))
-        assertEquals("Movie,Series,Episode,Video", url.queryParameter("IncludeItemTypes"))
-        assertEquals(1, server.requestCount)
+        for (parent in listOf(null, "lib")) {
+            server.enqueue(MockResponse().setBody("""{"Items":[{"Id":"episode","Type":"Episode"},{"Id":"work","Type":"Series"}]}"""))
+            assertEquals(listOf("work"), client.recentWorks(session, parent, 24).map { it.id })
+            val url = server.takeRequest().requestUrl!!
+            assertEquals("/emby/Users/u1/Items", url.encodedPath)
+            assertEquals(parent, url.queryParameter("ParentId"))
+            assertEquals("24", url.queryParameter("Limit"))
+            assertEquals("0", url.queryParameter("StartIndex"))
+            assertEquals("true", url.queryParameter("Recursive"))
+            assertEquals("Series,Movie,Video,MusicVideo", url.queryParameter("IncludeItemTypes"))
+            assertEquals("DateCreated,SortName,CommunityRating", url.queryParameter("SortBy"))
+            assertEquals("Descending", url.queryParameter("SortOrder"))
+        }
+        assertEquals(2, server.requestCount)
     }
 
     @Test
@@ -183,7 +189,7 @@ class EmbyClientTest {
 
     @Test
     fun latestEnforcesTheRequestedLimitWhenAServerIgnoresIt() = runTest {
-        server.enqueue(MockResponse().setBody((1..100).joinToString(prefix = "[", postfix = "]") { """{"Id":"$it","Type":"Movie"}""" }))
-        assertEquals(24, client.latest(session, null, 24).size)
+        server.enqueue(MockResponse().setBody((1..100).joinToString(prefix = """{"Items":[""", postfix = "]}") { """{"Id":"$it","Type":"Movie"}""" }))
+        assertEquals(24, client.recentWorks(session, null, 24).size)
     }
 }

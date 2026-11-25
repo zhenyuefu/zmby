@@ -73,7 +73,7 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
     fun rows(servers: HomeServers): Flow<HomeRows> {
         val keys = servers.latest.map(::latestKey)
         val latest = store.listsFlow(keys).map { lists ->
-            val hits = servers.latest.flatMap { s -> lists[latestKey(s)]?.items.orEmpty().mapIndexed { i, r -> Hit(r, servers.order[s] ?: Int.MAX_VALUE, i) } }
+            val hits = servers.latest.flatMap { s -> lists[latestKey(s)]?.items.orEmpty().filterNot { it.item.type == "Episode" }.mapIndexed { i, r -> Hit(r, servers.order[s] ?: Int.MAX_VALUE, i) } }
             HomeMerge.latest(hits) to lists.values.any { it.fetchedAt > 0 }
         }
         val watchKeys = servers.watch.map(WatchingFeed::resumeKey)
@@ -151,7 +151,9 @@ class HomeFeed(private val library: Library, private val fanOut: FanOut, private
                 val keys = libs.map { latestKey(server, it.id) }
                 store.listsFlow(if (allVisible) keys + latestKey(server) else keys).map { lists ->
                     val latest = libs.associate { it.id to lists[latestKey(server, it.id)]?.items.orEmpty() }
-                    val recent = (lists[latestKey(server)]?.items.orEmpty() + latest.values.flatten()).distinctBy { it.item.id }.sortedByDescending { it.item.dateCreated.orEmpty() }
+                    val recent = (lists[latestKey(server)]?.takeIf { it.fetchedAt > 0 }?.items
+                        ?: latest.values.flatten().distinctBy { it.item.id }.sortedByDescending { it.item.dateCreated.orEmpty() })
+                        .filterNot { it.item.type == "Episode" }
                     ServerHome(server, libs.map { ServerItem(server, it) }, latest, recent, lists.values.any { it.fetchedAt > 0 })
                 }
             }.flowOn(Dispatchers.Default)
