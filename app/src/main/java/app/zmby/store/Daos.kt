@@ -232,6 +232,23 @@ interface SourceDao {
         deleteMarkers(key, source)
         if (rows.isNotEmpty()) upsertMarkers(rows)
     }
+
+    @Query("SELECT * FROM segment_preference WHERE work_key IN (:keys)")
+    suspend fun preferences(keys: List<String>): List<SegmentPreference>
+    @Upsert suspend fun upsertPreferences(rows: List<SegmentPreference>)
+    @Query("DELETE FROM segment_preference WHERE work_key IN (:keys)")
+    suspend fun deletePreferences(keys: List<String>)
+
+    @Transaction suspend fun readEditor(keys: List<String>, source: String) =
+        markers(keys, source) to preferences(keys)
+
+    @Transaction suspend fun saveEditor(workKey: String, target: String, source: String, marks: List<SegmentMarker>, choices: List<SegmentPreference>) {
+        replaceMarkers(target, source, marks)
+        if (target != workKey) deleteMarkers(workKey, source)
+        deletePreferences(listOf(target, workKey))
+        upsertPreferences(choices)
+    }
+
 }
 
 @Dao

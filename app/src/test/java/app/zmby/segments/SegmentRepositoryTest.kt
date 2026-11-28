@@ -114,6 +114,38 @@ class SegmentRepositoryTest {
         assertEquals(2, tidb.calls)
     }
 
+    @Test fun `saved sources mix full ranges by kind and fall back only for a missing kind`() = runBlocking {
+        val recap = Segment(SegmentKind.Recap, 9_000, 39_000)
+        val intro = Segment(SegmentKind.Intro, 65_000, 155_000)
+        idb.answer = ProviderAnswer.Found(ProviderSegments(listOf(recap, intro), 2_700_000))
+        val chapter = ep.copy(chapters = listOf(ChapterInfo(null, msToTicks(2_450_000), "CreditsStart")))
+        val marks = ManualMarks(season = true)
+            .withSource(SegmentKind.Intro, SegmentProvider.IntroDB)
+            .withSource(SegmentKind.Recap, SegmentProvider.IntroDB)
+            .withSource(SegmentKind.Credits, SegmentProvider.TheIntroDB)
+        repo.saveManual(key, marks)
+        val sibling = "series:tmdb:1:s01:e03"
+        assertEquals(marks, repo.manual(sibling).season)
+        val plan = repo.plan(chapter, series, key, 2_700_000) { emptyList() }
+        assertEquals(SegmentProvider.IntroDB to intro, plan[SegmentKind.Intro])
+        assertEquals(SegmentProvider.IntroDB to recap, plan[SegmentKind.Recap])
+        assertEquals(SegmentProvider.TheIntroDB, plan[SegmentKind.Credits]?.first)
+        val longer = repo.plan(chapter, series, key, 2_800_000) { emptyList() }
+        assertEquals(SegmentProvider.TheIntroDB, longer[SegmentKind.Intro]?.first)
+        assertEquals(null, longer[SegmentKind.Recap])
+        repo.saveManual(key, ManualMarks(introEndMs = 75_000))
+        val own = repo.plan(chapter, series, key, 2_700_000) { emptyList() }
+        assertEquals(SegmentProvider.Local, own[SegmentKind.Intro]?.first)
+        assertEquals(SegmentProvider.IntroDB to recap, own[SegmentKind.Recap])
+        order = order - SegmentProvider.IntroDB
+        val disabled = repo.plan(chapter, series, key, 2_700_000) { emptyList() }
+        assertEquals(null, disabled[SegmentKind.Recap])
+        assertEquals(plan[SegmentKind.Credits], disabled[SegmentKind.Credits])
+        repo.saveManual(key, ManualMarks(season = true))
+        assertEquals(SavedMarks(), repo.manual(key))
+        assertEquals(SegmentProvider.Emby, repo.plan(chapter, series, key, 2_700_000) { emptyList() }[SegmentKind.Credits]?.first)
+    }
+
     @Test fun `the last stop is kept for the marks editor`() = runBlocking {
         repo.recordStop(key, 1_234_000)
         assertEquals(1_234_000L, repo.lastStop(key))

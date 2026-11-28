@@ -10,7 +10,7 @@ import kotlin.math.abs
 /*
  * 片头片尾跳过 (P4; local-data spec, 片段标记提供方): segment markers from an ordered list of
  * providers. Each kind of segment is taken from the first provider in 设置 › 数据来源 › 片段标记来源
- * that has it. Pure rules here; fetching is in SegmentClients, caching in SegmentRepository.
+ * that has it unless that kind has an available preferred provider. Pure rules here; fetching is in SegmentClients, caching in SegmentRepository.
  */
 
 /** The four kinds of segment the providers know; [key] is what `segment_marker.kind` stores. */
@@ -115,13 +115,14 @@ object SegmentRules {
     }
 
     /**
-     * Polyfin's merge: for each kind, the first provider in [order] that has one gives it; the others
-     * fill the gaps. Within one provider the first segment of a kind is used.
+     * Use the preferred source of each kind when enabled and available for this cut. Otherwise
+     * take the first enabled source with a valid segment, in the configured order.
      */
-    fun merge(order: List<SegmentProvider>, answers: Map<SegmentProvider, List<Segment>>): Map<SegmentKind, Pair<SegmentProvider, Segment>> {
+    fun merge(order: List<SegmentProvider>, answers: Map<SegmentProvider, List<Segment>>, preferred: Map<SegmentKind, SegmentProvider> = emptyMap()): Map<SegmentKind, Pair<SegmentProvider, Segment>> {
         val out = linkedMapOf<SegmentKind, Pair<SegmentProvider, Segment>>()
         for (kind in SegmentKind.entries) {
-            for (p in order) {
+            val first = preferred[kind]?.takeIf { it in order }
+            for (p in listOfNotNull(first) + order) {
                 val s = answers[p]?.firstOrNull { it.kind == kind } ?: continue
                 out[kind] = p to s
                 break
@@ -182,14 +183,6 @@ object SegmentRules {
         }
         return emptyList()
     }
-
-    /**
-     * 本地手动标记 (local-data spec): for each kind the episode's own mark ([workKey]), else its
-     * season's, so a season's credits still apply to an episode that only has its own intro.
-     */
-    fun localMarks(rows: List<SegmentMarker>, workKey: String): List<SegmentMarker> =
-        rows.filter { SegmentKind.of(it.kind) != null }.groupBy { it.kind }.values
-            .map { same -> same.firstOrNull { it.workKey == workKey } ?: same.first() }
 
     // ---- segment_marker rows: one per (work, provider, kind); "none" says the provider had nothing.
 
@@ -351,8 +344,13 @@ object SegmentMarks {
      * mark (saving does not erase it); back to the episode a kind equal to the season's inherits it again.
      */
     fun rescope(draft: ManualMarks, toSeason: Boolean, season: ManualMarks): ManualMarks =
-        if (toSeason) ManualMarks(draft.introEndMs ?: season.introEndMs, draft.creditsStartMs ?: season.creditsStartMs, season = true)
-        else ManualMarks(draft.introEndMs.takeIf { it != season.introEndMs }, draft.creditsStartMs.takeIf { it != season.creditsStartMs }, season = false)
+        if (toSeason) draft.inheriting(season).copy(season = true)
+        else draft.copy(
+            introEndMs = draft.introEndMs.takeIf { it != season.introEndMs },
+            creditsStartMs = draft.creditsStartMs.takeIf { it != season.creditsStartMs },
+            season = false,
+            sources = draft.sources.filter { (kind, source) -> source != season.sources[kind] },
+        )
 
     /** The first press on an unset time shows [default]; later presses move it by [deltaMs] within the video. */
     fun adjust(value: Long?, default: Long, deltaMs: Long, runtimeMs: Long?): Long {

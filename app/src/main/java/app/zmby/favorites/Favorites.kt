@@ -75,17 +75,27 @@ sealed interface WriteResult {
 object FavoriteLogic {
     const val MAX_ATTEMPTS = 10
 
-    fun find(state: FavoritesState, key: String) = state.favorites.firstOrNull { it.workKey == key }
+    // Older clients could leave a tombstone and a visible favourite for the same server item.
+    private val instanceOwnerOrder = compareBy<Favorite> { it.active }.thenBy { it.updatedAt }
+
+    fun find(favorites: List<Favorite>, ref: ServerItem): Favorite? {
+        val key = Keys.work(ref.server, ref.item)
+        val exact = favorites.filter { f ->
+            f.instances.any { it.server == ref.server && (it.itemId == ref.item.id || it.itemId == ref.item.seriesId) }
+        }
+        return exact.maxWithOrNull(instanceOwnerOrder) ?: favorites.firstOrNull { it.workKey == key }
+    }
 
     /**
      * Favourite or un-favourite the work behind [lead] (local first). Writes are queued for every
      * known instance on a server whose policy is not [FavoriteSync.Off].
      */
     fun toggle(state: FavoritesState, lead: ServerItem, instances: List<ServerItem>, now: Long, policy: (String) -> FavoriteSync): FavoritesState {
-        val key = Keys.work(lead.server, lead.item)
-        val old = find(state, key)
+        val old = find(state.favorites, lead)
+        val key = old?.workKey ?: Keys.work(lead.server, lead.item)
         val adding = old?.active != true
-        val known = (old?.instances.orEmpty().map { it.server to it.itemId } + instances.map { it.server to it.item.id }).distinct()
+        val known = (old?.instances.orEmpty().map { it.server to it.itemId } +
+            (listOf(lead) + instances).map { it.server to it.item.id }).distinct()
         val fav = Favorite(
             workKey = key,
             title = visibleText(lead.item.name) ?: visibleText(old?.title) ?: titleOf(lead.item),
@@ -112,28 +122,55 @@ object FavoriteLogic {
      */
     fun pull(state: FavoritesState, server: String, items: List<BaseItemDto>, now: Long, policy: (String) -> FavoriteSync): FavoritesState {
         val lastPull = state.lastPull[server] ?: 0L
-        var favorites = state.favorites
+        val favorites = state.favorites.associateByTo(linkedMapOf()) { it.workKey }
         var queue = state.queue
-        val seen = HashSet<String>()
-        for (item in items.filter { it.type == "Movie" || it.type == "Series" }) {
+        val workByItem = mutableMapOf<String, String>()
+        for (f in state.favorites) {
+            for (i in f.instances) {
+                if (i.server != server) continue
+                val owner = workByItem[i.itemId]?.let(favorites::get)
+                if (owner == null || instanceOwnerOrder.compare(f, owner) > 0) workByItem[i.itemId] = f.workKey
+            }
+        }
+        val snapshot = items.filter { it.type == "Movie" || it.type == "Series" }
+        val presentIds = snapshot.mapTo(hashSetOf()) { it.id }
+        // Resolve known instances first so a newly identified work can also collect new versions
+        // from this page set, regardless of the order in which Emby returned them.
+        val (known, incoming) = snapshot.partition { it.id in workByItem }
+        for (item in known + incoming) {
             val key = Keys.work(server, item)
-            seen += key
-            val old = favorites.firstOrNull { it.workKey == key }
+            val old = workByItem[item.id]?.let(favorites::get) ?: favorites[key]
             val instance = FavoriteInstance(server, item.id, synced = true)
             val updated = when {
                 old == null -> Favorite(key, item.name.orEmpty(), item.productionYear, item.type!!, now, now, null, listOf(instance), item.imageTags["Primary"])
-                old.active -> old.copy(instances = old.instances.filterNot { it.server == server && it.itemId == item.id } + instance)
-                old.removedAt!! > lastPull -> {
+                old.removedAt != null && old.removedAt > lastPull -> {
                     queue = queue.filterNot { it.server == server && it.itemId == item.id } + PendingWrite(server, item.id, false)
                     old
                 }
-                else -> old.copy(removedAt = null, updatedAt = now, instances = old.instances.filterNot { it.server == server && it.itemId == item.id } + instance)
+                else -> {
+                    val instances = old.instances.toMutableList()
+                    val index = instances.indexOfFirst { it.server == server && it.itemId == item.id }
+                    if (index < 0) instances.add(instance) else instances[index] = instance
+                    old.copy(instances = instances, removedAt = null, updatedAt = if (old.active) old.updatedAt else now)
+                }
             }
-            favorites = favorites.filterNot { it.workKey == key } + updated
+            // Adopt a newly supplied TMDB key for future cross-server matches. If another
+            // record already owns it, keep the exact server instance with its existing work.
+            val tmdbPrefix = "${item.type!!.lowercase()}:tmdb:"
+            if (old != null && key !in favorites && key.startsWith(tmdbPrefix) && !old.workKey.startsWith(tmdbPrefix)) {
+                favorites.remove(old.workKey)
+                for (i in updated.instances) {
+                    if (i.server == server && workByItem[i.itemId] == old.workKey) workByItem[i.itemId] = key
+                }
+                favorites[key] = updated.copy(workKey = key)
+            } else {
+                favorites[updated.workKey] = updated
+            }
         }
-        if (lastPull > 0) {
-            favorites = favorites.map { f ->
-                val gone = f.active && f.updatedAt <= lastPull && f.workKey !in seen && f.instances.any { it.server == server && it.synced }
+        val merged = if (lastPull > 0) {
+            favorites.values.map { f ->
+                val gone = f.active && f.updatedAt <= lastPull && f.instances.any { it.server == server && it.synced } &&
+                    f.instances.none { it.server == server && it.itemId in presentIds }
                 if (!gone) return@map f
                 // Removed elsewhere: follow the server, and tell the other servers that have it.
                 f.instances.filter { it.server != server && policy(it.server) != FavoriteSync.Off }.forEach { i ->
@@ -141,8 +178,8 @@ object FavoriteLogic {
                 }
                 f.copy(removedAt = now, updatedAt = now, instances = f.instances.map { if (it.server == server) it.copy(synced = false) else it })
             }
-        }
-        return FavoritesState(favorites, queue, state.lastPull + (server to now))
+        } else favorites.values.toList()
+        return FavoritesState(merged, queue, state.lastPull + (server to now))
     }
 
     /** Applies a write's result. A refusal drops every queued write for that server (it is turned to 不同步). */
@@ -213,9 +250,7 @@ class Favorites(
         _items.value = active(next)
     }
 
-    fun isFavorite(ref: ServerItem): Boolean = _items.value.any { f ->
-        f.workKey == Keys.work(ref.server, ref.item) || f.instances.any { it.server == ref.server && (it.itemId == ref.item.id || it.itemId == ref.item.seriesId) }
-    }
+    fun isFavorite(ref: ServerItem): Boolean = FavoriteLogic.find(state.value.favorites, ref)?.active == true
 
     /**
      * Toggles the work behind [ref] (an episode stands for its series) with the [instances] known on
@@ -248,7 +283,7 @@ class Favorites(
             if (result !is Outcome.Ok) return@collect
             lock.withLock {
                 val state = state.value
-                val old = FavoriteLogic.find(state, key) ?: return@withLock
+                val old = FavoriteLogic.find(state.favorites, ref) ?: return@withLock
                 val extra = result.value.filter { id -> old.instances.none { it.server == result.server && it.itemId == id } }
                 if (extra.isEmpty()) return@withLock
                 val updated = old.copy(instances = old.instances + extra.map { FavoriteInstance(result.server, it) })

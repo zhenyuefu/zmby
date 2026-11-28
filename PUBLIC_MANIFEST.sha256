@@ -4,12 +4,13 @@
 0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594  LICENSES/Apache-2.0.txt
 20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95  LICENSES/LGPL-2.1.txt
 a5f9f02e2d172627454191014822f3a20f21c52f30bb3cfd7489effbbfd4edea  LICENSES/MIT-danmu2ass.txt
-85224a5bcaf81dc505c92d79a8f9fd9e30ca03e14bb9562c68653afa369f029f  README.md
+30bf9fd9c3b90b9e3e38670dfdb1fdf653fc9bed558ae325151ed67a7221ea40  README.md
 aa7cf678eb8981e1a3d1493e0c8923c494718e3445a0ba4378bd30b8205e0a09  THIRD_PARTY_NOTICES.md
-136c5415901d7ea4eb579e2012206536d7dfbdaa1d07d802aa4097a91e9eaf45  app/build.gradle.kts
+06d46db4c3d18bb1a4d62b160b19a5f22efc3ec5728c49de0f538ccf6f20f90f  app/build.gradle.kts
 129284da6c7adb6dcf3d047bafad7b00b0277bc433fdc60f286ca8812f1b42cf  app/compose-stability.conf
 223afb9212520b0b89e62459ae552c64c252f70240ec1b383f0490a9049ce241  app/proguard-rules.pro
 67f9892ad72b6735c864c2de763679362595af10fd938ab1a29269ca96015eec  app/schemas/app.zmby.store.ZmbyDatabase/1.json
+8852da12a0641d5cd1e8e0e24c7761b49f35e4e490acd2aeba9f0e6b03ced947  app/schemas/app.zmby.store.ZmbyDatabase/10.json
 a77b0377088d48ad0a1dd80cfcc19362d24f17f844615695498f5bc1b889b393  app/schemas/app.zmby.store.ZmbyDatabase/2.json
 216fc882965cfa1f9b9b54e5775257bef4b0edb8e3c8a274b7f94b8efc2d56cf  app/schemas/app.zmby.store.ZmbyDatabase/3.json
 ed05db19af939e26ccc082b3023e37d69b55acf3786c053fc2a5d8116f1502a5  app/schemas/app.zmby.store.ZmbyDatabase/4.json
@@ -81,7 +82,7 @@ a12ad5999dadccf8a905e14d7b155683c2a205f9b1a231a8638b7e2113d012bd  app/src/main/j
 49d909586f8a8b389d99c0c137dba9796330aa8ad3fdef84909343be5279f259  app/src/main/java/app/zmby/emby/ClientIdentity.kt
 e5fd45112d3d6ee65d0025ded6117a154a43e72d6b09717886039102ed7d8534  app/src/main/java/app/zmby/emby/EmbyClient.kt
 d4dd590006ada170d36adee03ff2d00a9a233b2d653b95d04308b77843e3f6c0  app/src/main/java/app/zmby/emby/EmbyModels.kt
-3e61286e199a9ecfbf3636f1713b3b63c88eb44eabd8fa6d0b8eca80ddb008a0  app/src/main/java/app/zmby/favorites/Favorites.kt
+11ad8e9873cf9b244184cf8125db234bbe0fcd513f40b12a82c1773d858f1fbb  app/src/main/java/app/zmby/favorites/Favorites.kt
 c375af38db398c8dd68efbd48ebe4d94a20f6386017e0599d2c1f1272e233f13  app/src/main/java/app/zmby/favorites/Watchlist.kt
 7b1bf322a19f80feb0564eaba4290a2d45dc52e06d42d57d83e0b585e1deba60  app/src/main/java/app/zmby/log/LanServer.kt
 1eba1661a3d39af5756f8f6dd1150d80e07345bd729246d9a6d3eb70b4b88218  app/src/main/java/app/zmby/log/Redactor.kt
@@ -127,8 +128,8 @@ c44954017223789456cb005503cf4fe2cc3dc842fabf3c51336d19fdfd9ea3a1  app/src/main/j
 bf2befe9717d4fa47202da574e7ec5b7acbdf6d41b2a5ffdedbac3b64459b7de  app/src/main/java/app/zmby/search/PinyinCandidates.kt
 dab80187c2ac96bdd397cf12f693e44d9afe736a4c0b1e478b02be1b1079ece1  app/src/main/java/app/zmby/segments/SegmentClients.kt
 2b79e04607f28d142294af5a56ec511c5c38dd91e52906a585b4caac467ea6ff  app/src/main/java/app/zmby/segments/SegmentLookupCache.kt
-0952096d301a7bd88e9f57cfa63afdd7cd3031f87af294b03bd9cefe6078faca  app/src/main/java/app/zmby/segments/SegmentRepository.kt
-ed4aeb5f5c59840fb5976d3ea5c6fc744ddab1c05ff2931aeaff3816d7fea9ad  app/src/main/java/app/zmby/segments/Segments.kt
+dd2bf372794dc17a0e0b778cafc87c58f7ce0a2271d1ed58689eace5122c77b9  app/src/main/java/app/zmby/segments/SegmentRepository.kt
+55e4c86a3df1b307228fb971ed1e4ff603286a3bc1c684bda60aff56de308497  app/src/main/java/app/zmby/segments/Segments.kt
 7e6ba389cbd928efc8b14370a8a625c9767e6a2b26e3c562158fe46fb7fdd4d2  app/src/main/java/app/zmby/stats/AiringCalendar.kt
 290fbdf42a468c383e912e47db7f18a755392e73224431bb272241cf8bf2f548  app/src/main/java/app/zmby/stats/MeFeed.kt
 7ef0389ff993b4c89cfe81369473ff2f88f41aa179a63aa2eeb6788737176cc1  app/src/main/java/app/zmby/stats/MeStats.kt
@@ -136,8 +137,8 @@ ed4aeb5f5c59840fb5976d3ea5c6fc744ddab1c05ff2931aeaff3816d7fea9ad  app/src/main/j
 d4bfe70d470f35087c1b6560ba4255d168a78d6a4764920ba77f735aa1be2dc1  app/src/main/java/app/zmby/stats/PlaySessionRecorder.kt
 4c8cb1330c729fabb8621fa264572b1585aafa3b6d1b86f9c0e5a4341f242bc4  app/src/main/java/app/zmby/stats/WatchStats.kt
 6ac63956fc6e97acff8d41f5f1006b49ebb03680d57d3dab97d6ef3e846c5369  app/src/main/java/app/zmby/store/Cast.kt
-3c8b4cc8eb98195970a9c7288ad5c7bdfbc43670dd017cc4ae5e7a9f1f788f84  app/src/main/java/app/zmby/store/Daos.kt
-743aa8a134630590d6b801aff36b4b919124c49ca1a9130e2f2610390ea5cf8f  app/src/main/java/app/zmby/store/Entities.kt
+ddbe5b2139b1a7c4f51e9390fbb28df0ee9668ddf55f2df4a81daf8e9e0a4dfc  app/src/main/java/app/zmby/store/Daos.kt
+50fd43248121e4afbc1239f664cbca36ecf1d28e9c75437d0598da82161304e2  app/src/main/java/app/zmby/store/Entities.kt
 d2a89a8b28589319aadc95b76c00128fc6a59cf4f709ad4257b6e833f2c4d98d  app/src/main/java/app/zmby/store/EpisodeMappings.kt
 b4cdb546e5b9d8ba8820a2825871aa1a8e2769e0025cb522282b48ca055b3f2f  app/src/main/java/app/zmby/store/LocalStore.kt
 ee126dd2dd9cc1ece8f6f0c757a2263dc01c6012948ef0290095dc629d2ee03e  app/src/main/java/app/zmby/store/PlaySessions.kt
@@ -145,7 +146,7 @@ afdb869dbd1813d6ae5e27ab9b93bc345feeb4d6073bff0ffa1b93d124cca9d0  app/src/main/j
 0b8f08fabb55f7b5d738f9946699f9d1450ce1bd16ed198889d70f75fea84eb2  app/src/main/java/app/zmby/store/RepoCache.kt
 b7c1da52d6684f24f40092074363c28b933f59dd0497cf61a75cb76ad2fcbfba  app/src/main/java/app/zmby/store/StoreKeys.kt
 6980decec6d77c2f811577acfa4c7aa5fdc8f5f571c081d961030ba724d8550a  app/src/main/java/app/zmby/store/WatchingHidden.kt
-65ec46191ccfb1d88a2e2e3b86a16858fa6cd249dbd464729c9bbd308357d000  app/src/main/java/app/zmby/store/ZmbyDatabase.kt
+7e12e50386f422389837898a1f761c4ec0f29b3c49c852ff5b29b64e5f304b30  app/src/main/java/app/zmby/store/ZmbyDatabase.kt
 316a2585d12d0299ccdc396aad1e74174ac99f79806d5eb8f721e7087479072f  app/src/main/java/app/zmby/trailer/ImdbTitleRepository.kt
 c8906a5a5d47b5b96dc1c9648f1d01b60c4237200b4a3ace1866a2424216136d  app/src/main/java/app/zmby/trailer/ImdbTrailers.kt
 08cf9141bda46c3161fd2bdc57bebcc5bfd95109c8eef72a1aea51926501840f  app/src/main/java/app/zmby/trailer/ServerTrailers.kt
@@ -206,7 +207,7 @@ d166705483b888198b2ab71544636412f741db7628ce8eb48e971b1a6862eae1  app/src/main/j
 4844518969c443ce5f23fa10d9ba1dbe795935d2e8430692d135719de0febd3d  app/src/main/java/app/zmby/ui/screens/RecommendationsBlock.kt
 d85caac57774ebc5eec760df688fc11d8bfa05614cc1fe0bd6b3805993bcea22  app/src/main/java/app/zmby/ui/screens/SearchModel.kt
 75eebeeb916ebd5130a856658eab094c7a24bcf73deed52d1e9f2a8786a3e14c  app/src/main/java/app/zmby/ui/screens/SearchScreen.kt
-25235c09bfad456c66b65d0752316f5f7f02a2053b49178ed9e8e7214f32412b  app/src/main/java/app/zmby/ui/screens/SegmentMarksPanel.kt
+7e7ba2754a99e5ae228991de1f5834a95126bcbef6c4a93842cc2be86cfa2254  app/src/main/java/app/zmby/ui/screens/SegmentMarksPanel.kt
 b48a149995e61c6ad2218c1a7800ffb3e14c4f5d4a19627895312a877985c0ec  app/src/main/java/app/zmby/ui/screens/SeriesModel.kt
 68d6904b27e78236c1cfe4c34989a30b900194c71230ce19c8bb490e1d1d2e82  app/src/main/java/app/zmby/ui/screens/SeriesPipeline.kt
 b6efa572113e8df3b84447f703045a666f5e687c4d284e3467fb0d04f18bd513  app/src/main/java/app/zmby/ui/screens/SeriesScreen.kt
@@ -281,8 +282,8 @@ d80eb3fa5391efb0ed70f53f5bfbba95f970ab31700ce91e994625dcd10c89b2  app/src/test/j
 c28793b75e9fbd8ca5e4d6060b517f65b05751506a2742d34c2e3b7acd9d7df4  app/src/test/java/app/zmby/emby/ClientIdentityTest.kt
 bcbc7e08d8095103bce92fed546c6f9862de21fb6c787aefbee8492d3fee4b11  app/src/test/java/app/zmby/emby/EmbyClientTest.kt
 2fe470c7f8a63e8e1d15d386470659408f74b5d00a2e66230e74f9c176d5c1be  app/src/test/java/app/zmby/emby/EmbyModelsTest.kt
-fc1d65fe72c1b7f41a96624bc8d295ed0fdf52d040a161a86c1c946b097e20d9  app/src/test/java/app/zmby/favorites/FavoriteLogicTest.kt
-03a432089a3b7447d659120412b2126089090b2121b6c1de1c3199f675e2576f  app/src/test/java/app/zmby/favorites/FavoritesPullTest.kt
+84ed3e7cd0f26a14b758a434392d037421ce8d9569f3e8d25b566e267a1caece  app/src/test/java/app/zmby/favorites/FavoriteLogicTest.kt
+0b0dbae843fc60856f7b616506ccc351782da627e3d3bb077844d73b32b9a110  app/src/test/java/app/zmby/favorites/FavoritesPullTest.kt
 d9641b06abb027cefb000eb984a68fb138bcd9e2f32f98376c75f492a255cab8  app/src/test/java/app/zmby/favorites/WatchlistLogicTest.kt
 44a4a5108c9d2e5c39b3e0562ab3ab71ddd8beac0e007cb9c8b799814dd775d2  app/src/test/java/app/zmby/log/LogTest.kt
 a47377d928ba75bd7d5918aa3e48c8b673d1eba869126ab4025bc246367e4ae9  app/src/test/java/app/zmby/media/MediaFormatTest.kt
@@ -318,8 +319,8 @@ a0da98ff0e49bd6bdb841061b0e4bccaf8824764cd7e44a36d5fe500a03b6355  app/src/test/j
 19cdee3c14135adaed592060959d78ea487edefeeb9a86cef3848f06e44d245b  app/src/test/java/app/zmby/search/PinyinTest.kt
 f26fb4912de71d72d81026b9090e3dbc094aad43857e60ebad36a6a5681cd19a  app/src/test/java/app/zmby/segments/SegmentClientsTest.kt
 9438177753053648e72c06171c86a869a08d01b1ff18fbfb9a2f16b458e9a378  app/src/test/java/app/zmby/segments/SegmentLookupCacheTest.kt
-b39daacc4399872fb1673baf30db65b0023d30b49ae05654bd2385a6284e6eb5  app/src/test/java/app/zmby/segments/SegmentRepositoryTest.kt
-a794e6f56318ee4dfa8bca543b8be02aa7803ef14137f1f42357714218e1612a  app/src/test/java/app/zmby/segments/SegmentRulesTest.kt
+c05c10e961811e86d70e26487edced828587154e68897db7e8e8aab3f94bc8a7  app/src/test/java/app/zmby/segments/SegmentRepositoryTest.kt
+a8368c41c1d191a5017e962e25e56ffd5da9e5e0109a231290268b6d12250553  app/src/test/java/app/zmby/segments/SegmentRulesTest.kt
 b9412e5aab3c52a43dde73ebd16cb1839d04374b76fcfa41cc3d8a78815683e7  app/src/test/java/app/zmby/segments/SegmentSkipperTest.kt
 f024a7ce777610aff7ad7dfdf10e155386b0954c09563fe9426255e953d69e0c  app/src/test/java/app/zmby/stats/AiringRulesTest.kt
 1db63f8839b7befece683b05d0ff521170e13b9f5564fde62b056a11af72d316  app/src/test/java/app/zmby/stats/MeStatsTest.kt
@@ -328,7 +329,7 @@ f0c2b2e66f6b376ea4229549f9c335cab28d982c862f69c5f4bb933f31e927bf  app/src/test/j
 fe7fae7513bb08291f70fe4b7201e11a84eaea6027af29d34cd7cdf83163f626  app/src/test/java/app/zmby/store/EpisodeMappingsTest.kt
 9ca0fcd962d6590e4bc506a276c7140e59762310d26f73c50ce889bd8bfd949c  app/src/test/java/app/zmby/store/HomeLocalFirstTest.kt
 34b6362524218688f820e153871d5b42f5efd26870d318e5e8b456a6450d56f5  app/src/test/java/app/zmby/store/LocalStoreTest.kt
-cba80711c987815e24d00f090ce5639c0d2cc5d9496b3ec2404a2a37f84b9ede  app/src/test/java/app/zmby/store/SchemaTest.kt
+d3403071ec8f7d0769bb6b06d1e0482108ecb5eefd4060203470388e0554ec75  app/src/test/java/app/zmby/store/SchemaTest.kt
 cd257449506e89637f35e1e03ef2bf53c20afa08ba9ffee37101ab698abe24c8  app/src/test/java/app/zmby/store/StoreKeysTest.kt
 a974e3905f4c00f6769c525aa9be030d503ee7bed2121cb00966ee2ee0662c64  app/src/test/java/app/zmby/trailer/ImdbTitleRepositoryTest.kt
 487ecf62bb96df8f4669ec12a21613f79d4f879a77c2baa5976bf28e2302507f  app/src/test/java/app/zmby/trailer/ImdbTrailersTest.kt
@@ -351,7 +352,7 @@ d858511dc6e5a9d539b4cd886113ae14a4b29fcbe393751fcc3d820d2133f2f9  app/src/test/j
 0ee80ae80d2a9fcccfb2b3ab107c2428102a3cc1f5865362b328acf34051385f  app/src/test/java/app/zmby/ui/RatingBadgesTest.kt
 0f602988525995b22f33e402a7c3ba08fbb3cedb801f14bd51dd9e905a6819e8  app/src/test/java/app/zmby/ui/SearchCardKeysTest.kt
 1db0acd631f33255d054decb9ce72bf4a28d6b1cb2761269a11d89ad7095a772  app/src/test/java/app/zmby/ui/SeriesHeaderTest.kt
-7806debd7416aa810a0306c1d0469f318cd3f7256940d3aac714dbc61dd32e00  app/src/test/java/app/zmby/ui/SettingsRedesignTest.kt
+8ff5b00b5a883adf8bd60c3b93443c77069671902bdc4b9645a7920ba9be2e66  app/src/test/java/app/zmby/ui/SettingsRedesignTest.kt
 e70810ba769120de23de4ba56e8c3d296541ae4a8fb9719c64b8b1de076dd1f9  app/src/test/java/app/zmby/ui/TrailerChromeTest.kt
 1c3b98948149d24b0fc3a7329340f99f24e0dd9daabb4badfe5db17d4e7637d4  app/src/test/java/app/zmby/ui/TrailerCoverTest.kt
 d15f911bfe5df9f02f2b8fa9810dec8d6ca71313fe66f61aca21e2b399675adf  app/src/test/java/app/zmby/ui/UiTextTest.kt
@@ -373,7 +374,7 @@ dc96bcd95d3b33e191660be59d1770abb4c7fa887003e8321fe7417bf0105598  devtools/fake-
 6d9e2634254b7121caf94aa7f416dc60ae48bb14d55421de409635f83eedcf44  devtools/fake-zidoo-player/src/main/AndroidManifest.xml
 bff8091fd354364c147a5997ea003c7b8957fd8ee17f623a1919a7e766aa5231  devtools/fake-zidoo-player/src/main/java/com/android/gallery3d/app/MovieActivity.kt
 538d7592b6cffcda46ce0e697670788cd04d972c513be3dffdb39181873658e2  docs/DEVELOPMENT.md
-3b7a98f19a7c9fbb3a81e4aecebf6949b1824b3a9025bdb1188de260a6cba6a8  docs/USAGE.md
+2ae44e1d83ce9be85cbf57515ef883088cf72626fb19066e677e159573d372ef  docs/USAGE.md
 ef372ab6d26a4a55572e14bf62e3f0ba47e4d8a82384ca1215643af3377d6bf6  docs/images/browse.jpg
 3ff52a2579eba0bf9461be7197800ef2e7bf808946fc8dc7ce65b2a1c752cfc0  docs/images/detail.jpg
 5ad78f7bc20024c3e714daffb4cf257b5b798735ffa52123ecbfba7dfa8824ec  docs/images/home.jpg

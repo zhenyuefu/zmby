@@ -136,6 +136,17 @@ class SchemaTest {
         }
     }
 
+    @Test fun `version 9 keeps manual times and starts without source overrides`() {
+        val name = "schema-v9-segments.db"
+        helper.createDatabase(name, 9).use { db ->
+            db.execSQL("INSERT INTO segment_marker VALUES ('movie:tmdb:1', 'local', 'intro', NULL, 0, 90000, 1)")
+        }
+        helper.runMigrationsAndValidate(name, 10, true, ZmbyDatabase.MIGRATION_9_10).use { db ->
+            db.query("SELECT end_ms FROM segment_marker").use { it.moveToFirst(); assertEquals(90_000L, it.getLong(0)) }
+            db.query("SELECT COUNT(*) FROM segment_preference").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+        }
+    }
+
     @Test fun `sessions record, checkpoint, finish and close what a crash left open`() {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), ZmbyDatabase::class.java).allowMainThreadQueries().build()
         runBlocking {

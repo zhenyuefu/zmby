@@ -202,6 +202,14 @@ data class SegmentMarker(
     @ColumnInfo(name = "fetched_at") val fetchedAt: Long = 0,
 )
 
+/** An explicit source for just one kind. Times still come from that source for the played cut. */
+@Entity(tableName = "segment_preference", primaryKeys = ["work_key", "kind"])
+data class SegmentPreference(
+    @ColumnInfo(name = "work_key") val workKey: String,
+    val kind: String,
+    val provider: String,
+)
+
 /** 设置 › 数据来源: whether [source] (a server id or a segment provider) serves [feature], and its order. */
 @Entity(tableName = "data_source", primaryKeys = ["feature", "source"])
 data class DataSourceRow(

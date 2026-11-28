@@ -28,15 +28,13 @@ class SegmentRulesTest {
         assertNull(merged[SegmentKind.Preview])
     }
 
-    @Test fun `local marks take each kind from the episode, else the season`() {
-        fun row(key: String, kind: SegmentKind, start: Long, end: Long) = app.zmby.store.SegmentMarker(key, "local", kind.key, null, start, end, 0)
-        val ep = "series:tmdb:1:s01:e02"
-        val season = "series:tmdb:1:s01"
-        val rows = listOf(row(season, SegmentKind.Intro, 0, 90_000), row(season, SegmentKind.Credits, 2_400_000, -1), row(ep, SegmentKind.Intro, 0, 70_000))
-        val used = SegmentRules.localMarks(rows, ep).associate { it.kind to (it.workKey to it.endMs) }
-        assertEquals(ep to 70_000L, used[SegmentKind.Intro.key])
-        assertEquals(season to -1L, used[SegmentKind.Credits.key])
-        assertTrue(SegmentRules.localMarks(listOf(row(ep, SegmentKind.Intro, 0, 1).copy(kind = "stop")), ep).isEmpty())
+    @Test fun `each episode override replaces only its own inherited kind`() {
+        val season = ManualMarks(introEndMs = 90_000, season = true).withSource(SegmentKind.Credits, SegmentProvider.Emby)
+        val episode = ManualMarks(creditsStartMs = 2_400_000).withSource(SegmentKind.Intro, SegmentProvider.IntroDB)
+        assertEquals(episode, episode.inheriting(season))
+        val clear = episode.withSource(SegmentKind.Intro, null)
+        assertEquals(90_000L, clear.inheriting(season).introEndMs)
+        assertEquals(clear, SegmentMarks.rescope(SegmentMarks.rescope(clear, true, season), false, season))
     }
 
     @Test fun `the marks editor opens on the right scope and keeps typed values when switching`() {

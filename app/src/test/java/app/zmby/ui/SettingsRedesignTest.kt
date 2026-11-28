@@ -15,12 +15,11 @@ import app.zmby.ui.screens.BadgeFit
 import app.zmby.ui.screens.DanmuLook
 import app.zmby.ui.screens.PreviewBadge
 import app.zmby.ui.screens.danmuLookLabel
-import app.zmby.ui.screens.inheritedMark
+import app.zmby.segments.ManualMarks
+import app.zmby.ui.screens.editorPlan
 import app.zmby.ui.screens.moved
 import app.zmby.ui.screens.previewBadges
 import app.zmby.ui.screens.versionSummary
-import app.zmby.ui.screens.segmentSourceRows
-import app.zmby.ui.screens.cardInherited
 import app.zmby.ui.screens.textSettingValue
 import app.zmby.ui.screens.versionPatternError
 import org.junit.Assert.assertEquals
@@ -80,28 +79,18 @@ class SettingsRedesignTest {
         assertEquals("3 行 · 30 px · 75%", danmuLookLabel(DanmuLook(3, 30, 4, 12, 75)))
     }
 
-    @Test fun `segment sources skip manual marks and say when a cache is used`() {
-        val lookup = SegmentLookup(
-            answers = linkedMapOf(
-                SegmentProvider.Local to listOf(Segment(SegmentKind.Intro, 0, 92_000)),
-                SegmentProvider.Emby to listOf(Segment(SegmentKind.Credits, 2_530_000, null), Segment(SegmentKind.Intro, 0, 90_000)),
-                SegmentProvider.IntroDB to emptyList(),
-                SegmentProvider.TheIntroDB to listOf(Segment(SegmentKind.Intro, 2_000, 91_000)),
-            ),
-            unavailable = setOf(SegmentProvider.TheIntroDB, SegmentProvider.PublicMetaDB),
-        )
-        val rows = segmentSourceRows(lookup)
-        assertEquals(listOf("服务器", "TheIntroDB", "PublicMetaDB"), rows.map { it.name })
-        assertEquals("片头 0:00–1:30　　片尾 42:10–结束", rows[0].text)
-        assertEquals("无法连接 · 使用缓存", rows[1].text)
-        assertEquals("无法连接", rows[2].text)
-        assertEquals("服务器" to 90_000L, inheritedMark(lookup, SegmentKind.Intro))
-        assertEquals("服务器" to 2_530_000L, inheritedMark(lookup, SegmentKind.Credits))
-        assertNull(inheritedMark(SegmentLookup(), SegmentKind.Intro))
-        // Under 本集 the season's manual mark is what a card without its own time inherits.
-        assertEquals("本季" to 85_000L, cardInherited(lookup, SegmentKind.Intro, 85_000, seasonScope = false))
-        assertEquals("服务器" to 90_000L, cardInherited(lookup, SegmentKind.Intro, 85_000, seasonScope = true))
-        assertEquals("服务器" to 2_530_000L, cardInherited(lookup, SegmentKind.Credits, null, seasonScope = false))
-        assertEquals(emptyList<Any>(), segmentSourceRows(null))
+    @Test fun `preview follows each draft source and drops the saved local value when cleared`() {
+        val intro = Segment(SegmentKind.Intro, 2_000, 91_000)
+        val credits = Segment(SegmentKind.Credits, 2_530_000, null)
+        val lookup = SegmentLookup(answers = linkedMapOf(
+            SegmentProvider.Local to listOf(Segment(SegmentKind.Intro, 0, 92_000)),
+            SegmentProvider.Emby to listOf(credits, Segment(SegmentKind.Intro, 0, 90_000)),
+            SegmentProvider.TheIntroDB to listOf(intro),
+        ))
+        val draft = ManualMarks().withSource(SegmentKind.Intro, SegmentProvider.TheIntroDB)
+        val plan = editorPlan(lookup, draft, 2_700_000)
+        assertEquals(SegmentProvider.TheIntroDB to intro, plan[SegmentKind.Intro])
+        assertEquals(SegmentProvider.Emby to credits, plan[SegmentKind.Credits])
+        assertEquals(SegmentProvider.Emby, editorPlan(lookup, ManualMarks(), 2_700_000)[SegmentKind.Intro]?.first)
     }
 }

@@ -53,6 +53,65 @@ class FavoriteLogicTest {
         assertFalse(next.favorites.single().active)
     }
 
+    @Test fun `known instance gains TMDB before matching new versions regardless of snapshot order`() {
+        val fallback = dune.copy(providerIds = emptyMap(), productionYear = 2024)
+        val first = FavoriteLogic.pull(FavoritesState(), "a", listOf(fallback), 100, ::policy)
+        val otherVersion = dune.copy(id = "second")
+        for (snapshot in listOf(listOf(otherVersion, dune), listOf(dune, otherVersion))) {
+            val refreshed = FavoriteLogic.pull(first, "a", snapshot, 200, ::policy)
+            val peer = FavoriteLogic.pull(refreshed, "b", listOf(duneB), 300, ::policy)
+            val favorite = peer.favorites.single()
+            assertEquals("movie:tmdb:693134", favorite.workKey)
+            assertEquals(100L, favorite.addedAt)
+            assertEquals(setOf(FavoriteInstance("a", "d1", true), FavoriteInstance("a", "second", true),
+                FavoriteInstance("b", "x9", true)), favorite.instances.toSet())
+            assertTrue(favorite.active)
+            assertTrue(peer.queue.isEmpty())
+        }
+    }
+
+    @Test fun `local removal after metadata refresh still wins the next pull`() {
+        val first = FavoriteLogic.pull(FavoritesState(), "a", listOf(dune.copy(providerIds = emptyMap())), 100, ::policy)
+        val removed = FavoriteLogic.toggle(first, ServerItem("a", dune), emptyList(), 150, ::policy)
+        assertEquals(150L, removed.favorites.single().removedAt)
+        val again = FavoriteLogic.pull(removed, "a", listOf(dune), 200, ::policy)
+        assertEquals(150L, again.favorites.single().removedAt)
+        assertEquals(listOf(PendingWrite("a", "d1", false)), again.queue)
+    }
+
+    @Test fun `same Emby item ID on another server cannot claim a favourite`() {
+        val first = FavoriteLogic.pull(FavoritesState(), "a", listOf(dune.copy(providerIds = emptyMap())), 100, ::policy)
+        val next = FavoriteLogic.pull(first, "b", listOf(dune), 200, ::policy)
+        assertEquals(2, next.favorites.count { it.active })
+        assertTrue(next.favorites.all { it.instances.size == 1 })
+        assertTrue(next.queue.isEmpty())
+    }
+
+    @Test fun `a TMDB key already owned by another work cannot displace the known instance`() {
+        val first = FavoriteLogic.pull(FavoritesState(), "a", listOf(dune.copy(providerIds = emptyMap())), 100, ::policy)
+        val both = FavoriteLogic.pull(first, "b", listOf(duneB), 150, ::policy)
+        val next = FavoriteLogic.pull(both, "a", listOf(dune), 200, ::policy)
+        assertEquals(both.favorites, next.favorites)
+        assertTrue(next.queue.isEmpty())
+    }
+
+    @Test fun `a legacy tombstone sharing the item does not revive on a later pull`() {
+        val first = FavoriteLogic.pull(FavoritesState(), "a", listOf(dune), 100, ::policy)
+        val active = first.favorites.single()
+        val stale = active.copy(workKey = "item:a:d1", removedAt = 100)
+        for (rows in listOf(listOf(stale, active), listOf(active, stale))) {
+            val persisted = first.copy(favorites = rows)
+            val next = FavoriteLogic.pull(persisted, "a", listOf(dune), 200, ::policy)
+            assertEquals(rows, next.favorites)
+            assertTrue(next.queue.isEmpty())
+            val off = FavoriteLogic.toggle(next, ServerItem("a", dune), emptyList(), 250, ::policy)
+            assertTrue(off.favorites.none { it.active })
+            val pulled = FavoriteLogic.pull(off, "a", listOf(dune), 300, ::policy)
+            assertTrue(pulled.favorites.none { it.active })
+            assertEquals(listOf(PendingWrite("a", "d1", false)), pulled.queue)
+        }
+    }
+
     @Test fun `a refusing server drops its queue, errors retry`() {
         val s = FavoriteLogic.toggle(FavoritesState(), ServerItem("a", dune), listOf(ServerItem("a", dune), ServerItem("b", duneB)), 100, ::policy)
         val wa = s.queue.first { it.server == "a" }

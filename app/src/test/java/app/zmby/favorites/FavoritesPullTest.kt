@@ -93,6 +93,18 @@ class FavoritesPullTest {
         assertEquals(20L, state.lastPull["a"])
     }
 
+    @Test fun `adding a TMDB ID to a synced item preserves the favourite and its peer`() = runBlocking {
+        val page = MockResponse().setBody("""{"Items":[{"Id":"301","Type":"Movie","ProviderIds":{"Tmdb":"42"}}],"TotalRecordCount":1}""")
+        val state = pull(page)
+        assertEquals(emptyList<PendingWrite>(), state.queue)
+        val favorite = state.favorites.single()
+        assertTrue(favorite.active)
+        assertEquals(previous.favorites.single().addedAt, favorite.addedAt)
+        assertEquals(previous.favorites.single().updatedAt, favorite.updatedAt)
+        assertEquals(previous.favorites.single().instances, favorite.instances)
+        assertEquals(20L, state.lastPull["a"])
+    }
+
     @Test fun `failure on page two keeps the previous state`() = runBlocking {
         assertEquals(previous, pull(page(1..300, 301), MockResponse().setResponseCode(404)))
     }

@@ -18,10 +18,10 @@ import androidx.room.migration.Migration
         WorkMeta::class, WorkInstance::class, Person::class, PersonAlias::class, WorkPerson::class,
         VersionSummary::class, ListCache::class, ListItem::class,
         FavoriteRow::class, FavoriteInstanceRow::class, FavoriteWriteRow::class, WatchlistRow::class,
-        SegmentMarker::class, DataSourceRow::class, SyncState::class, PlayHistoryRow::class, app.zmby.catalog.CatalogCache::class,
+        SegmentMarker::class, SegmentPreference::class, DataSourceRow::class, SyncState::class, PlayHistoryRow::class, app.zmby.catalog.CatalogCache::class,
         EpisodeMappingRule::class, WatchingHiddenRow::class, PlaySessionRow::class, ProgressReportRow::class, RepoCacheRow::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -123,7 +123,13 @@ abstract class ZmbyDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS segment_preference (work_key TEXT NOT NULL, kind TEXT NOT NULL, provider TEXT NOT NULL, PRIMARY KEY(work_key, kind))")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
 
         fun open(context: Context): ZmbyDatabase =
             Room.databaseBuilder(context, ZmbyDatabase::class.java, NAME)
